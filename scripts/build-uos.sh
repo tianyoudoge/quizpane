@@ -18,27 +18,47 @@ cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
 cmake --build "$BUILD_DIR" --parallel
 ctest --test-dir "$BUILD_DIR" --output-on-failure
 
-APPDIR="$DIST_DIR/小窗刷题.AppDir"
-rm -rf "$APPDIR"
-mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
-  "$APPDIR/usr/share/icons/hicolor/1024x1024/apps" \
-  "$APPDIR/usr/share/mime/packages"
-cp "$BUILD_DIR/apps/desktop-qt/小窗刷题" "$APPDIR/usr/bin/"
-cp "$BUILD_DIR/apps/bank-studio/题库生成器" "$APPDIR/usr/bin/"
-cp "$ROOT/apps/desktop-qt/resources/app-icon.png" \
-  "$APPDIR/usr/share/icons/hicolor/1024x1024/apps/org.quizpane.app.png"
-cp "$ROOT/packaging/linux/org.quizpane.app.desktop" \
-  "$APPDIR/usr/share/applications/"
-cp "$ROOT/packaging/linux/org.quizpane.bank-studio.desktop" \
-  "$APPDIR/usr/share/applications/"
-cp "$ROOT/packaging/linux/org.quizpane.provider.xml" \
-  "$APPDIR/usr/share/mime/packages/"
-cp "$ROOT/LICENSE" "$APPDIR/"
 mkdir -p "$DIST_DIR"
-tar -C "$DIST_DIR" -czf "$DIST_DIR/小窗刷题-$DISTRO_ID-$ARCH.tar.gz" \
-  "小窗刷题.AppDir"
-if command -v linuxdeploy >/dev/null 2>&1; then
-  OUTPUT="$DIST_DIR/小窗刷题-$DISTRO_ID-$ARCH.AppImage" \
-    linuxdeploy --appdir "$APPDIR" --output appimage
-fi
-echo "已生成：$DIST_DIR/小窗刷题-$DISTRO_ID-$ARCH.tar.gz"
+
+package_app() {
+  local package_name="$1"
+  local executable="$2"
+  local source_binary="$3"
+  local desktop_file="$4"
+  local appdir="$DIST_DIR/$package_name.AppDir"
+  local archive="$DIST_DIR/$package_name-$DISTRO_ID-$ARCH.tar.gz"
+
+  rm -rf "$appdir"
+  mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \
+    "$appdir/usr/share/icons/hicolor/1024x1024/apps"
+  cp "$source_binary" "$appdir/usr/bin/$executable"
+  cp "$ROOT/apps/desktop-qt/resources/app-icon.png" \
+    "$appdir/usr/share/icons/hicolor/1024x1024/apps/org.quizpane.app.png"
+  cp "$desktop_file" "$appdir/usr/share/applications/"
+  cp "$ROOT/LICENSE" "$appdir/"
+
+  if command -v linuxdeploy >/dev/null 2>&1; then
+    QMAKE="${QT_PREFIX:+$QT_PREFIX/bin/qmake}" \
+      linuxdeploy --appdir "$appdir" \
+        --desktop-file "$desktop_file" \
+        --icon-file "$ROOT/apps/desktop-qt/resources/app-icon.png" \
+        --executable "$appdir/usr/bin/$executable" \
+        --plugin qt
+  fi
+  tar -C "$DIST_DIR" -czf "$archive" "$package_name.AppDir"
+  echo "已生成：$archive"
+}
+
+package_app "QuizPane" "小窗刷题" \
+  "$BUILD_DIR/apps/desktop-qt/小窗刷题" \
+  "$ROOT/packaging/linux/org.quizpane.app.desktop"
+mkdir -p "$DIST_DIR/QuizPane.AppDir/usr/share/mime/packages"
+cp "$ROOT/packaging/linux/org.quizpane.provider.xml" \
+  "$DIST_DIR/QuizPane.AppDir/usr/share/mime/packages/"
+# MIME 文件加入后重新生成主程序压缩包。
+tar -C "$DIST_DIR" -czf "$DIST_DIR/QuizPane-$DISTRO_ID-$ARCH.tar.gz" \
+  "QuizPane.AppDir"
+
+package_app "QuizPane-Bank-Studio" "题库生成器" \
+  "$BUILD_DIR/apps/bank-studio/题库生成器" \
+  "$ROOT/packaging/linux/org.quizpane.bank-studio.desktop"

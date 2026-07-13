@@ -48,3 +48,4 @@ ditto -c -k --sequesterRsrc --keepParent "$STUDIO" \
   "$DIST_DIR/题库生成器-macos-$(uname -m).zip"
 
 echo "已生成：$DIST_DIR/小窗刷题-macos-$(uname -m).zip"
+echo "已生成：$DIST_DIR/题库生成器-macos-$(uname -m).zip"

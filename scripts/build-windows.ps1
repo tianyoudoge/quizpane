@@ -16,16 +16,30 @@ cmake -S $Root -B $Build -G Ninja `
 cmake --build $Build --parallel
 ctest --test-dir $Build --output-on-failure
 
-$Stage = Join-Path $Dist "小窗刷题"
-New-Item -ItemType Directory -Force -Path $Stage | Out-Null
-Copy-Item (Join-Path $Build "apps/desktop-qt/小窗刷题.exe") $Stage -Force
-Copy-Item (Join-Path $Build "apps/bank-studio/题库生成器.exe") $Stage -Force
-Copy-Item (Join-Path $Root "LICENSE") $Stage -Force
-& (Join-Path $QtRoot "bin/windeployqt.exe") --release --no-translations `
-  (Join-Path $Stage "小窗刷题.exe")
-& (Join-Path $QtRoot "bin/windeployqt.exe") --release --no-translations `
-  (Join-Path $Stage "题库生成器.exe")
-$Zip = Join-Path $Dist "小窗刷题-windows-x64.zip"
-if (Test-Path $Zip) { Remove-Item $Zip -Force }
-Compress-Archive -Path "$Stage/*" -DestinationPath $Zip
-Write-Host "已生成：$Zip"
+$Packages = @(
+  @{
+    Name = "QuizPane"
+    Executable = "小窗刷题.exe"
+    Source = Join-Path $Build "apps/desktop-qt/小窗刷题.exe"
+  },
+  @{
+    Name = "QuizPane-Bank-Studio"
+    Executable = "题库生成器.exe"
+    Source = Join-Path $Build "apps/bank-studio/题库生成器.exe"
+  }
+)
+
+foreach ($Package in $Packages) {
+  $Stage = Join-Path $Dist $Package.Name
+  if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
+  New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+  Copy-Item $Package.Source (Join-Path $Stage $Package.Executable) -Force
+  Copy-Item (Join-Path $Root "LICENSE") $Stage -Force
+  & (Join-Path $QtRoot "bin/windeployqt.exe") --release --no-translations `
+    (Join-Path $Stage $Package.Executable)
+
+  $Zip = Join-Path $Dist "$($Package.Name)-windows-x64.zip"
+  if (Test-Path $Zip) { Remove-Item $Zip -Force }
+  Compress-Archive -Path "$Stage/*" -DestinationPath $Zip
+  Write-Host "已生成：$Zip"
+}

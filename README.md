@@ -21,7 +21,7 @@
 
 完整发行版还包含独立“题库生成器”：通过四步图形向导导入自己的 TXT、Word、PDF 或 JSON，查看整理进度和 Token 用量，最终生成跨平台本地题库。云端或本地模型在应用“设置”菜单中统一配置。
 
-> 当前 `v0.1.0` 是 macOS Apple Silicon 技术预览版。Windows、Intel Mac、统信 UOS 和银河麒麟正在等待社区构建验证；题库市场仍在开发中。
+> 从 `v0.2.0` 开始，Release 同时提供 Windows 10/11 x64、macOS Apple Silicon、macOS Intel 和 Linux x64 构建，并单独提供“题库生成器”安装包。Linux 包面向统信 UOS、银河麒麟等桌面发行版进行兼容构建；题库市场仍在开发中。
 
 ## 界面长什么样？
 
@@ -69,9 +69,9 @@
 shasum -a 256 QuizPane-macos-arm64.zip
 ```
 
-### Windows、UOS 和银河麒麟
+### Windows、Intel Mac、UOS 和银河麒麟
 
-这些平台的代码和构建脚本已经提供，但尚未发布正式安装包。目标系统用户可以按照后文“参与平台构建”进行编译和验收。未经真机验证的二进制不会冒充正式版本上传。
+从 [Releases](https://github.com/tianyoudoge/quizpane/releases/latest) 下载文件名中包含对应平台和架构的压缩包。`QuizPane-*` 是刷题主程序，`QuizPane-Bank-Studio-*` 是独立题库生成器。Linux x64 包用于普通 Linux 桌面，也作为统信 UOS、银河麒麟的首期兼容构建。
 
 ## 题库怎么安装？
 
@@ -168,7 +168,7 @@ Ctrl + Shift + H
 - [x] 声明式跨平台题库运行时与题库生成器四步 UI
 - [ ] 官方题库市场
 - [ ] 本地题库生成器模型调用、文档提取与任务恢复
-- [ ] Windows、UOS、银河麒麟正式安装包
+- [x] Windows、Intel Mac、Linux x64 自动构建与 Release
 
 ## 常见问题
 

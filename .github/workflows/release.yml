@@ -1,0 +1,189 @@
+name: Build and release QuizPane
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  QT_VERSION: "6.5.3"
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple-Silicon
+            runner: macos-14
+            arch: arm64
+          - name: Intel
+            runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.arch }}"
+
+      - name: Install build tools
+        run: brew install cmake ninja
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: clang_64
+          cache: true
+
+      - name: Build, test and package both applications
+        env:
+          QT_PREFIX: ${{ env.QT_ROOT_DIR }}
+          SIGN_IDENTITY: "-"
+        run: ./scripts/build-macos.sh
+
+      - name: Prepare portable release assets
+        run: |
+          mkdir -p release-assets
+          cp "dist/macos/小窗刷题-macos-${{ matrix.arch }}.zip" \
+            "release-assets/QuizPane-macos-${{ matrix.arch }}.zip"
+          cp "dist/macos/题库生成器-macos-${{ matrix.arch }}.zip" \
+            "release-assets/QuizPane-Bank-Studio-macos-${{ matrix.arch }}.zip"
+          cd release-assets
+          shasum -a 256 * > "SHA256SUMS-macos-${{ matrix.arch }}.txt"
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-${{ matrix.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows 10 and 11 x64
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Configure MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install build tools
+        shell: pwsh
+        run: choco install cmake ninja -y --no-progress
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2019_64
+          cache: true
+
+      - name: Build, test and package both applications
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR"
+
+      - name: Prepare checksums
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item "dist/windows/QuizPane-windows-x64.zip" release-assets/
+          Copy-Item "dist/windows/QuizPane-Bank-Studio-windows-x64.zip" release-assets/
+          Get-ChildItem release-assets/*.zip | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)" | Add-Content release-assets/SHA256SUMS-windows-x64.txt
+          }
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64 (UOS and Kylin compatible)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Install build and runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgl1 libegl1 libx11-dev \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: gcc_64
+          cache: true
+
+      - name: Install Linux deployment tool
+        run: |
+          mkdir -p "$RUNNER_TEMP/linuxdeploy"
+          curl -L --fail --retry 3 \
+            -o "$RUNNER_TEMP/linuxdeploy/linuxdeploy" \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -L --fail --retry 3 \
+            -o "$RUNNER_TEMP/linuxdeploy/linuxdeploy-plugin-qt" \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/linuxdeploy/"*
+          echo "$RUNNER_TEMP/linuxdeploy" >> "$GITHUB_PATH"
+
+      - name: Build, test and package both applications
+        env:
+          QT_PREFIX: ${{ env.QT_ROOT_DIR }}
+          DISTRO_ID: linux
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: ./scripts/build-uos.sh
+
+      - name: Prepare checksums
+        run: |
+          mkdir -p release-assets
+          cp dist/uos/QuizPane-linux-x86_64.tar.gz release-assets/
+          cp dist/uos/QuizPane-Bank-Studio-linux-x86_64.tar.gz release-assets/
+          cd release-assets
+          sha256sum * > SHA256SUMS-linux-x86_64.txt
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-x64
+          path: release-assets/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download all platform packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release-assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "QuizPane ${GITHUB_REF_NAME}" \
+            --generate-notes
