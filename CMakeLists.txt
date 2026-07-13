@@ -13,7 +13,7 @@ set(CMAKE_AUTOMOC ON)
 option(QUIZPANE_BUILD_TESTS "Build QuizPane tests" ON)
 option(QUIZPANE_BUILD_BANK_GENERATOR
        "Build the experimental local question-bank generator" OFF)
-option(QUIZPANE_BUILD_BANK_STUDIO "Build the QuizPane Bank Studio GUI" ON)
+option(QUIZPANE_BUILD_BANK_STUDIO "Build the QuizPane Question Maker GUI" ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network)
 

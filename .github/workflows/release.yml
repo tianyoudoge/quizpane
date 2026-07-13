@@ -54,8 +54,8 @@ jobs:
           mkdir -p release-assets
           cp "dist/macos/小窗刷题-macos-${{ matrix.arch }}.zip" \
             "release-assets/QuizPane-macos-${{ matrix.arch }}.zip"
-          cp "dist/macos/题库生成器-macos-${{ matrix.arch }}.zip" \
-            "release-assets/QuizPane-Bank-Studio-macos-${{ matrix.arch }}.zip"
+          cp "dist/macos/题库制作器-macos-${{ matrix.arch }}.zip" \
+            "release-assets/QuizPane-Question-Maker-macos-${{ matrix.arch }}.zip"
           cd release-assets
           shasum -a 256 * > "SHA256SUMS-macos-${{ matrix.arch }}.txt"
 
@@ -98,7 +98,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release-assets | Out-Null
           Copy-Item "dist/windows/QuizPane-windows-x64.zip" release-assets/
-          Copy-Item "dist/windows/QuizPane-Bank-Studio-windows-x64.zip" release-assets/
+          Copy-Item "dist/windows/QuizPane-Question-Maker-windows-x64.zip" release-assets/
           Get-ChildItem release-assets/*.zip | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$hash  $($_.Name)" | Add-Content release-assets/SHA256SUMS-windows-x64.txt
@@ -155,7 +155,7 @@ jobs:
         run: |
           mkdir -p release-assets
           cp dist/uos/QuizPane-linux-x86_64.tar.gz release-assets/
-          cp dist/uos/QuizPane-Bank-Studio-linux-x86_64.tar.gz release-assets/
+          cp dist/uos/QuizPane-Question-Maker-linux-x86_64.tar.gz release-assets/
           cd release-assets
           sha256sum * > SHA256SUMS-linux-x86_64.txt
 

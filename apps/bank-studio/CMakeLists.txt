@@ -9,8 +9,8 @@ set_target_properties(quizpane_bank_studio PROPERTIES
     AUTORCC TRUE
     MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE
-    OUTPUT_NAME "题库生成器"
-    MACOSX_BUNDLE_BUNDLE_NAME "题库生成器"
+    OUTPUT_NAME "题库制作器"
+    MACOSX_BUNDLE_BUNDLE_NAME "题库制作器"
     MACOSX_BUNDLE_GUI_IDENTIFIER "org.quizpane.bank-studio"
     MACOSX_BUNDLE_ICON_FILE "app-icon.icns"
 )

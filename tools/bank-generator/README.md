@@ -1,4 +1,4 @@
-# QuizPane 题库生成器（开发中）
+# QuizPane 题库制作器底层工具（开发中）
 
 目标是把用户拥有版权或合法授权的 TXT、DOCX、PDF 或结构化题目转换为声明式 `.quizpane-provider` 本地题库包。声明式包只包含 JSON 和图片，不包含 DLL、dylib 或 so，因此同一个包可跨平台使用。
 

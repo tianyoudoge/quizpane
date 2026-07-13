@@ -66,6 +66,6 @@ cp "$ROOT/packaging/linux/org.quizpane.provider.xml" \
 tar -C "$DIST_DIR" -czf "$DIST_DIR/QuizPane-$DISTRO_ID-$ARCH.tar.gz" \
   "QuizPane.AppDir"
 
-package_app "QuizPane-Bank-Studio" "题库生成器" \
-  "$BUILD_DIR/apps/bank-studio/题库生成器" \
+package_app "QuizPane-Question-Maker" "题库制作器" \
+  "$BUILD_DIR/apps/bank-studio/题库制作器" \
   "$ROOT/packaging/linux/org.quizpane.bank-studio.desktop"

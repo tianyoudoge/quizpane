@@ -23,9 +23,9 @@ $Packages = @(
     Source = Join-Path $Build "apps/desktop-qt/小窗刷题.exe"
   },
   @{
-    Name = "QuizPane-Bank-Studio"
-    Executable = "题库生成器.exe"
-    Source = Join-Path $Build "apps/bank-studio/题库生成器.exe"
+    Name = "QuizPane-Question-Maker"
+    Executable = "题库制作器.exe"
+    Source = Join-Path $Build "apps/bank-studio/题库制作器.exe"
   }
 )
 

@@ -183,7 +183,7 @@ QStringList parseModelNames(const QByteArray& payload, bool ollama) {
 }  // namespace
 
 StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle(QStringLiteral("题库生成器 · 小窗刷题"));
+    setWindowTitle(QStringLiteral("题库制作器 · 小窗刷题"));
     setMinimumSize(820, 600);
     resize(1040, 720);
     setAcceptDrops(true);
@@ -200,7 +200,7 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     auto* sideLayout = new QVBoxLayout(sidebar);
     sideLayout->setContentsMargins(22, 24, 18, 20);
     sideLayout->setSpacing(9);
-    auto* brand = new QLabel(QStringLiteral("题库生成器"));
+    auto* brand = new QLabel(QStringLiteral("题库制作器"));
     brand->setObjectName(QStringLiteral("brand"));
     sideLayout->addWidget(brand);
     sideLayout->addWidget(mutedLabel(QStringLiteral("把你的文档整理成可安装题库")));
@@ -532,7 +532,7 @@ void StudioWindow::showModelSettings() {
         }
         QNetworkRequest request(url);
         request.setHeader(QNetworkRequest::UserAgentHeader,
-                          QStringLiteral("QuizPane-Bank-Studio"));
+                          QStringLiteral("QuizPane-Question-Maker"));
         request.setRawHeader("Accept", "application/json");
         request.setTransferTimeout(12000);
         const QByteArray key = apiKey->text().trimmed().toUtf8();

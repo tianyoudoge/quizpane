@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=题库生成器
+Name=题库制作器
 Comment=把 TXT、Word、PDF 整理为小窗刷题本地题库
-Exec=题库生成器
+Exec=题库制作器
 Icon=org.quizpane.app
 Categories=Education;Utility;
 Terminal=false

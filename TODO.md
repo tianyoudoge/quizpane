@@ -12,7 +12,7 @@
 ## P1：题库生态
 
 - [ ] 完成 `.quizpane-bank` v1 数据模型；
-- [ ] 题库生成器支持 CSV/JSON/QTI 导入；
+- [ ] 题库制作器支持 CSV/JSON/QTI 导入；
 - [ ] 完成 Zstandard 分块和图片按需加载；
 - [ ] 完成 Ed25519 内容签名；
 - [ ] 完成可选 XChaCha20-Poly1305 加密；

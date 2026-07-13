@@ -1194,7 +1194,7 @@ void MainWindow::showMainMenu() {
     QMenu* providerMenu = menu.addMenu(QStringLiteral("题库管理"));
     providerMenu->addAction(QStringLiteral("添加题库…"), this,
                             &MainWindow::chooseProviderPackage);
-    providerMenu->addAction(QStringLiteral("创建题库…"), this,
+    providerMenu->addAction(QStringLiteral("制作自己的题库…"), this,
                             &MainWindow::openBankStudio);
 
     QString listError;
@@ -1233,29 +1233,32 @@ void MainWindow::showMainMenu() {
 
 void MainWindow::openBankStudio() {
     QStringList candidates;
-    const QString configured = qEnvironmentVariable("QUIZPANE_BANK_STUDIO");
+    // 新变量与产品名一致；旧变量继续兼容已有开发环境和自动化脚本。
+    QString configured = qEnvironmentVariable("QUIZPANE_QUESTION_MAKER");
+    if (configured.isEmpty())
+        configured = qEnvironmentVariable("QUIZPANE_BANK_STUDIO");
     if (!configured.isEmpty()) candidates.append(configured);
     const QString appDir = QCoreApplication::applicationDirPath();
 #if defined(Q_OS_MACOS)
     candidates << QDir(appDir).absoluteFilePath(
-        QStringLiteral("../../../../bank-studio/题库生成器.app/Contents/MacOS/题库生成器"))
+        QStringLiteral("../../../../bank-studio/题库制作器.app/Contents/MacOS/题库制作器"))
         << QDir(appDir).absoluteFilePath(
-            QStringLiteral("../../../题库生成器.app/Contents/MacOS/题库生成器"))
+            QStringLiteral("../../../题库制作器.app/Contents/MacOS/题库制作器"))
         << QDir(appDir).absoluteFilePath(
-            QStringLiteral("../Helpers/题库生成器.app/Contents/MacOS/题库生成器"))
-        << QStringLiteral("/Applications/题库生成器.app/Contents/MacOS/题库生成器");
+            QStringLiteral("../Helpers/题库制作器.app/Contents/MacOS/题库制作器"))
+        << QStringLiteral("/Applications/题库制作器.app/Contents/MacOS/题库制作器");
 #elif defined(Q_OS_WIN)
-    candidates << QDir(appDir).filePath(QStringLiteral("题库生成器.exe"));
+    candidates << QDir(appDir).filePath(QStringLiteral("题库制作器.exe"));
 #else
-    candidates << QDir(appDir).filePath(QStringLiteral("题库生成器"))
-               << QStandardPaths::findExecutable(QStringLiteral("题库生成器"));
+    candidates << QDir(appDir).filePath(QStringLiteral("题库制作器"))
+               << QStandardPaths::findExecutable(QStringLiteral("题库制作器"));
 #endif
     for (const QString& candidate : candidates) {
         if (candidate.isEmpty() || !QFileInfo(candidate).isExecutable()) continue;
         if (QProcess::startDetached(candidate, {})) return;
     }
-    QMessageBox::information(this, QStringLiteral("尚未安装题库生成器"),
-        QStringLiteral("题库生成器是独立工具，请安装包含它的完整版本后重试。"));
+    QMessageBox::information(this, QStringLiteral("尚未安装题库制作器"),
+        QStringLiteral("题库制作器是独立工具，请安装对应版本后重试。"));
 }
 
 void MainWindow::configureBossKey() {
