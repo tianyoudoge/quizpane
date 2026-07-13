@@ -16,6 +16,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFrame>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeySequence>
@@ -32,7 +33,9 @@
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QStyle>
-#include <QTableWidget>
+#include <QSet>
+#include <QTimer>
+#include <QTreeWidget>
 #include <QTemporaryDir>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -276,14 +279,15 @@ QWidget* StudioWindow::buildReviewPage() {
     filters->addWidget(duplicateButton_);
     filters->addStretch();
     layout->addLayout(filters);
-    reviewTable_ = new QTableWidget(0, 4);
-    reviewTable_->setHorizontalHeaderLabels({QStringLiteral("位置"), QStringLiteral("问题"),
-                                              QStringLiteral("题目预览"), QStringLiteral("处理")});
-    reviewTable_->horizontalHeader()->setStretchLastSection(true);
-    reviewTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-    reviewTable_->verticalHeader()->hide();
-    reviewTable_->setAlternatingRowColors(false);
-    layout->addWidget(reviewTable_, 1);
+    reviewTree_ = new QTreeWidget;
+    reviewTree_->setColumnCount(3);
+    reviewTree_->setHeaderLabels({QStringLiteral("材料 / 题目"), QStringLiteral("问题"),
+                                   QStringLiteral("内容预览")});
+    reviewTree_->header()->setStretchLastSection(true);
+    reviewTree_->header()->setSectionResizeMode(2, QHeaderView::Stretch);
+    reviewTree_->setAlternatingRowColors(false);
+    reviewTree_->setRootIsDecorated(true);
+    layout->addWidget(reviewTree_, 1);
     return page;
 }
 
@@ -404,6 +408,21 @@ void StudioWindow::beginPreflight() {
             this, &StudioWindow::populateReview);
     connect(workflow_, &GenerationWorkflow::failed, this, [this](const QString& error) {
         startButton_->setEnabled(true);
+        if (error.contains(QStringLiteral("重新开始"))) {
+            const auto answer = QMessageBox::question(this, QStringLiteral("重新开始生成任务？"),
+                error + QStringLiteral("\n\n是否删除旧检查点并重新开始？"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (answer == QMessageBox::Yes) {
+                CheckpointStore store;
+                QString clearError;
+                if (!store.clear(store.taskIdForSources(sourcePaths_), &clearError)) {
+                    QMessageBox::warning(this, QStringLiteral("无法删除旧任务"), clearError);
+                    return;
+                }
+                QTimer::singleShot(0, this, &StudioWindow::beginPreflight);
+            }
+            return;
+        }
         QMessageBox::warning(this, QStringLiteral("生成未完成"), error);
     });
     connect(workflow_, &GenerationWorkflow::finished, this, [this] {
@@ -437,8 +456,8 @@ void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
     case WorkflowStage::Failed: phase = QStringLiteral("任务中断"); break;
     default: phase = QStringLiteral("等待继续"); break;
     }
-    const int within = progress.totalChunks > 0
-        ? span * progress.completedChunks / progress.totalChunks : 0;
+    const int within = progress.totalSourceBlocks > 0
+        ? span * progress.completedSourceBlocks / progress.totalSourceBlocks : 0;
     progressBar_->setValue(qBound(0, base + within, 100));
     phaseLabel_->setText(phase);
     phaseDetail_->setText(progress.detail);
@@ -447,36 +466,85 @@ void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
     totalTokens_->setText(QString::number(progress.inputTokens + progress.outputTokens));
 }
 
-void StudioWindow::populateReview(const QJsonArray& questions, const QJsonArray& needsReview) {
-    generatedQuestions_ = questions;
-    reviewQuestions_ = needsReview;
-    reviewTable_->setRowCount(needsReview.size());
+void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
+    generatedMaterials_ = candidate.materials;
+    generatedQuestions_ = candidate.questions;
+    reviewQuestions_ = candidate.needsReviewQuestions;
+    reviewTree_->clear();
+    QHash<QString, QTreeWidgetItem*> groups;
+    for (const auto& value : generatedMaterials_) {
+        const QJsonObject material = value.toObject();
+        const QString id = material.value("id").toString();
+        const QString title = material.value("title").toString(id);
+        auto* item = new QTreeWidgetItem(reviewTree_,
+            {title, QStringLiteral("共享材料"), material.value("body").toString().left(240)});
+        item->setData(0, Qt::UserRole, id);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
+        item->setCheckState(0, Qt::Checked);
+        groups.insert(id, item);
+    }
+    auto* independent = new QTreeWidgetItem(reviewTree_,
+        {QStringLiteral("独立题目"), QStringLiteral("不引用共享材料"), {}});
+    independent->setFlags(independent->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
+    independent->setCheckState(0, Qt::Checked);
+    QTreeWidgetItem* brokenReferences = nullptr;
+
     int missingAnswers = 0;
     int duplicates = 0;
-    for (qsizetype row = 0; row < needsReview.size(); ++row) {
-        const QJsonObject question = needsReview.at(row).toObject();
-        const QJsonObject review = question.value("review").toObject();
-        const QString reason = review.value("reason").toString();
-        if (reason.contains(QStringLiteral("答案"))) ++missingAnswers;
-        if (reason.contains(QStringLiteral("重复"))) ++duplicates;
-        reviewTable_->setItem(row, 0, new QTableWidgetItem(question.value("id").toString()));
-        reviewTable_->setItem(row, 1, new QTableWidgetItem(
-            review.value("reason").toString(QStringLiteral("模型标记为需要复核"))));
-        reviewTable_->setItem(row, 2, new QTableWidgetItem(question.value("stem").toString()));
-        auto* decision = new QComboBox;
-        decision->addItems({QStringLiteral("采纳"), QStringLiteral("丢弃")});
-        reviewTable_->setCellWidget(row, 3, decision);
-    }
-    allReviewButton_->setText(QStringLiteral("全部异常  %1").arg(needsReview.size()));
+    const auto appendQuestions = [&](const QJsonArray& questions, bool needsReview) {
+        for (const auto& value : questions) {
+            const QJsonObject question = value.toObject();
+            const QJsonObject review = question.value("review").toObject();
+            const QString reason = review.value("reason").toString();
+            if (needsReview && reason.contains(QStringLiteral("答案"))) ++missingAnswers;
+            if (needsReview && reason.contains(QStringLiteral("重复"))) ++duplicates;
+            const QString materialId = question.value("materialId").toString();
+            QTreeWidgetItem* parent = independent;
+            if (!materialId.isEmpty()) {
+                parent = groups.value(materialId, nullptr);
+                if (!parent) {
+                    if (!brokenReferences) {
+                        brokenReferences = new QTreeWidgetItem(reviewTree_,
+                            {QStringLiteral("引用断裂"), QStringLiteral("必须丢弃或修正"), {}});
+                        brokenReferences->setFlags(brokenReferences->flags() |
+                            Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
+                        brokenReferences->setCheckState(0, Qt::Checked);
+                    }
+                    parent = brokenReferences;
+                }
+            }
+            auto* item = new QTreeWidgetItem(parent,
+                {question.value("id").toString(), needsReview
+                    ? reason.left(240) : QStringLiteral("已通过规则校验"),
+                 question.value("stem").toString().left(300)});
+            item->setData(0, Qt::UserRole, question);
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            item->setCheckState(0, Qt::Checked);
+        }
+    };
+    appendQuestions(generatedQuestions_, false);
+    appendQuestions(reviewQuestions_, true);
+    if (independent->childCount() == 0) delete independent;
+    reviewTree_->expandToDepth(0);
+    allReviewButton_->setText(QStringLiteral("全部异常  %1").arg(reviewQuestions_.size()));
     missingAnswerButton_->setText(QStringLiteral("缺少答案  %1").arg(missingAnswers));
     duplicateButton_->setText(QStringLiteral("疑似重复  %1").arg(duplicates));
 }
 
 void StudioWindow::packageProvider() {
-    QJsonArray selected = generatedQuestions_;
-    for (qsizetype row = 0; row < reviewQuestions_.size(); ++row) {
-        auto* decision = qobject_cast<QComboBox*>(reviewTable_->cellWidget(row, 3));
-        if (!decision || decision->currentIndex() == 0) selected.append(reviewQuestions_.at(row));
+    QJsonArray selected;
+    QSet<QString> usedMaterialIds;
+    for (int topIndex = 0; topIndex < reviewTree_->topLevelItemCount(); ++topIndex) {
+        QTreeWidgetItem* group = reviewTree_->topLevelItem(topIndex);
+        for (int childIndex = 0; childIndex < group->childCount(); ++childIndex) {
+            QTreeWidgetItem* child = group->child(childIndex);
+            if (child->checkState(0) == Qt::Unchecked) continue;
+            const QJsonObject question = child->data(0, Qt::UserRole).toJsonObject();
+            if (question.isEmpty()) continue;
+            selected.append(question);
+            const QString materialId = question.value("materialId").toString();
+            if (!materialId.isEmpty()) usedMaterialIds.insert(materialId);
+        }
     }
     if (selected.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("无法生成"), QStringLiteral("至少需要采纳一道题。"));
@@ -489,9 +557,16 @@ void StudioWindow::packageProvider() {
         questionCount = QList<int>{5, 10, 15}.at(questionCount_->currentIndex());
     QJsonObject practice{{"mode", questionCount == 0 ? "all" : "sequential"}};
     if (questionCount > 0) practice.insert("questionCount", qMin(questionCount, selected.size()));
-    const QJsonObject bank{{"schemaVersion", 1}, {"title", title},
+    QJsonArray selectedMaterials;
+    for (const auto& value : generatedMaterials_) {
+        const QJsonObject material = value.toObject();
+        if (usedMaterialIds.contains(material.value("id").toString()))
+            selectedMaterials.append(material);
+    }
+    QJsonObject bank{{"schemaVersion", 2}, {"title", title},
         {"catalogs", QJsonArray{QJsonObject{{"id", "generated"}, {"title", title},
             {"practice", practice}}}}, {"questions", selected}};
+    if (!selectedMaterials.isEmpty()) bank.insert("materials", selectedMaterials);
     QString error;
     if (!quizpane::validateBank(bank, &error)) {
         QMessageBox::warning(this, QStringLiteral("题库校验失败"), error);
@@ -501,7 +576,7 @@ void StudioWindow::packageProvider() {
         title.toUtf8(), QCryptographicHash::Sha256).toHex().left(16));
     const QJsonObject manifest{{"manifestVersion", 2}, {"id", "local.generated." + slug},
         {"name", title}, {"version", "1.0.0"}, {"kind", "declarative"},
-        {"runtime", QJsonObject{{"format", "quizpane.bank+json"}, {"schemaVersion", 1},
+        {"runtime", QJsonObject{{"format", "quizpane.bank+json"}, {"schemaVersion", 2},
             {"entry", "content/bank.json"}}},
         {"permissions", QJsonObject{{"network", false}}}};
     QString output = QFileDialog::getSaveFileName(this, QStringLiteral("保存题库安装包"),
@@ -610,7 +685,7 @@ void StudioWindow::applyStyle() {
       QPushButton#primaryButton { background: #343a42; color: #e2e5e9; }
       QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #9da5ae; }
       QPushButton:disabled { color: #626a73; background: rgba(255,255,255,4); }
-      QLineEdit, QComboBox, QListWidget, QTableWidget { background: #1d2127; color: #cbd0d6; border: none; border-radius: 6px; padding: 8px; selection-background-color: #353c45; }
+      QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget { background: #1d2127; color: #cbd0d6; border: none; border-radius: 6px; padding: 8px; selection-background-color: #353c45; }
       QListWidget::item { padding: 9px; border-bottom: 1px solid rgba(255,255,255,7); }
       QHeaderView::section { background: #20242a; color: #929ba5; border: none; padding: 8px; }
       QProgressBar { background: #242931; border: none; border-radius: 3px; height: 6px; }

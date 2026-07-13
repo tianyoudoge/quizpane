@@ -6,6 +6,7 @@
 #include "quizpane/studio/model_client.hpp"
 
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QObject>
 #include <QSet>
 
@@ -14,45 +15,98 @@ class QNetworkAccessManager;
 namespace quizpane::studio {
 
 enum class WorkflowStage {
-    Idle, Extracting, Chunking, Generating, Validating, Repairing,
-    Packaging, Done, Failed
+    Idle,
+    Extracting,
+    Chunking,
+    Generating,
+    Validating,
+    Repairing,
+    Packaging,
+    Done,
+    Failed
 };
 
 struct WorkflowProgress {
     WorkflowStage stage = WorkflowStage::Idle;
-    int completedChunks = 0;
-    int totalChunks = 0;
+    int completedSourceBlocks = 0;
+    int totalSourceBlocks = 0;
     qint64 inputTokens = 0;
     qint64 outputTokens = 0;
     QString detail;
 };
 
+struct GeneratedBankCandidate {
+    // 已完成稳定重命名、可直接进入最终 BankValidator 的共享材料。
+    QJsonArray materials;
+    // 规则校验通过且无需人工判断的题目。
+    QJsonArray questions;
+    // 可解析但模型低置信度，或修复后仍有结构问题的题目。
+    QJsonArray needsReviewQuestions;
+};
+
+// 模型输出解析是独立的确定性边界：网络状态机和 JSON/Schema 规则互不耦合。
+GeneratedBankCandidate parseGeneratedBankCandidate(const QString& rawText,
+                                                   QString* error = nullptr);
+
 class GenerationWorkflow final : public QObject {
     Q_OBJECT
-public:
+  public:
+    // manager 是外部网络基础设施，生命周期必须覆盖本工作流；工作流自身拥有
+    // ModelClient 和 CheckpointStore，类似 application service 组合 gateway/repository。
     explicit GenerationWorkflow(QNetworkAccessManager* manager, QObject* parent = nullptr);
+
+    // 启动或恢复生成任务：校验检查点、提取文档、语义切块，然后逐块串行调用模型。
+    // 活跃任务上的重复调用会被忽略，所有失败通过 failed 信号返回。
     void start(const QStringList& sourcePaths, const ModelSettings& settings,
                const QString& resumeTaskId = {});
-    void pause();
-    void cancel();
-    bool isActive() const { return active_; }
-    QString taskId() const { return checkpoint_.taskId; }
-    const GenerationCheckpoint& checkpoint() const { return checkpoint_; }
 
-signals:
+    // 取消当前网络请求并原子保存进度，任务可由相同源文件再次恢复。
+    void pause();
+
+    // 取消当前网络请求并删除检查点，之后不能恢复本次任务。
+    void cancel();
+
+    // 返回当前任务是否仍可能发起网络请求。
+    bool isActive() const {
+        return active_;
+    }
+
+    // 返回当前检查点任务 ID；尚未建立任务时为空。
+    QString taskId() const {
+        return checkpoint_.taskId;
+    }
+
+    // 返回只读检查点快照，主要供任务状态展示和诊断使用。
+    const GenerationCheckpoint& checkpoint() const {
+        return checkpoint_;
+    }
+
+  signals:
     void progressChanged(const quizpane::studio::WorkflowProgress& progress);
-    void questionsReady(const QJsonArray& questions, const QJsonArray& needsReviewQuestions);
+    void questionsReady(const quizpane::studio::GeneratedBankCandidate& candidate);
     void failed(const QString& error);
     void finished();
 
-private:
+  private:
+    // 跳过已完成 SourceBlock，选择下一个请求；全部完成时发布候选 DTO。
     void processNextChunk();
+
+    // 构造首次生成或修复请求。修复请求包含原文、上一轮完整输出和结构化错误。
     void requestChunk(bool repair, const QStringList& validationErrors = {});
+
+    // 消费一次模型结果并驱动 parse -> validate -> repair/complete 状态迁移。
     void handleModelResult(const GenerationResult& result);
-    QJsonArray parseQuestions(const QString& rawText, QString* error) const;
-    QJsonObject bankForQuestions(const QJsonArray& questions) const;
-    void completeChunk(const QJsonArray& valid, const QJsonArray& review);
+
+    // 将候选 DTO 包装成唯一 schemaVersion=2 的完整题库对象供规则校验器消费。
+    QJsonObject bankForCandidate(const GeneratedBankCandidate& candidate) const;
+
+    // 为材料和题目生成跨块稳定 ID，修正引用，更新关联索引并原子提交检查点。
+    void completeChunk(GeneratedBankCandidate candidate);
+
+    // 发布不持久化的进度快照，token 数只采用模型响应中的 usage。
     void publish(WorkflowStage stage, const QString& detail);
+
+    // 终止网络活动、尽力保存现有进度并广播统一失败事件。
     void failWorkflow(const QString& error);
 
     ModelClient client_;
@@ -64,9 +118,11 @@ private:
     bool active_ = false;
     bool paused_ = false;
     bool repairing_ = false;
+    QString lastRawOutput_;
 };
 
-}  // namespace quizpane::studio
+} // namespace quizpane::studio
 
 Q_DECLARE_METATYPE(quizpane::studio::WorkflowProgress)
 Q_DECLARE_METATYPE(quizpane::studio::GenerationResult)
+Q_DECLARE_METATYPE(quizpane::studio::GeneratedBankCandidate)

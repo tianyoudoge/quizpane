@@ -48,7 +48,7 @@ bool DeclarativeProvider::load(const QString& bankPath, QString* errorOutput) {
     // 出现安装包声明的版本与实际 bank 内容不符这类静默不一致。
     const int runtimeSchemaVersion =
         manifest.value("runtime").toObject().value("schemaVersion").toInt();
-    if (runtimeSchemaVersion != 1)
+    if (runtimeSchemaVersion != 2)
         return fail(errorOutput, QStringLiteral("声明式题库运行时版本不受支持"));
     if (bank.value("schemaVersion").toInt() != runtimeSchemaVersion)
         return fail(errorOutput, QStringLiteral("manifest 与题库的 Schema 版本不一致"));

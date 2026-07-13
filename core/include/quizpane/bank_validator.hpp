@@ -18,7 +18,7 @@ struct BankValidationError {
 };
 
 // 对 declarative bank.json 做结构与语义校验，规则来自
-// schemas/declarative-provider.schema.json。顶层可选的 materials 数组和
+// schemas/declarative-provider.schema.json（唯一 schemaVersion=2）。顶层可选的 materials 数组和
 // 题目 materialId 用于表达共享材料/题组（同一篇文章、图表贯穿多道子题）；
 // 不含 materials 的题库按普通独立题校验。tools/bank-generator 和题库制作器
 // 共用这一份规则，避免两处校验标准逐渐漂移。

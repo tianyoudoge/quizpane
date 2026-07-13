@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "title", "catalogs", "questions"],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "title": { "type": "string", "minLength": 1, "maxLength": 120 },
     "description": { "type": "string", "maxLength": 2000 },
     "catalogs": {

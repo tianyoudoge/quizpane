@@ -37,7 +37,7 @@ int package(const QString& bankPath, const QString& manifestPath, const QString&
     if (bank.isEmpty() || manifest.isEmpty() || !quizpane::validateBank(bank, &error)) { qCritical().noquote() << error; return 2; }
     const QJsonObject runtime = manifest.value("runtime").toObject();
     if (manifest.value("manifestVersion").toInt() != 2 || manifest.value("kind") != QStringLiteral("declarative") ||
-        runtime.value("format") != QStringLiteral("quizpane.bank+json") || runtime.value("schemaVersion").toInt() != 1 ||
+        runtime.value("format") != QStringLiteral("quizpane.bank+json") || runtime.value("schemaVersion").toInt() != 2 ||
         runtime.value("entry") != QStringLiteral("content/bank.json")) {
         qCritical() << "Manifest 必须是入口为 content/bank.json 的 declarative v2"; return 3;
     }

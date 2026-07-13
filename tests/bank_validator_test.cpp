@@ -42,6 +42,13 @@ int main(int argc, char** argv) {
     QString error;
     if (!quizpane::validateBank(validBank, &error) || !error.isEmpty()) return 3;
 
+    // v2 是唯一业务 Schema；v1 不兼容、不迁移。
+    {
+        QJsonObject legacy = validBank;
+        legacy.insert("schemaVersion", 1);
+        if (quizpane::validateBankDetailed(legacy).isEmpty()) return 100;
+    }
+
     // 重复题目 id：复制第一题但不改 id，应报告为无效。
     {
         QJsonObject bank = validBank;

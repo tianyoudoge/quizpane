@@ -13,7 +13,10 @@
 namespace quizpane::studio {
 namespace {
 const QString kSystemPrompt = QStringLiteral(
-    "你是题库结构化助手。只输出一个 JSON 对象，格式为 {\"questions\":[...]}。"
+    "你是题库结构化助手。只输出一个 JSON 对象，格式为 "
+    "{\"materials\":[...],\"questions\":[...]}。共享文章、图表或案例必须只放在 "
+    "materials 中，每份材料包含 id、catalogId、title、body；关联子题用 materialId 引用，"
+    "不得把材料正文复制到每道题 stem。没有共享材料时返回空 materials 数组。"
     "只生成 single_choice 或 true_false。每题必须包含 id、catalogId、type、stem、"
     "options、answer、solution；catalogId 固定为 generated；id 和选项 id 只能用小写"
     "字母、数字、点、下划线或连字符；answer.optionIds 必须恰好引用一个现有选项。"
@@ -33,10 +36,51 @@ QString stripCodeFence(QString text) {
 
 QStringList validationMessages(const QList<BankValidationError>& errors) {
     QStringList messages;
-    for (const auto& error : errors) messages.append(error.message);
+    for (const auto& error : errors) {
+        QJsonObject structured{{"message", error.message}, {"questionIndex", error.questionIndex}};
+        if (!error.questionId.isEmpty())
+            structured.insert("questionId", error.questionId);
+        if (!error.materialId.isEmpty())
+            structured.insert("materialId", error.materialId);
+        messages.append(
+            QString::fromUtf8(QJsonDocument(structured).toJson(QJsonDocument::Compact)));
+    }
     return messages;
 }
-}  // namespace
+
+QString safeId(QString value, const QString& fallback) {
+    value = value.toLower();
+    value.replace(QRegularExpression(QStringLiteral("[^a-z0-9._-]")), QStringLiteral("-"));
+    while (value.startsWith('-') || value.startsWith('.') || value.startsWith('_'))
+        value.remove(0, 1);
+    return value.isEmpty() ? fallback : value.left(64);
+}
+} // namespace
+
+GeneratedBankCandidate parseGeneratedBankCandidate(const QString& rawText, QString* error) {
+    if (error)
+        error->clear();
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(stripCodeFence(rawText).toUtf8(), &parseError);
+    if (!document.isObject()) {
+        if (error)
+            *error = QStringLiteral("模型输出不是 JSON 对象：%1").arg(parseError.errorString());
+        return {};
+    }
+    const QJsonObject object = document.object();
+    if (!object.value("materials").isArray()) {
+        if (error)
+            *error = QStringLiteral("模型输出缺少 materials 数组");
+        return {};
+    }
+    if (!object.value("questions").isArray()) {
+        if (error)
+            *error = QStringLiteral("模型输出缺少 questions 数组");
+        return {};
+    }
+    return {object.value("materials").toArray(), object.value("questions").toArray(), {}};
+}
 
 GenerationWorkflow::GenerationWorkflow(QNetworkAccessManager* manager, QObject* parent)
     : QObject(parent), client_(manager, this) {
@@ -45,7 +89,8 @@ GenerationWorkflow::GenerationWorkflow(QNetworkAccessManager* manager, QObject* 
 
 void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettings& settings,
                                const QString& resumeTaskId) {
-    if (active_) return;
+    if (active_)
+        return;
     if (settings.vendorId == QStringLiteral("anthropic")) {
         failWorkflow(QStringLiteral("Anthropic Messages API 生成暂未实现"));
         return;
@@ -55,11 +100,13 @@ void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettin
     chunks_.clear();
     currentChunkPosition_ = -1;
     repairing_ = false;
+    lastRawOutput_.clear();
     paused_ = false;
     active_ = true;
 
     QStringList absolutePaths;
-    for (const QString& path : sourcePaths) absolutePaths.append(QFileInfo(path).absoluteFilePath());
+    for (const QString& path : sourcePaths)
+        absolutePaths.append(QFileInfo(path).absoluteFilePath());
     const QString computedTaskId = store_.taskIdForSources(absolutePaths);
     const QString taskId = resumeTaskId.isEmpty() ? computedTaskId : resumeTaskId;
     QString checkpointError;
@@ -96,20 +143,28 @@ void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettin
             failWorkflow(QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error));
             return;
         }
-        publish(WorkflowStage::Chunking, QStringLiteral("正在分段：%1").arg(QFileInfo(path).fileName()));
+        publish(WorkflowStage::Chunking,
+                QStringLiteral("正在分段：%1").arg(QFileInfo(path).fileName()));
         const auto fileChunks = chunker.split(path, document.plainText, nextIndex);
         chunks_ += fileChunks;
-        nextIndex += fileChunks.size();
+        for (const auto& chunk : fileChunks)
+            nextIndex += chunk.sourceBlockIndices.size();
     }
     if (chunks_.isEmpty()) {
         failWorkflow(QStringLiteral("没有可发送给模型的文本内容"));
         return;
     }
+    if (checkpoint_.sourceBlockCount != 0 && checkpoint_.sourceBlockCount != nextIndex) {
+        failWorkflow(QStringLiteral("任务结构已升级，请重新开始"));
+        return;
+    }
+    checkpoint_.sourceBlockCount = nextIndex;
     processNextChunk();
 }
 
 void GenerationWorkflow::pause() {
-    if (!active_) return;
+    if (!active_)
+        return;
     paused_ = true;
     client_.cancel();
     QString ignored;
@@ -121,19 +176,29 @@ void GenerationWorkflow::cancel() {
     client_.cancel();
     active_ = false;
     paused_ = false;
-    if (!checkpoint_.taskId.isEmpty()) store_.clear(checkpoint_.taskId);
+    if (!checkpoint_.taskId.isEmpty())
+        store_.clear(checkpoint_.taskId);
 }
 
 void GenerationWorkflow::processNextChunk() {
-    if (!active_ || paused_) return;
-    QSet<int> completed(checkpoint_.completedChunks.begin(), checkpoint_.completedChunks.end());
+    if (!active_ || paused_)
+        return;
+    QSet<int> completed(checkpoint_.completedSourceBlocks.begin(),
+                        checkpoint_.completedSourceBlocks.end());
     ++currentChunkPosition_;
-    while (currentChunkPosition_ < chunks_.size() && completed.contains(chunks_[currentChunkPosition_].index))
+    while (currentChunkPosition_ < chunks_.size()) {
+        bool allCompleted = true;
+        for (int index : chunks_[currentChunkPosition_].sourceBlockIndices)
+            allCompleted = allCompleted && completed.contains(index);
+        if (!allCompleted)
+            break;
         ++currentChunkPosition_;
+    }
     if (currentChunkPosition_ >= chunks_.size()) {
         active_ = false;
         publish(WorkflowStage::Done, QStringLiteral("全部分块已生成并校验"));
-        emit questionsReady(checkpoint_.questions, checkpoint_.needsReviewQuestions);
+        emit questionsReady(
+            {checkpoint_.materials, checkpoint_.questions, checkpoint_.needsReviewQuestions});
         emit finished();
         return;
     }
@@ -144,105 +209,155 @@ void GenerationWorkflow::processNextChunk() {
 void GenerationWorkflow::requestChunk(bool repair, const QStringList& errors) {
     const TextChunk& chunk = chunks_.at(currentChunkPosition_);
     publish(repair ? WorkflowStage::Repairing : WorkflowStage::Generating,
-        QStringLiteral("%1分块 %2 / %3：%4")
-            .arg(repair ? QStringLiteral("正在修复") : QStringLiteral("正在生成"))
-            .arg(chunk.index + 1).arg(chunks_.size()).arg(QFileInfo(chunk.sourcePath).fileName()));
+            QStringLiteral("%1分块 %2 / %3：%4")
+                .arg(repair ? QStringLiteral("正在修复") : QStringLiteral("正在生成"))
+                .arg(chunk.index + 1)
+                .arg(chunks_.size())
+                .arg(QFileInfo(chunk.sourcePath).fileName()));
     QString content;
     if (repair) {
-        content = QStringLiteral("上一轮输出未通过规则校验。错误：\n- %1\n\n原文：\n%2\n\n"
-                                 "请重新输出完整且合法的 questions JSON。")
-                      .arg(errors.join(QStringLiteral("\n- ")), chunk.text);
+        content = QStringLiteral("上一轮输出未通过规则校验。结构化错误：\n%1\n\n"
+                                 "上一轮完整输出：\n%2\n\n原文块：\n%3\n\n"
+                                 "请重新输出完整且合法的 materials + questions JSON，"
+                                 "修复材料及其全部关联子题，不要只返回单题。")
+                      .arg(errors.join(QChar('\n')), lastRawOutput_, chunk.text);
     } else {
         content = QStringLiteral("请从以下原文提取可回答的题目。若原文不足以形成可靠题目，"
-                                 "返回空 questions 数组。\n\n来源：%1\n\n%2")
+                                 "返回空 materials 和 questions 数组。\n\n来源：%1\n\n%2")
                       .arg(QFileInfo(chunk.sourcePath).fileName(), chunk.text);
     }
     client_.generate(settings_, {kSystemPrompt, content, settings_.modelName});
 }
 
 void GenerationWorkflow::handleModelResult(const GenerationResult& result) {
-    if (!active_ || paused_) return;
+    if (!active_ || paused_)
+        return;
     if (!result.ok) {
         failWorkflow(QStringLiteral("模型调用失败：%1").arg(result.error));
         return;
     }
     checkpoint_.inputTokens += result.promptTokens;
     checkpoint_.outputTokens += result.completionTokens;
+    lastRawOutput_ = result.rawText;
     QString parseError;
-    const QJsonArray questions = parseQuestions(result.rawText, &parseError);
+    GeneratedBankCandidate candidate = parseGeneratedBankCandidate(result.rawText, &parseError);
     if (!parseError.isEmpty()) {
         if (!repairing_) {
             repairing_ = true;
             requestChunk(true, {parseError});
             return;
         }
-        completeChunk({}, {});
+        failWorkflow(QStringLiteral("模型修复后仍无法解析：%1").arg(parseError));
         return;
     }
-    if (questions.isEmpty()) {
-        completeChunk({}, {});
+    if (candidate.questions.isEmpty() && candidate.materials.isEmpty()) {
+        completeChunk({});
         return;
     }
-    publish(WorkflowStage::Validating, QStringLiteral("正在校验分块 %1 的题目结构").arg(currentChunkPosition_ + 1));
-    const auto errors = validateBankDetailed(bankForQuestions(questions));
+    publish(WorkflowStage::Validating,
+            QStringLiteral("正在校验分块 %1 的题目结构").arg(currentChunkPosition_ + 1));
+    const auto errors = validateBankDetailed(bankForCandidate(candidate));
     if (!errors.isEmpty()) {
         if (!repairing_) {
             repairing_ = true;
             requestChunk(true, validationMessages(errors));
             return;
         }
-        completeChunk({}, {});
+        const QString reason = validationMessages(errors).join(QStringLiteral("；"));
+        QJsonArray review;
+        for (const auto& value : candidate.questions) {
+            if (!value.isObject())
+                continue;
+            QJsonObject question = value.toObject();
+            question.insert("review", QJsonObject{{"needsReview", true},
+                                                  {"reason", reason.left(1000)},
+                                                  {"confidence", 0.0}});
+            review.append(question);
+        }
+        candidate.questions = {};
+        candidate.needsReviewQuestions = review;
+        completeChunk(candidate);
         return;
     }
     QJsonArray normal;
     QJsonArray review;
-    for (const auto& value : questions) {
+    for (const auto& value : candidate.questions) {
         const QJsonObject question = value.toObject();
-        if (question.value("review").toObject().value("needsReview").toBool()) review.append(question);
-        else normal.append(question);
+        if (question.value("review").toObject().value("needsReview").toBool())
+            review.append(question);
+        else
+            normal.append(question);
     }
-    completeChunk(normal, review);
+    candidate.questions = normal;
+    candidate.needsReviewQuestions = review;
+    completeChunk(candidate);
 }
 
-QJsonArray GenerationWorkflow::parseQuestions(const QString& rawText, QString* error) const {
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(stripCodeFence(rawText).toUtf8(), &parseError);
-    if (!document.isObject()) {
-        if (error) *error = QStringLiteral("模型输出不是 JSON 对象：%1").arg(parseError.errorString());
-        return {};
-    }
-    const QJsonValue value = document.object().value("questions");
-    if (!value.isArray()) {
-        if (error) *error = QStringLiteral("模型输出缺少 questions 数组");
-        return {};
-    }
-    return value.toArray();
+QJsonObject GenerationWorkflow::bankForCandidate(const GeneratedBankCandidate& candidate) const {
+    return {
+        {"schemaVersion", 2},
+        {"title", "Generated"},
+        {"catalogs", QJsonArray{QJsonObject{{"id", "generated"},
+                                            {"title", "自动生成"},
+                                            {"practice", QJsonObject{{"mode", "sequential"}}}}}},
+        {"materials", candidate.materials},
+        {"questions", candidate.questions}};
 }
 
-QJsonObject GenerationWorkflow::bankForQuestions(const QJsonArray& questions) const {
-    return {{"schemaVersion", 1}, {"title", "Generated"},
-        {"catalogs", QJsonArray{QJsonObject{{"id", "generated"}, {"title", "自动生成"},
-            {"practice", QJsonObject{{"mode", "sequential"}}}}}}, {"questions", questions}};
-}
-
-void GenerationWorkflow::completeChunk(const QJsonArray& valid, const QJsonArray& review) {
-    const int chunkIndex = chunks_.at(currentChunkPosition_).index;
-    const auto appendPrepared = [chunkIndex](const QJsonArray& source, QJsonArray* target) {
+void GenerationWorkflow::completeChunk(GeneratedBankCandidate candidate) {
+    const TextChunk& chunk = chunks_.at(currentChunkPosition_);
+    const int blockIndex =
+        chunk.sourceBlockIndices.isEmpty() ? 0 : chunk.sourceBlockIndices.first();
+    QHash<QString, QString> renamedInChunk;
+    int materialOrdinal = 0;
+    for (const auto& value : candidate.materials) {
+        if (!value.isObject())
+            continue;
+        QJsonObject material = value.toObject();
+        const QString originalId = material.value("id").toString();
+        const QString renameKey = QStringLiteral("%1:%2").arg(blockIndex).arg(originalId);
+        QString stableId = checkpoint_.materialIdRenames.value(renameKey).toString();
+        if (stableId.isEmpty()) {
+            stableId = QStringLiteral("b%1-m%2-%3")
+                           .arg(blockIndex)
+                           .arg(++materialOrdinal)
+                           .arg(safeId(originalId, QStringLiteral("material")));
+            stableId = stableId.left(96);
+            checkpoint_.materialIdRenames.insert(renameKey, stableId);
+        }
+        renamedInChunk.insert(originalId, stableId);
+        material.insert("id", stableId);
+        material.insert("catalogId", QStringLiteral("generated"));
+        checkpoint_.materials.append(material);
+    }
+    const auto appendPrepared = [this, blockIndex, &renamedInChunk](const QJsonArray& source,
+                                                                    QJsonArray* target) {
         int ordinal = 0;
         for (const auto& value : source) {
+            if (!value.isObject())
+                continue;
             QJsonObject question = value.toObject();
-            QString originalId = question.value("id").toString().toLower();
-            originalId.replace(QRegularExpression(QStringLiteral("[^a-z0-9._-]")), QStringLiteral("-"));
-            if (originalId.isEmpty()) originalId = QStringLiteral("question");
-            const QString prefix = QStringLiteral("c%1-%2-").arg(chunkIndex).arg(++ordinal);
+            const QString originalId =
+                safeId(question.value("id").toString(), QStringLiteral("question"));
+            const QString prefix = QStringLiteral("b%1-q%2-").arg(blockIndex).arg(++ordinal);
             question.insert("id", prefix + originalId.left(96 - prefix.size()));
             question.insert("catalogId", QStringLiteral("generated"));
+            const QString originalMaterialId = question.value("materialId").toString();
+            if (!originalMaterialId.isEmpty() && renamedInChunk.contains(originalMaterialId)) {
+                const QString materialId = renamedInChunk.value(originalMaterialId);
+                question.insert("materialId", materialId);
+                QJsonArray ids = checkpoint_.materialQuestionIds.value(materialId).toArray();
+                ids.append(question.value("id").toString());
+                checkpoint_.materialQuestionIds.insert(materialId, ids);
+            }
             target->append(question);
         }
     };
-    appendPrepared(valid, &checkpoint_.questions);
-    appendPrepared(review, &checkpoint_.needsReviewQuestions);
-    checkpoint_.completedChunks.append(chunks_.at(currentChunkPosition_).index);
+    appendPrepared(candidate.questions, &checkpoint_.questions);
+    appendPrepared(candidate.needsReviewQuestions, &checkpoint_.needsReviewQuestions);
+    for (int index : chunk.sourceBlockIndices)
+        if (!checkpoint_.completedSourceBlocks.contains(index))
+            checkpoint_.completedSourceBlocks.append(index);
     QString error;
     if (!store_.save(checkpoint_, &error)) {
         failWorkflow(QStringLiteral("无法保存生成检查点：%1").arg(error));
@@ -252,18 +367,19 @@ void GenerationWorkflow::completeChunk(const QJsonArray& valid, const QJsonArray
 }
 
 void GenerationWorkflow::publish(WorkflowStage stage, const QString& detail) {
-    emit progressChanged({stage, static_cast<int>(checkpoint_.completedChunks.size()),
-                          static_cast<int>(chunks_.size()),
-                          checkpoint_.inputTokens, checkpoint_.outputTokens, detail});
+    emit progressChanged({stage, static_cast<int>(checkpoint_.completedSourceBlocks.size()),
+                          checkpoint_.sourceBlockCount, checkpoint_.inputTokens,
+                          checkpoint_.outputTokens, detail});
 }
 
 void GenerationWorkflow::failWorkflow(const QString& error) {
     client_.cancel();
     active_ = false;
     QString ignored;
-    if (!checkpoint_.taskId.isEmpty()) store_.save(checkpoint_, &ignored);
+    if (!checkpoint_.taskId.isEmpty())
+        store_.save(checkpoint_, &ignored);
     publish(WorkflowStage::Failed, error);
     emit failed(error);
 }
 
-}  // namespace quizpane::studio
+} // namespace quizpane::studio

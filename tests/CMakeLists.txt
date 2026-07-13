@@ -57,6 +57,14 @@ target_compile_definitions(declarative_provider_materials_test PRIVATE
 )
 add_test(NAME declarative_provider_materials_test COMMAND declarative_provider_materials_test)
 
+add_executable(material_package_e2e_test material_package_e2e_test.cpp)
+target_link_libraries(material_package_e2e_test PRIVATE
+    quizpane_provider_host quizpane_core Qt6::Core)
+target_compile_definitions(material_package_e2e_test PRIVATE
+    DECLARATIVE_MATERIALS_BANK_PATH="${PROJECT_SOURCE_DIR}/schemas/examples/declarative-materials/content/bank.json"
+)
+add_test(NAME material_package_e2e_test COMMAND material_package_e2e_test)
+
 add_executable(bank_validator_test bank_validator_test.cpp)
 target_link_libraries(bank_validator_test PRIVATE quizpane_core Qt6::Core)
 target_compile_definitions(bank_validator_test PRIVATE
@@ -89,4 +97,9 @@ if(TARGET question_maker_engine)
     add_executable(chunker_test chunker_test.cpp)
     target_link_libraries(chunker_test PRIVATE question_maker_engine Qt6::Core)
     add_test(NAME chunker_test COMMAND chunker_test)
+
+    add_executable(generation_workflow_test generation_workflow_test.cpp)
+    target_link_libraries(generation_workflow_test PRIVATE
+        question_maker_engine Qt6::Core Qt6::Network)
+    add_test(NAME generation_workflow_test COMMAND generation_workflow_test)
 endif()
