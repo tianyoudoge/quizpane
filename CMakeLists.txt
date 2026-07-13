@@ -13,6 +13,7 @@ set(CMAKE_AUTOMOC ON)
 option(QUIZPANE_BUILD_TESTS "Build QuizPane tests" ON)
 option(QUIZPANE_BUILD_BANK_GENERATOR
        "Build the experimental local question-bank generator" OFF)
+option(QUIZPANE_BUILD_BANK_STUDIO "Build the QuizPane Bank Studio GUI" ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network)
 find_package(Qt6CorePrivate ${Qt6Core_VERSION} EXACT REQUIRED)
@@ -36,6 +37,9 @@ add_subdirectory(sdk)
 add_subdirectory(core)
 add_subdirectory(providers/demo)
 add_subdirectory(apps/desktop-qt)
+if(QUIZPANE_BUILD_BANK_STUDIO)
+    add_subdirectory(apps/bank-studio)
+endif()
 
 if(QUIZPANE_BUILD_BANK_GENERATOR)
     add_subdirectory(tools/bank-generator)

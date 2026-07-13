@@ -19,9 +19,12 @@ ctest --test-dir $Build --output-on-failure
 $Stage = Join-Path $Dist "小窗刷题"
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 Copy-Item (Join-Path $Build "apps/desktop-qt/小窗刷题.exe") $Stage -Force
+Copy-Item (Join-Path $Build "apps/bank-studio/题库生成器.exe") $Stage -Force
 Copy-Item (Join-Path $Root "LICENSE") $Stage -Force
 & (Join-Path $QtRoot "bin/windeployqt.exe") --release --no-translations `
   (Join-Path $Stage "小窗刷题.exe")
+& (Join-Path $QtRoot "bin/windeployqt.exe") --release --no-translations `
+  (Join-Path $Stage "题库生成器.exe")
 $Zip = Join-Path $Dist "小窗刷题-windows-x64.zip"
 if (Test-Path $Zip) { Remove-Item $Zip -Force }
 Compress-Archive -Path "$Stage/*" -DestinationPath $Zip

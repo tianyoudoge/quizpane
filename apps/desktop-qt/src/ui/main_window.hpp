@@ -53,6 +53,7 @@ private:
     enum class UiSize { Small, Medium, Large };
 
     void chooseProviderPackage();
+    void openBankStudio();
     void runPrimaryAction();
     void beginLogin();
     void pollLogin();

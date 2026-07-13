@@ -24,9 +24,12 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
   "$APPDIR/usr/share/icons/hicolor/1024x1024/apps" \
   "$APPDIR/usr/share/mime/packages"
 cp "$BUILD_DIR/apps/desktop-qt/小窗刷题" "$APPDIR/usr/bin/"
+cp "$BUILD_DIR/apps/bank-studio/题库生成器" "$APPDIR/usr/bin/"
 cp "$ROOT/apps/desktop-qt/resources/app-icon.png" \
   "$APPDIR/usr/share/icons/hicolor/1024x1024/apps/org.quizpane.app.png"
 cp "$ROOT/packaging/linux/org.quizpane.app.desktop" \
+  "$APPDIR/usr/share/applications/"
+cp "$ROOT/packaging/linux/org.quizpane.bank-studio.desktop" \
   "$APPDIR/usr/share/applications/"
 cp "$ROOT/packaging/linux/org.quizpane.provider.xml" \
   "$APPDIR/usr/share/mime/packages/"

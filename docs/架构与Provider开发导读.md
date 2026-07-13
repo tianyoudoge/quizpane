@@ -7,6 +7,7 @@
 | C++ 模块 | Java Web 类比 | 责任 |
 |---|---|---|
 | `apps/desktop-qt` | Controller + View | 窗口、菜单、用户交互和流程编排 |
+| `apps/bank-studio` | Import UI | 文档导入、模型选择、生成进度与异常复核 |
 | `core` | Domain/Service | 答题状态、草稿和图片处理 |
 | `sdk` | SPI + Adapter | Provider ABI、原生/声明式运行时、安装和安全存储 |
 | `providers/demo` | Mock Adapter | 完全离线的参考实现 |
