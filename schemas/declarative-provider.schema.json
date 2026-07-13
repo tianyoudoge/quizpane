@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://quizpane.org/schema/declarative-provider-v1.json",
-  "title": "QuizPane Declarative Bank v1",
+  "$id": "https://quizpane.org/schema/declarative-provider.json",
+  "title": "QuizPane Declarative Bank",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "title", "catalogs", "questions"],
@@ -33,6 +33,10 @@
         }
       }
     },
+    "materials": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/material" }
+    },
     "questions": {
       "type": "array",
       "minItems": 1,
@@ -48,6 +52,31 @@
       "properties": {
         "path": { "type": "string", "pattern": "^assets/[A-Za-z0-9._/-]+$" },
         "alt": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "document": { "type": "string", "maxLength": 300 },
+        "page": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "catalogId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "catalogId": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "maxLength": 200 },
+        "body": { "type": "string", "maxLength": 100000 },
+        "images": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/asset" }
+        },
+        "source": { "$ref": "#/$defs/source" }
       }
     },
     "option": {
@@ -67,6 +96,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "catalogId": { "$ref": "#/$defs/id" },
+        "materialId": { "$ref": "#/$defs/id" },
         "type": { "enum": ["single_choice", "true_false"] },
         "stem": { "type": "string", "minLength": 1, "maxLength": 20000 },
         "stemImage": { "$ref": "#/$defs/asset" },
@@ -80,14 +110,7 @@
           }
         },
         "solution": { "type": "string", "maxLength": 20000 },
-        "source": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "document": { "type": "string", "maxLength": 300 },
-            "page": { "type": "integer", "minimum": 1 }
-          }
-        },
+        "source": { "$ref": "#/$defs/source" },
         "review": {
           "type": "object",
           "additionalProperties": false,

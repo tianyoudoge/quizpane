@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 2,
+  "id": "example.local.reading-comprehension",
+  "name": "共享材料示例题库",
+  "version": "1.0.0",
+  "kind": "declarative",
+  "runtime": {
+    "format": "quizpane.bank+json",
+    "schemaVersion": 1,
+    "entry": "content/bank.json"
+  },
+  "permissions": { "network": false }
+}

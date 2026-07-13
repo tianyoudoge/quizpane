@@ -1,5 +1,7 @@
 #include "quizpane/declarative_provider.hpp"
 
+#include "quizpane/bank_validator.hpp"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -41,52 +43,40 @@ bool DeclarativeProvider::load(const QString& bankPath, QString* errorOutput) {
     if (manifest.value("manifestVersion").toInt() != 2 ||
         manifest.value("kind").toString() != QStringLiteral("declarative"))
         return fail(errorOutput, QStringLiteral("声明式题库缺少有效的 manifest.json"));
-    if (bank.value("schemaVersion").toInt() != 1 || !bank.value("catalogs").isArray() ||
-        !bank.value("questions").isArray())
-        return fail(errorOutput, QStringLiteral("题库数据格式无效"));
+
+    // manifest.runtime.schemaVersion 和 bank.schemaVersion 必须一致，否则可能
+    // 出现安装包声明的版本与实际 bank 内容不符这类静默不一致。
+    const int runtimeSchemaVersion =
+        manifest.value("runtime").toObject().value("schemaVersion").toInt();
+    if (runtimeSchemaVersion != 1)
+        return fail(errorOutput, QStringLiteral("声明式题库运行时版本不受支持"));
+    if (bank.value("schemaVersion").toInt() != runtimeSchemaVersion)
+        return fail(errorOutput, QStringLiteral("manifest 与题库的 Schema 版本不一致"));
+
+    const auto errors = validateBankDetailed(bank);
+    if (!errors.isEmpty())
+        return fail(errorOutput, errors.first().message);
+
     providerId_ = manifest.value("id").toString();
     providerName_ = manifest.value("name").toString();
     providerVersion_ = manifest.value("version").toString();
     bankTitle_ = bank.value("title").toString(providerName_);
     catalogs_ = bank.value("catalogs").toArray();
     questions_ = bank.value("questions").toArray();
-    if (providerId_.isEmpty() || providerName_.isEmpty() || catalogs_.isEmpty() || questions_.isEmpty()) {
-        unload(); return fail(errorOutput, QStringLiteral("题库名称、分类或题目为空"));
+    materials_ = bank.value("materials").toArray();
+    if (providerId_.isEmpty() || providerName_.isEmpty()) {
+        unload(); return fail(errorOutput, QStringLiteral("题库名称或标识为空"));
     }
-
-    QSet<QString> catalogIds, questionIds;
-    for (const auto& value : catalogs_) {
-        const QString id = value.toObject().value("id").toString();
-        if (id.isEmpty() || catalogIds.contains(id)) { unload(); return fail(errorOutput, QStringLiteral("题库分类标识为空或重复")); }
-        catalogIds.insert(id);
-    }
-    for (const auto& value : questions_) {
-        const QJsonObject question = value.toObject();
-        const QString id = question.value("id").toString();
-        const QJsonArray options = question.value("options").toArray();
-        const QJsonArray answers = question.value("answer").toObject().value("optionIds").toArray();
-        if (id.isEmpty() || questionIds.contains(id) ||
-            !catalogIds.contains(question.value("catalogId").toString()) ||
-            options.size() < 2 || answers.size() != 1) {
-            unload(); return fail(errorOutput, QStringLiteral("题目 %1 的结构无效").arg(id));
-        }
-        const QString answerId = answers.first().toString();
-        bool found = false;
-        QSet<QString> optionIds;
-        for (const auto& optionValue : options) {
-            const QString optionId = optionValue.toObject().value("id").toString();
-            if (optionId.isEmpty() || optionIds.contains(optionId)) { unload(); return fail(errorOutput, QStringLiteral("题目 %1 的选项标识无效").arg(id)); }
-            optionIds.insert(optionId); found |= optionId == answerId;
-        }
-        if (!found) { unload(); return fail(errorOutput, QStringLiteral("题目 %1 的答案没有对应选项").arg(id)); }
-        questionIds.insert(id);
-    }
+    for (const auto& value : materials_)
+        materialsById_.insert(value.toObject().value("id").toString(), value.toObject());
     return true;
 }
 
 void DeclarativeProvider::unload() {
     providerId_.clear(); providerName_.clear(); providerVersion_.clear(); bankTitle_.clear();
-    activeCatalogTitle_.clear(); catalogs_ = {}; questions_ = {}; activeQuestions_ = {}; answers_.clear();
+    activeCatalogTitle_.clear();
+    catalogs_ = {}; questions_ = {}; materials_ = {}; activeQuestions_ = {};
+    materialsById_.clear(); answers_.clear();
 }
 
 QJsonObject DeclarativeProvider::descriptor() const {
@@ -98,6 +88,33 @@ QJsonObject DeclarativeProvider::error(const QJsonValue& id, const QString& mess
 QJsonObject DeclarativeProvider::findCatalog(const QString& id) const {
     for (const auto& value : catalogs_) if (value.toObject().value("id").toString() == id) return value.toObject();
     return {};
+}
+
+QVector<QJsonArray> DeclarativeProvider::buildUnits(const QString& catalogId) const {
+    // 普通题是只含一道题的单元；共享同一 materialId 的题目合并成一个不可拆分
+    // 的题组单元。单元出现的顺序和组内题目顺序都取 questions_ 数组中的首次
+    // 出现位置，不做任何重排——重排交给调用方（例如随机模式打乱单元顺序）。
+    QVector<QJsonArray> units;
+    QHash<QString, int> unitIndexByMaterial;
+    for (const auto& value : questions_) {
+        const QJsonObject question = value.toObject();
+        if (question.value("catalogId").toString() != catalogId) continue;
+        const QString materialId = question.value("materialId").toString();
+        if (materialId.isEmpty()) {
+            units.append(QJsonArray{question});
+            continue;
+        }
+        const auto it = unitIndexByMaterial.constFind(materialId);
+        if (it == unitIndexByMaterial.constEnd()) {
+            unitIndexByMaterial.insert(materialId, static_cast<int>(units.size()));
+            units.append(QJsonArray{question});
+        } else {
+            QJsonArray unit = units[it.value()];
+            unit.append(question);
+            units[it.value()] = unit;
+        }
+    }
+    return units;
 }
 
 QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
@@ -116,11 +133,30 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
         }
         QJsonObject question{{"id", source.value("id")}, {"type", source.value("type")},
             {"contentHtml", paragraph(source.value("stem").toString())}, {"options", options}};
+        if (source.contains("materialId")) question.insert("materialId", source.value("materialId"));
         if (withSolutions) {
             question.insert("correctChoice", correct);
             question.insert("solutionHtml", paragraph(source.value("solution").toString()));
         }
         result.append(question);
+    }
+    return result;
+}
+
+QJsonArray DeclarativeProvider::hostMaterials() const {
+    // 只返回当前作答题目实际引用到的材料，且按题目中首次出现的顺序排列，
+    // 避免把整份题库的材料都发给客户端。materialId -> material 缓存这里保留
+    // 在 Provider 侧；主程序侧的 materialId -> material 缓存是另一层，用于
+    // 避免题组内切题时重复解析 HTML。
+    QJsonArray result;
+    QSet<QString> seen;
+    for (const auto& value : activeQuestions_) {
+        const QString materialId = value.toObject().value("materialId").toString();
+        if (materialId.isEmpty() || seen.contains(materialId)) continue;
+        seen.insert(materialId);
+        const QJsonObject material = materialsById_.value(materialId);
+        result.append(QJsonObject{{"id", materialId}, {"title", material.value("title")},
+            {"contentHtml", paragraph(material.value("body").toString())}});
     }
     return result;
 }
@@ -150,17 +186,26 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
     if (method == "attempt.create") {
         const QJsonObject catalog = findCatalog(params.value("categoryId").toString());
         if (catalog.isEmpty()) return error(id, QStringLiteral("练习分类不存在"));
-        QList<QJsonValue> candidates;
-        for (const auto& question : questions_) if (question.toObject().value("catalogId") == catalog.value("id")) candidates.append(question);
+        QVector<QJsonArray> units = buildUnits(catalog.value("id").toString());
         if (catalog.value("practice").toObject().value("mode") == QStringLiteral("random"))
-            std::shuffle(candidates.begin(), candidates.end(), *QRandomGenerator::global());
-        const int count = qBound(1, params.value("count").toInt(candidates.size()), static_cast<int>(candidates.size()));
-        activeQuestions_ = {}; for (int i = 0; i < count; ++i) activeQuestions_.append(candidates.at(i));
+            std::shuffle(units.begin(), units.end(), *QRandomGenerator::global());
+        int totalQuestions = 0;
+        for (const auto& unit : units) totalQuestions += static_cast<int>(unit.size());
+        const int target = qBound(1, params.value("count").toInt(totalQuestions), qMax(1, totalQuestions));
+        // 逐个单元整体加入，直到题量达到或超过目标；题组永远整体加入，
+        // 即使最后一个题组会让总题量超过目标也不截断（见交接方案 8.3）。
+        QJsonArray selected;
+        for (const auto& unit : units) {
+            if (selected.size() >= target) break;
+            for (const auto& question : unit) selected.append(question);
+        }
+        activeQuestions_ = selected;
         answers_.clear(); activeCatalogTitle_ = catalog.value("title").toString(bankTitle_);
         return {{"id", id}, {"result", QJsonObject{{"attemptId", QUuid::createUuid().toString(QUuid::WithoutBraces)},
-            {"title", activeCatalogTitle_}, {"status", "active"}, {"questionCount", count}}}};
+            {"title", activeCatalogTitle_}, {"status", "active"}, {"questionCount", selected.size()}}}};
     }
-    if (method == "attempt.questions") return {{"id", id}, {"result", QJsonObject{{"questions", hostQuestions(false)}}}};
+    if (method == "attempt.questions") return {{"id", id}, {"result", QJsonObject{
+        {"materials", hostMaterials()}, {"questions", hostQuestions(false)}}}};
     if (method == "attempt.saveAnswers") {
         for (const auto& value : params.value("answers").toArray()) { const auto answer = value.toObject(); bool ok = false;
             const int choice = answer.value("answer").toObject().value("choice").toString().toInt(&ok);
@@ -172,7 +217,8 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
         for (qsizetype i = 0; i < solutions.size(); ++i) correct += answers_.value(static_cast<int>(i), -1) == solutions.at(i).toObject().value("correctChoice").toInt(-2);
         return {{"id", id}, {"result", QJsonObject{{"questionCount", activeQuestions_.size()}, {"answerCount", answers_.size()}, {"correctCount", correct}}}};
     }
-    if (method == "attempt.solutions") return {{"id", id}, {"result", QJsonObject{{"solutions", hostQuestions(true)}}}};
+    if (method == "attempt.solutions") return {{"id", id}, {"result", QJsonObject{
+        {"materials", hostMaterials()}, {"solutions", hostQuestions(true)}}}};
     return error(id, QStringLiteral("声明式题库不支持此操作：%1").arg(method));
 }
 

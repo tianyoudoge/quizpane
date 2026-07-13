@@ -9,6 +9,8 @@ qt_add_executable(quizpane
     src/ui/main_window.hpp
     src/ui/line_icons.cpp
     src/ui/line_icons.hpp
+    src/ui/material_card.cpp
+    src/ui/material_card.hpp
     src/ui/app_dialogs.cpp
     src/ui/app_dialogs.hpp
     resources/resources.qrc

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QJsonArray>
 #include <QMainWindow>
 #include <QElapsedTimer>
@@ -22,6 +23,8 @@ class QStackedWidget;
 class QTimer;
 class QVBoxLayout;
 class QSystemTrayIcon;
+
+namespace quizpane::ui { class MaterialCard; }
 
 namespace quizpane {
 
@@ -64,6 +67,7 @@ private:
     void populateCatalog(const QJsonArray& nodes);
     void startAttempt(const QString& categoryId, const QString& title, int count);
     void requestQuestions();
+    void updateMaterialsCache(const QJsonArray& materials);
     void showQuestion(int index);
     void chooseAnswer(int choice);
     QJsonArray answerPayload() const;
@@ -134,6 +138,9 @@ private:
     QWidget* questionContent_ = nullptr;
     QVBoxLayout* questionContentLayout_ = nullptr;
     QVBoxLayout* optionsLayout_ = nullptr;
+    ui::MaterialCard* practiceMaterialCard_ = nullptr;
+    ui::MaterialCard* solutionMaterialCard_ = nullptr;
+    QVBoxLayout* solutionContentLayout_ = nullptr;
     QWidget* practiceControlBar_ = nullptr;
     QPushButton* previousQuestionButton_ = nullptr;
     QPushButton* nextQuestionButton_ = nullptr;
@@ -157,6 +164,10 @@ private:
     QString attemptTitle_;
     QJsonArray questions_;
     QJsonArray solutions_;
+    // materialId -> material（title/contentHtml）。attempt.questions 和
+    // attempt.solutions 各自返回去重后的材料数组，这里合并成一份缓存供两个
+    // 页面共用，避免每次切题都重新在数组里线性查找。
+    QHash<QString, QJsonObject> materialsById_;
     QVector<int> answers_;
     int currentQuestionIndex_ = 0;
     int currentSolutionIndex_ = 0;

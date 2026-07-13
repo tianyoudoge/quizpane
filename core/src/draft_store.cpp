@@ -40,8 +40,8 @@ bool DraftStore::save(const DraftSnapshot& snapshot, QString* error) const {
     for (int answer : snapshot.answers) answers.append(answer);
     const QJsonObject value{{"version", 1}, {"providerId", snapshot.providerId},
         {"attemptId", snapshot.attemptId}, {"title", snapshot.title},
-        {"questions", snapshot.questions}, {"answers", answers},
-        {"currentQuestionIndex", snapshot.currentQuestionIndex}};
+        {"questions", snapshot.questions}, {"materials", snapshot.materials},
+        {"answers", answers}, {"currentQuestionIndex", snapshot.currentQuestionIndex}};
     // QSaveFile 先写临时文件，commit 时再替换目标文件。即使进程崩溃或断电，
     // 也不会留下半截 JSON；可以类比“事务提交后才对外可见”。
     QSaveFile file(path);
@@ -71,6 +71,7 @@ bool DraftStore::load(const QString& providerId, DraftSnapshot* snapshot,
     result.attemptId = value.value("attemptId").toString();
     result.title = value.value("title").toString();
     result.questions = value.value("questions").toArray();
+    result.materials = value.value("materials").toArray();
     result.currentQuestionIndex = value.value("currentQuestionIndex").toInt();
     for (const auto& answer : value.value("answers").toArray())
         result.answers.append(answer.toInt(-1));

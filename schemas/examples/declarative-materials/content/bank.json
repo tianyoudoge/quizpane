@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "title": "言语理解与常识示例题库",
+  "catalogs": [
+    {
+      "id": "verbal",
+      "title": "言语理解",
+      "practice": { "mode": "sequential", "questionCount": 10 }
+    }
+  ],
+  "materials": [
+    {
+      "id": "material-001",
+      "catalogId": "verbal",
+      "title": "阅读材料一",
+      "body": "候鸟迁徙是自然界最壮观的现象之一。每年秋天，数以亿计的候鸟从北方繁殖地出发，飞往数千公里外的越冬地。科学家发现，候鸟依靠地磁场、星辰位置和地标共同定位，幼鸟即使从未走过迁徙路线，也能凭借本能找到目的地。",
+      "source": { "document": "示例资料.txt", "page": 1 }
+    },
+    {
+      "id": "material-002",
+      "catalogId": "verbal",
+      "title": "阅读材料二",
+      "body": "城市热岛效应是指城市中心气温明显高于周边郊区的现象。它主要由建筑物和路面吸收并释放热量、绿地减少、人为热源集中等因素造成。缓解热岛效应的常见措施包括增加城市绿化、使用反光屋顶材料和优化城市通风廊道。",
+      "source": { "document": "示例资料.txt", "page": 2 }
+    }
+  ],
+  "questions": [
+    {
+      "id": "q-material1-1",
+      "catalogId": "verbal",
+      "materialId": "material-001",
+      "type": "single_choice",
+      "stem": "根据材料一，候鸟定位主要依靠什么？",
+      "options": [
+        { "id": "a", "text": "地磁场、星辰位置和地标" },
+        { "id": "b", "text": "人类的引导" },
+        { "id": "c", "text": "卫星信号" },
+        { "id": "d", "text": "同伴的鸣叫" }
+      ],
+      "answer": { "optionIds": ["a"] },
+      "solution": "材料一提到候鸟依靠地磁场、星辰位置和地标共同定位。"
+    },
+    {
+      "id": "q-material1-2",
+      "catalogId": "verbal",
+      "materialId": "material-001",
+      "type": "true_false",
+      "stem": "根据材料一，幼鸟必须跟随成鸟才能完成迁徙。",
+      "options": [
+        { "id": "true", "text": "正确" },
+        { "id": "false", "text": "错误" }
+      ],
+      "answer": { "optionIds": ["false"] },
+      "solution": "材料一指出幼鸟即使从未走过迁徙路线，也能凭借本能找到目的地。"
+    },
+    {
+      "id": "q-material1-3",
+      "catalogId": "verbal",
+      "materialId": "material-001",
+      "type": "single_choice",
+      "stem": "材料一主要描述的是哪种自然现象？",
+      "options": [
+        { "id": "a", "text": "候鸟迁徙" },
+        { "id": "b", "text": "季节更替" },
+        { "id": "c", "text": "气候变化" },
+        { "id": "d", "text": "生物进化" }
+      ],
+      "answer": { "optionIds": ["a"] },
+      "solution": "材料一开篇即点明候鸟迁徙是自然界最壮观的现象之一。"
+    },
+    {
+      "id": "q-material2-1",
+      "catalogId": "verbal",
+      "materialId": "material-002",
+      "type": "single_choice",
+      "stem": "根据材料二，城市热岛效应的成因不包括以下哪项？",
+      "options": [
+        { "id": "a", "text": "建筑物吸收并释放热量" },
+        { "id": "b", "text": "绿地减少" },
+        { "id": "c", "text": "人为热源集中" },
+        { "id": "d", "text": "候鸟迁徙" }
+      ],
+      "answer": { "optionIds": ["d"] },
+      "solution": "候鸟迁徙与材料二描述的城市热岛效应无关。"
+    },
+    {
+      "id": "q-material2-2",
+      "catalogId": "verbal",
+      "materialId": "material-002",
+      "type": "single_choice",
+      "stem": "根据材料二，下列哪项属于缓解热岛效应的措施？",
+      "options": [
+        { "id": "a", "text": "增加城市绿化" },
+        { "id": "b", "text": "拆除城市通风廊道" },
+        { "id": "c", "text": "扩大沥青路面面积" },
+        { "id": "d", "text": "集中人为热源" }
+      ],
+      "answer": { "optionIds": ["a"] },
+      "solution": "材料二提到增加城市绿化是缓解热岛效应的常见措施之一。"
+    },
+    {
+      "id": "q-material2-3",
+      "catalogId": "verbal",
+      "materialId": "material-002",
+      "type": "true_false",
+      "stem": "根据材料二，城市中心气温通常低于周边郊区。",
+      "options": [
+        { "id": "true", "text": "正确" },
+        { "id": "false", "text": "错误" }
+      ],
+      "answer": { "optionIds": ["false"] },
+      "solution": "材料二指出城市热岛效应是城市中心气温明显高于周边郊区。"
+    },
+    {
+      "id": "q-standalone-1",
+      "catalogId": "verbal",
+      "type": "single_choice",
+      "stem": "下列成语使用正确的一项是？",
+      "options": [
+        { "id": "a", "text": "他的解释振振有词，令人信服。" },
+        { "id": "b", "text": "他对答如流，却屡战屡败。" },
+        { "id": "c", "text": "他信口开河，句句属实。" },
+        { "id": "d", "text": "他不以为然，欣然接受了建议。" }
+      ],
+      "answer": { "optionIds": ["a"] },
+      "solution": "振振有词形容说话理直气壮、有根据，用法正确。"
+    },
+    {
+      "id": "q-standalone-2",
+      "catalogId": "verbal",
+      "type": "single_choice",
+      "stem": "依次填入下列横线处的词语，最恰当的一组是：他__地完成了任务，没有任何怨言。",
+      "options": [
+        { "id": "a", "text": "欣然" },
+        { "id": "b", "text": "勉强" },
+        { "id": "c", "text": "敷衍" },
+        { "id": "d", "text": "拖延" }
+      ],
+      "answer": { "optionIds": ["a"] },
+      "solution": "欣然表示乐意、没有勉强之意，与语境中的“没有任何怨言”呼应。"
+    }
+  ]
+}

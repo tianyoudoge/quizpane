@@ -16,7 +16,7 @@ add_library(quizpane_provider_host STATIC
 target_include_directories(quizpane_provider_host PUBLIC include)
 target_link_libraries(quizpane_provider_host
     PUBLIC quizpane_provider_sdk Qt6::Core
-    PRIVATE miniz
+    PRIVATE quizpane_core miniz
 )
 if(APPLE)
     target_link_libraries(quizpane_provider_host PUBLIC

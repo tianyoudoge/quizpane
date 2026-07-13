@@ -3,6 +3,7 @@
 #include "model_settings_dialog.hpp"
 
 #include <QMainWindow>
+#include <QJsonArray>
 #include <QStringList>
 
 class QComboBox;
@@ -14,6 +15,10 @@ class QPushButton;
 class QStackedWidget;
 class QTableWidget;
 class QTimer;
+class QCloseEvent;
+class QNetworkAccessManager;
+
+namespace quizpane::studio { class GenerationWorkflow; struct WorkflowProgress; }
 
 namespace quizpane::studio {
 
@@ -28,6 +33,7 @@ public:
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
 private:
     QWidget* buildSourcePage();
@@ -43,7 +49,9 @@ private:
     void updateNavigation();
     void movePage(int delta);
     void beginPreflight();
-    void runPreflightStep();
+    void updateWorkflowProgress(const WorkflowProgress& progress);
+    void populateReview(const QJsonArray& questions, const QJsonArray& needsReview);
+    void packageProvider();
     void applyStyle();
 
     QStackedWidget* pages_ = nullptr;
@@ -58,14 +66,20 @@ private:
     QLabel* totalTokens_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
     QTableWidget* reviewTable_ = nullptr;
+    QPushButton* allReviewButton_ = nullptr;
+    QPushButton* missingAnswerButton_ = nullptr;
+    QPushButton* duplicateButton_ = nullptr;
     QLabel* finishPath_ = nullptr;
+    QLineEdit* bankName_ = nullptr;
+    QComboBox* questionCount_ = nullptr;
     QPushButton* backButton_ = nullptr;
     QPushButton* nextButton_ = nullptr;
     QPushButton* startButton_ = nullptr;
-    QTimer* preflightTimer_ = nullptr;
+    QNetworkAccessManager* networkManager_ = nullptr;
+    GenerationWorkflow* workflow_ = nullptr;
     QStringList sourcePaths_;
-    int preflightStep_ = 0;
-    qint64 estimatedInputTokens_ = 0;
+    QJsonArray generatedQuestions_;
+    QJsonArray reviewQuestions_;
     // 一个 DTO 保存完整模型选择，避免 vendor/model/endpoint 多个平行字段只更新
     // 其中一部分。API Key 当前只存在进程内，不进入普通配置文件。
     ModelSettings modelSettings_;
