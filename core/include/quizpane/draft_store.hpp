@@ -8,11 +8,14 @@ namespace quizpane {
 
 // 一次未完成答题的持久化快照。这里直接保存标准化后的题目 JSON，恢复时
 // 不必依赖网络；可以理解成前端 localStorage 中的表单草稿，但实际写入磁盘。
+// materials 保存 attempt.questions/attempt.solutions 返回的共享材料数组，
+// 恢复到题组中间某一题时材料卡片需要立即可见，不能等待重新请求 Provider。
 struct DraftSnapshot {
     QString providerId;
     QString attemptId;
     QString title;
     QJsonArray questions;
+    QJsonArray materials;
     QVector<int> answers;
     int currentQuestionIndex = 0;
 };

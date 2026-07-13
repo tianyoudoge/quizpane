@@ -3,6 +3,7 @@
 #include "../platform/window_pinning.hpp"
 #include "app_dialogs.hpp"
 #include "line_icons.hpp"
+#include "material_card.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -234,6 +235,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     questionContent_ = new QWidget;
     questionContentLayout_ = new QVBoxLayout(questionContent_);
     questionContentLayout_->setContentsMargins(0, 4, 4, 4);
+    practiceMaterialCard_ = new ui::MaterialCard;
     questionLabel_ = new QLabel;
     questionLabel_->setObjectName(QStringLiteral("questionText"));
     questionLabel_->setWordWrap(true);
@@ -241,6 +243,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     questionLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     optionsLayout_ = new QVBoxLayout;
     optionsLayout_->setSpacing(8);
+    questionContentLayout_->addWidget(practiceMaterialCard_);
     questionContentLayout_->addWidget(questionLabel_);
     questionContentLayout_->addSpacing(10);
     questionContentLayout_->addLayout(optionsLayout_);
@@ -318,8 +321,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     solutionScroll->setWidgetResizable(true);
     solutionScroll->setFrameShape(QFrame::NoFrame);
     auto* solutionContent = new QWidget;
-    auto* solutionContentLayout = new QVBoxLayout(solutionContent);
-    solutionContentLayout->setContentsMargins(0, 4, 4, 4);
+    solutionContentLayout_ = new QVBoxLayout(solutionContent);
+    solutionContentLayout_->setContentsMargins(0, 4, 4, 4);
+    solutionMaterialCard_ = new ui::MaterialCard;
     solutionQuestionLabel_ = new QLabel;
     solutionQuestionLabel_->setObjectName(QStringLiteral("solutionQuestion"));
     solutionQuestionLabel_->setWordWrap(true);
@@ -331,11 +335,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     solutionExplanationLabel_->setObjectName(QStringLiteral("solutionText"));
     solutionExplanationLabel_->setWordWrap(true);
     solutionExplanationLabel_->setTextFormat(Qt::RichText);
-    solutionContentLayout->addWidget(solutionQuestionLabel_);
-    solutionContentLayout->addSpacing(8);
-    solutionContentLayout->addWidget(solutionAnswerLabel_);
-    solutionContentLayout->addWidget(solutionExplanationLabel_);
-    solutionContentLayout->addStretch();
+    solutionContentLayout_->addWidget(solutionMaterialCard_);
+    solutionContentLayout_->addWidget(solutionQuestionLabel_);
+    solutionContentLayout_->addSpacing(8);
+    solutionContentLayout_->addWidget(solutionAnswerLabel_);
+    solutionContentLayout_->addWidget(solutionExplanationLabel_);
+    solutionContentLayout_->addStretch();
     solutionScroll->setWidget(solutionContent);
     solutionControlBar_ = new QWidget;
     solutionControlBar_->setObjectName(QStringLiteral("controlBar"));
@@ -547,6 +552,8 @@ void MainWindow::saveDraft() {
     snapshot.attemptId = attemptId_;
     snapshot.title = attemptTitle_;
     snapshot.questions = questions_;
+    for (auto it = materialsById_.constBegin(); it != materialsById_.constEnd(); ++it)
+        snapshot.materials.append(it.value());
     snapshot.answers = answers_;
     snapshot.currentQuestionIndex = currentQuestionIndex_;
     QString error;
@@ -566,6 +573,7 @@ bool MainWindow::maybeRestoreDraft() {
     attemptId_ = snapshot.attemptId;
     attemptTitle_ = snapshot.title;
     questions_ = snapshot.questions;
+    updateMaterialsCache(snapshot.materials);
     answers_ = snapshot.answers;
     const int restoredAnswerCount = answers_.size();
     answers_.resize(static_cast<int>(questions_.size()));
@@ -708,6 +716,17 @@ void MainWindow::requestQuestions() {
         QMessageBox::warning(this, QStringLiteral("无法读取题目"), error);
 }
 
+void MainWindow::updateMaterialsCache(const QJsonArray& materials) {
+    // attempt.questions 和 attempt.solutions 各自只返回当前作答范围内实际
+    // 用到的材料（见 DeclarativeProvider::hostMaterials），这里合并进同一份
+    // 缓存而不是整体替换，避免答题阶段收到的材料在进入解析页后丢失。
+    for (const auto& value : materials) {
+        const QJsonObject material = value.toObject();
+        const QString materialId = material.value("id").toString();
+        if (!materialId.isEmpty()) materialsById_.insert(materialId, material);
+    }
+}
+
 void MainWindow::showQuestion(int index) {
     if (questions_.isEmpty()) return;
     hideSubmitConfirmation();
@@ -716,6 +735,14 @@ void MainWindow::showQuestion(int index) {
     practiceProgressLabel_->setText(QStringLiteral("第 %1 / %2 题 · 已作答 %3 题")
         .arg(currentQuestionIndex_ + 1).arg(questions_.size())
         .arg(std::count_if(answers_.cbegin(), answers_.cend(), [](int value) { return value >= 0; })));
+    const QString materialId = question.value("materialId").toString();
+    if (materialId.isEmpty()) {
+        practiceMaterialCard_->hideMaterial();
+    } else {
+        const QJsonObject material = materialsById_.value(materialId);
+        practiceMaterialCard_->showMaterial(materialId, material.value("title").toString(),
+                                            material.value("contentHtml").toString());
+    }
     questionLabel_->setText(QStringLiteral("<div style=\"color:#d5d1c5\">%1</div>")
         .arg(question.value("contentHtml").toString()));
     clearLayout(optionsLayout_);
@@ -860,6 +887,14 @@ void MainWindow::showSolution(int index) {
     if (solutions_.isEmpty()) return;
     currentSolutionIndex_ = qBound(0, index, static_cast<int>(solutions_.size()) - 1);
     const QJsonObject solution = solutions_.at(currentSolutionIndex_).toObject();
+    const QString materialId = solution.value("materialId").toString();
+    if (materialId.isEmpty()) {
+        solutionMaterialCard_->hideMaterial();
+    } else {
+        const QJsonObject material = materialsById_.value(materialId);
+        solutionMaterialCard_->showMaterial(materialId, material.value("title").toString(),
+                                            material.value("contentHtml").toString());
+    }
     QString optionsHtml;
     for (const auto& optionValue : solution.value("options").toArray()) {
         const auto option = optionValue.toObject();
@@ -1004,6 +1039,7 @@ void MainWindow::handleProviderResponse(const QJsonObject& response) {
         requestQuestions();
     } else if (id == QStringLiteral("attempt-questions")) {
         questions_ = result.value("questions").toArray();
+        updateMaterialsCache(result.value("materials").toArray());
         if (questions_.isEmpty()) {
             QMessageBox::warning(this, QStringLiteral("读取失败"),
                                  QStringLiteral("这套练习没有可显示的题目"));
@@ -1026,6 +1062,7 @@ void MainWindow::handleProviderResponse(const QJsonObject& response) {
             .arg(result.value("questionCount").toInt()));
     } else if (id == QStringLiteral("attempt-solutions")) {
         solutions_ = result.value("solutions").toArray();
+        updateMaterialsCache(result.value("materials").toArray());
         if (solutions_.isEmpty()) {
             solutionProgressLabel_->setText(QStringLiteral("暂无题目解析"));
             return;
@@ -1134,6 +1171,9 @@ void MainWindow::loadProvider(const QString& path) {
     attemptId_.clear();
     questions_ = {};
     solutions_ = {};
+    materialsById_.clear();
+    practiceMaterialCard_->hideMaterial();
+    solutionMaterialCard_->hideMaterial();
     answers_.clear();
     QString error;
     if (!provider_.load(path, &error)) {
@@ -1569,6 +1609,20 @@ void MainWindow::applyCardStyle() {
         QWidget#card[uiSize="large"] QLabel#questionText { font-size: 15px; }
         QLabel#solutionQuestion { color: #c7ccd2; }
         QLabel#resultAnswer { color: #c2b7a3; }
+        QWidget#materialCard {
+            background: rgba(24, 27, 32, 60);
+            border: none;
+            border-radius: 5px;
+        }
+        QLabel#materialCardTitle { color: #b7bec7; font-weight: 600; }
+        QWidget#card[uiSize="small"] QLabel#materialCardTitle { font-size: 11px; }
+        QWidget#card[uiSize="medium"] QLabel#materialCardTitle { font-size: 12px; }
+        QWidget#card[uiSize="large"] QLabel#materialCardTitle { font-size: 13px; }
+        QPushButton#materialCardToggle { background: transparent; padding: 0; }
+        QLabel#materialCardBody { color: #a9b0b8; }
+        QWidget#card[uiSize="small"] QLabel#materialCardBody { font-size: 11px; }
+        QWidget#card[uiSize="medium"] QLabel#materialCardBody { font-size: 12px; }
+        QWidget#card[uiSize="large"] QLabel#materialCardBody { font-size: 13px; }
         QLabel#solutionText {
             color: #aebbb5;
             background: rgba(28, 36, 33, 48);

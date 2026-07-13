@@ -14,7 +14,9 @@ enum class LineIcon {
     Resize,
     Close,
     Catalog,
-    Menu
+    Menu,
+    ChevronUp,
+    ChevronDown
 };
 
 // 可以类比 Web 前端中的“图标组件”：调用方只传语义，函数负责绘制 24x24 图标。

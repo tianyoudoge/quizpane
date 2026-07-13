@@ -174,19 +174,23 @@ catalog.list
 
 ### 4.4 题库制作器
 
+共享文章或统计资料贯穿多道子题的场景不能由 v1 的独立 `stem` 正确表达。该能力按 Schema v2、材料引用、题组组卷和独立材料 UI 实施，交接清单见 [共享材料与题组支持交接方案](共享材料与题组支持交接方案.md)。禁止用“把材料复制进每道题题干”的方式绕过协议升级。
+
 ```text
-选择/拖入 TXT、Markdown、DOCX、PDF、JSON
+选择/拖入 TXT、Markdown（DOCX/PDF 仅占位提示）
   -> StudioWindow::appendSources
-  -> 本地预检与 Token 上限估算
   -> 模型设置 editModelSettings
        厂商固定 Endpoint / 自定义 Endpoint
        在线拉取模型列表 / 内置列表回退
-  -> 模型整理（待实现）
-  -> 规则校验与人工复核（待实现）
-  -> 声明式 Provider 打包（待接入现有 bank-generator）
+  -> GenerationWorkflow 提取、分块、OpenAI 兼容模型调用
+  -> 共享 BankValidator 校验与一轮定向修复
+  -> CheckpointStore 按完成分块原子落盘，可断点续跑
+  -> 人工采纳/丢弃 needsReview 题目
+  -> writeZipArchive 打包
+  -> ProviderInstaller::inspect + DeclarativeProvider::load 自检
 ```
 
-当前必须诚实区分：界面、文件导入、本地预检和模型列表获取已经存在；真正的文档解析、模型编排、结构化修复和最终 GUI 打包尚未完成。不要在 Review 或宣传中把占位进度页描述成完整 AI 生成能力。
+第一阶段闭环已经实现 TXT/Markdown、OpenAI-compatible Chat Completions、顺序分块、一次定向修复、磁盘检查点、人工复核和声明式 Provider 打包。仍未实现 DOCX/PDF/OCR 提取、Anthropic/Gemini 原生协议、多选/填空题型、并发分块和 API Key 安全凭据持久化；Review 和宣传中应明确这些边界。
 
 ## 5. Provider 的两种实现
 

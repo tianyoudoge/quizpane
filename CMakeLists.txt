@@ -16,6 +16,11 @@ option(QUIZPANE_BUILD_BANK_GENERATOR
 option(QUIZPANE_BUILD_BANK_STUDIO "Build the QuizPane Question Maker GUI" ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network)
+if(QUIZPANE_BUILD_BANK_STUDIO)
+    # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
+    # （QStringConverter 内置编码不含 GB18030），其余模块不需要它。
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Core5Compat)
+endif()
 
 FetchContent_Declare(qrcodegen_source
     GIT_REPOSITORY https://github.com/nayuki/QR-Code-generator.git
@@ -47,9 +52,11 @@ FetchContent_Declare(miniz_source
 FetchContent_MakeAvailable(miniz_source)
 
 # 每个目录生成独立 target，避免使用全局 include/link 配置。依赖方向由各模块的
-# target_link_libraries 明确表达，效果类似 Maven 多模块工程。
-add_subdirectory(sdk)
+# target_link_libraries 明确表达，效果类似 Maven 多模块工程。core 必须先于 sdk
+# 配置，因为 quizpane_provider_host 链接 quizpane_core 以复用 BankValidator，
+# 避免声明式 Provider 和制作器/CLI 各写一份题库校验规则。
 add_subdirectory(core)
+add_subdirectory(sdk)
 add_subdirectory(providers/demo)
 add_subdirectory(apps/desktop-qt)
 if(QUIZPANE_BUILD_BANK_STUDIO)

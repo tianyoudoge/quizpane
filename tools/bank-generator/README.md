@@ -2,7 +2,7 @@
 
 目标是把用户拥有版权或合法授权的 TXT、DOCX、PDF 或结构化题目转换为声明式 `.quizpane-provider` 本地题库包。声明式包只包含 JSON 和图片，不包含 DLL、dylib 或 so，因此同一个包可跨平台使用。
 
-协议与 Agent 设计见 `docs/AI题库生成与声明式Provider方案.md`，规范数据结构见 `schemas/declarative-provider-v1.schema.json`。早期设计中的 `.quizpane-bank` 扩展名已经废弃，避免让用户理解两套安装格式。
+协议与 Agent 设计见 `docs/AI题库生成与声明式Provider方案.md`，规范数据结构见 `schemas/declarative-provider.schema.json`。早期设计中的 `.quizpane-bank` 扩展名已经废弃，避免让用户理解两套安装格式。
 
 当前已经支持声明式 v1 JSON 的确定性语义校验，并能生成可由小窗刷题安装的 `.quizpane-provider`。TXT、DOCX、PDF 提取和 AI 结构化仍在开发中。计划能力：
 

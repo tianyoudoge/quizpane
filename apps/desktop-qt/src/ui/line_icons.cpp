@@ -66,6 +66,14 @@ QIcon makeLineIcon(LineIcon type) {
         painter.drawLine(QPointF(5, 12), QPointF(19, 12));
         painter.drawLine(QPointF(5, 17), QPointF(19, 17));
         break;
+    case LineIcon::ChevronUp:
+        path.moveTo(6, 14); path.lineTo(12, 8); path.lineTo(18, 14);
+        painter.drawPath(path);
+        break;
+    case LineIcon::ChevronDown:
+        path.moveTo(6, 10); path.lineTo(12, 16); path.lineTo(18, 10);
+        painter.drawPath(path);
+        break;
     }
     return QIcon(pixmap);
 }
