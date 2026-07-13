@@ -30,10 +30,17 @@ package_app() {
 
   rm -rf "$appdir"
   mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \
-    "$appdir/usr/share/icons/hicolor/1024x1024/apps"
+    "$appdir/usr/share/icons/hicolor/512x512/apps"
   cp "$source_binary" "$appdir/usr/bin/$executable"
-  cp "$ROOT/apps/desktop-qt/resources/app-icon.png" \
-    "$appdir/usr/share/icons/hicolor/1024x1024/apps/org.quizpane.app.png"
+  local deployed_icon="$appdir/usr/share/icons/hicolor/512x512/apps/org.quizpane.app.png"
+  if command -v magick >/dev/null 2>&1; then
+    magick "$ROOT/apps/desktop-qt/resources/app-icon.png" -resize 512x512 "$deployed_icon"
+  elif command -v convert >/dev/null 2>&1; then
+    convert "$ROOT/apps/desktop-qt/resources/app-icon.png" -resize 512x512 "$deployed_icon"
+  else
+    echo "缺少 ImageMagick，无法生成符合 Linux 桌面规范的 512x512 图标" >&2
+    return 1
+  fi
   cp "$desktop_file" "$appdir/usr/share/applications/"
   cp "$ROOT/LICENSE" "$appdir/"
 
@@ -41,7 +48,7 @@ package_app() {
     QMAKE="${QT_PREFIX:+$QT_PREFIX/bin/qmake}" \
       linuxdeploy --appdir "$appdir" \
         --desktop-file "$desktop_file" \
-        --icon-file "$ROOT/apps/desktop-qt/resources/app-icon.png" \
+        --icon-file "$deployed_icon" \
         --executable "$appdir/usr/bin/$executable" \
         --plugin qt
   fi
