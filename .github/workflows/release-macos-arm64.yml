@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Verify Apple Silicon runner
         run: |
@@ -39,7 +39,7 @@ jobs:
           shasum -a 256 小窗刷题-macos-arm64.zip > 小窗刷题-macos-arm64.zip.sha256
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quizpane-macos-arm64-${{ github.ref_name }}
           path: |
