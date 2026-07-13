@@ -26,7 +26,6 @@ protected:
 
 private:
     QWidget* buildSourcePage();
-    QWidget* buildModelPage();
     QWidget* buildProgressPage();
     QWidget* buildReviewPage();
     QWidget* buildFinishPage();
@@ -35,7 +34,7 @@ private:
     void addSourceFiles();
     void appendSources(const QStringList& paths);
     void removeSelectedSource();
-    void updateModelFields();
+    void showModelSettings();
     void updateNavigation();
     void movePage(int delta);
     void beginPreflight();
@@ -44,12 +43,9 @@ private:
 
     QStackedWidget* pages_ = nullptr;
     QListWidget* sourceList_ = nullptr;
+    QWidget* sourcePanel_ = nullptr;
     QLabel* sourceSummary_ = nullptr;
-    QComboBox* modelProvider_ = nullptr;
-    QComboBox* modelName_ = nullptr;
-    QLineEdit* endpointEdit_ = nullptr;
-    QLineEdit* apiKeyEdit_ = nullptr;
-    QLabel* privacyHint_ = nullptr;
+    QLabel* modelSummary_ = nullptr;
     QLabel* phaseLabel_ = nullptr;
     QLabel* phaseDetail_ = nullptr;
     QLabel* inputTokens_ = nullptr;
@@ -65,6 +61,9 @@ private:
     QStringList sourcePaths_;
     int preflightStep_ = 0;
     qint64 estimatedInputTokens_ = 0;
+    QString modelService_ = QStringLiteral("OpenAI");
+    QString modelName_ = QStringLiteral("自动选择（推荐）");
+    QString modelEndpoint_ = QStringLiteral("https://api.openai.com/v1");
 };
 
 }  // namespace quizpane::studio

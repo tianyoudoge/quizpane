@@ -1,11 +1,14 @@
 #include "studio_window.hpp"
 
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDragEnterEvent>
 #include <QDir>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -14,6 +17,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMimeData>
+#include <QMenuBar>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QStackedWidget>
@@ -76,8 +80,8 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     sideLayout->addWidget(brand);
     sideLayout->addWidget(mutedLabel(QStringLiteral("把你的文档整理成可安装题库")));
     sideLayout->addSpacing(22);
-    const QStringList steps{QStringLiteral("01  选择资料"), QStringLiteral("02  选择模型"),
-        QStringLiteral("03  自动整理"), QStringLiteral("04  检查问题"), QStringLiteral("05  完成")};
+    const QStringList steps{QStringLiteral("01  选择资料"), QStringLiteral("02  自动整理"),
+        QStringLiteral("03  检查问题"), QStringLiteral("04  完成")};
     for (int index = 0; index < steps.size(); ++index) {
         auto* step = new QLabel(steps.at(index));
         step->setObjectName(QStringLiteral("sideStep"));
@@ -97,7 +101,6 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     contentLayout->setSpacing(18);
     pages_ = new QStackedWidget;
     pages_->addWidget(buildSourcePage());
-    pages_->addWidget(buildModelPage());
     pages_->addWidget(buildProgressPage());
     pages_->addWidget(buildReviewPage());
     pages_->addWidget(buildFinishPage());
@@ -123,6 +126,9 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     preflightTimer_ = new QTimer(this);
     preflightTimer_->setInterval(380);
     connect(preflightTimer_, &QTimer::timeout, this, &StudioWindow::runPreflightStep);
+    auto* settingsMenu = menuBar()->addMenu(QStringLiteral("设置"));
+    settingsMenu->addAction(QStringLiteral("模型设置…"), this,
+                            &StudioWindow::showModelSettings);
     applyStyle();
     updateNavigation();
 }
@@ -168,6 +174,10 @@ QWidget* StudioWindow::buildSourcePage() {
     layout->addWidget(drop);
     connect(addButton, &QPushButton::clicked, this, &StudioWindow::addSourceFiles);
 
+    sourcePanel_ = new QWidget;
+    auto* sourcePanelLayout = new QVBoxLayout(sourcePanel_);
+    sourcePanelLayout->setContentsMargins(0, 0, 0, 0);
+    sourcePanelLayout->setSpacing(8);
     auto* listHeader = new QHBoxLayout;
     auto* listTitle = new QLabel(QStringLiteral("已添加资料"));
     listTitle->setObjectName(QStringLiteral("sectionTitle"));
@@ -178,56 +188,15 @@ QWidget* StudioWindow::buildSourcePage() {
     listHeader->addWidget(sourceSummary_);
     listHeader->addStretch();
     listHeader->addWidget(remove);
-    layout->addLayout(listHeader);
+    sourcePanelLayout->addLayout(listHeader);
     sourceList_ = new QListWidget;
     sourceList_->setObjectName(QStringLiteral("sourceList"));
-    layout->addWidget(sourceList_, 1);
-    connect(remove, &QPushButton::clicked, this, &StudioWindow::removeSelectedSource);
-    return page;
-}
-
-QWidget* StudioWindow::buildModelPage() {
-    auto* page = new QWidget;
-    auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(16);
-    layout->addWidget(pageHeader(QStringLiteral("第二步"), QStringLiteral("选择整理题目的模型"),
-        QStringLiteral("推荐使用支持结构化输出的模型。连接功能完成后，API Key 将只保存在系统安全凭据库。")));
-    auto* form = new QFrame;
-    form->setObjectName(QStringLiteral("panel"));
-    auto* formLayout = new QVBoxLayout(form);
-    formLayout->setContentsMargins(20, 18, 20, 18);
-    formLayout->setSpacing(10);
-    formLayout->addWidget(new QLabel(QStringLiteral("模型服务")));
-    modelProvider_ = new QComboBox;
-    modelProvider_->addItems({QStringLiteral("OpenAI"), QStringLiteral("OpenAI 兼容服务"),
-                              QStringLiteral("Ollama 本地模型")});
-    formLayout->addWidget(modelProvider_);
-    formLayout->addWidget(new QLabel(QStringLiteral("模型")));
-    modelName_ = new QComboBox;
-    modelName_->setEditable(true);
-    formLayout->addWidget(modelName_);
-    formLayout->addWidget(new QLabel(QStringLiteral("服务地址")));
-    endpointEdit_ = new QLineEdit;
-    formLayout->addWidget(endpointEdit_);
-    formLayout->addWidget(new QLabel(QStringLiteral("API Key")));
-    apiKeyEdit_ = new QLineEdit;
-    apiKeyEdit_->setEchoMode(QLineEdit::Password);
-    apiKeyEdit_->setPlaceholderText(QStringLiteral("本地 Ollama 不需要填写"));
-    formLayout->addWidget(apiKeyEdit_);
-    auto* test = new QPushButton(QStringLiteral("测试连接"));
-    test->setObjectName(QStringLiteral("secondaryButton"));
-    formLayout->addWidget(test, 0, Qt::AlignLeft);
-    layout->addWidget(form);
-    privacyHint_ = mutedLabel(QString());
-    privacyHint_->setObjectName(QStringLiteral("notice"));
-    layout->addWidget(privacyHint_);
+    sourceList_->setMaximumHeight(210);
+    sourcePanelLayout->addWidget(sourceList_);
+    sourcePanel_->setVisible(false);
+    layout->addWidget(sourcePanel_);
     layout->addStretch();
-    connect(modelProvider_, &QComboBox::currentIndexChanged, this, &StudioWindow::updateModelFields);
-    connect(test, &QPushButton::clicked, this, [this] {
-        privacyHint_->setText(QStringLiteral("连接测试将在模型适配器接入后启用；当前不会发送文件或 API Key。"));
-    });
-    updateModelFields();
+    connect(remove, &QPushButton::clicked, this, &StudioWindow::removeSelectedSource);
     return page;
 }
 
@@ -236,8 +205,12 @@ QWidget* StudioWindow::buildProgressPage() {
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(18);
-    layout->addWidget(pageHeader(QStringLiteral("第三步"), QStringLiteral("自动整理题目"),
+    layout->addWidget(pageHeader(QStringLiteral("第二步"), QStringLiteral("自动整理题目"),
         QStringLiteral("可以随时看到处理阶段和 Token 用量；关闭窗口前会先询问是否保存任务。")));
+    modelSummary_ = mutedLabel(QStringLiteral("当前模型：%1 · %2（可在“设置 → 模型设置”中修改）")
+        .arg(modelService_, modelName_));
+    modelSummary_->setObjectName(QStringLiteral("notice"));
+    layout->addWidget(modelSummary_);
     phaseLabel_ = new QLabel(QStringLiteral("等待开始"));
     phaseLabel_->setObjectName(QStringLiteral("phaseTitle"));
     phaseDetail_ = mutedLabel(QStringLiteral("点击下方“开始整理”后，先在本地检查资料。"));
@@ -269,7 +242,7 @@ QWidget* StudioWindow::buildReviewPage() {
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(16);
-    layout->addWidget(pageHeader(QStringLiteral("第四步"), QStringLiteral("只检查需要你决定的问题"),
+    layout->addWidget(pageHeader(QStringLiteral("第三步"), QStringLiteral("只检查需要你决定的问题"),
         QStringLiteral("正常题目会自动收起。这里集中展示缺答案、疑似重复和选项错位。")));
     auto* filters = new QHBoxLayout;
     filters->addWidget(new QPushButton(QStringLiteral("全部异常  0")));
@@ -293,7 +266,7 @@ QWidget* StudioWindow::buildFinishPage() {
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(16);
-    layout->addWidget(pageHeader(QStringLiteral("第五步"), QStringLiteral("生成并安装题库"),
+    layout->addWidget(pageHeader(QStringLiteral("第四步"), QStringLiteral("生成并安装题库"),
         QStringLiteral("确认题库名称和组卷方式，生成后可以直接交给小窗刷题安装。")));
     auto* panel = new QFrame;
     panel->setObjectName(QStringLiteral("panel"));
@@ -331,6 +304,7 @@ void StudioWindow::appendSources(const QStringList& paths) {
     }
     sourceSummary_->setText(sourcePaths_.isEmpty() ? QStringLiteral("尚未添加文件")
         : QStringLiteral("%1 个文件").arg(sourcePaths_.size()));
+    sourcePanel_->setVisible(!sourcePaths_.isEmpty());
     updateNavigation();
 }
 
@@ -341,27 +315,92 @@ void StudioWindow::removeSelectedSource() {
     delete sourceList_->takeItem(row);
     sourceSummary_->setText(sourcePaths_.isEmpty() ? QStringLiteral("尚未添加文件")
         : QStringLiteral("%1 个文件").arg(sourcePaths_.size()));
+    sourcePanel_->setVisible(!sourcePaths_.isEmpty());
     updateNavigation();
 }
 
-void StudioWindow::updateModelFields() {
-    modelName_->clear();
-    if (modelProvider_->currentIndex() == 0) {
-        modelName_->addItems({QStringLiteral("自动选择（推荐）"), QStringLiteral("填写模型名称…")});
-        endpointEdit_->setText(QStringLiteral("https://api.openai.com/v1"));
-        apiKeyEdit_->setEnabled(true);
-        privacyHint_->setText(QStringLiteral("云端模式：只发送分段后的题目文本；开始前会显示预计上传量。"));
-    } else if (modelProvider_->currentIndex() == 1) {
-        modelName_->addItem(QStringLiteral("填写模型名称"));
-        endpointEdit_->setText(QStringLiteral("https://your-endpoint.example/v1"));
-        apiKeyEdit_->setEnabled(true);
-        privacyHint_->setText(QStringLiteral("兼容服务由用户自行选择，请确认其隐私与数据保留政策。"));
-    } else {
-        modelName_->addItems({QStringLiteral("qwen3:8b"), QStringLiteral("qwen3:4b")});
-        endpointEdit_->setText(QStringLiteral("http://127.0.0.1:11434/v1"));
-        apiKeyEdit_->clear(); apiKeyEdit_->setEnabled(false);
-        privacyHint_->setText(QStringLiteral("本地模式：资料不离开电脑，但速度取决于本机性能。"));
-    }
+void StudioWindow::showModelSettings() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("模型设置"));
+    dialog.setMinimumWidth(620);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* title = new QLabel(QStringLiteral("模型设置"));
+    title->setObjectName(QStringLiteral("pageTitle"));
+    layout->addWidget(title);
+    layout->addWidget(mutedLabel(QStringLiteral(
+        "这是全局设置，不属于单次生成步骤。API Key 接入后将存入系统安全凭据库。")));
+
+    auto* form = new QFormLayout;
+    form->setSpacing(10);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto* service = new QComboBox;
+    service->addItems({QStringLiteral("OpenAI"), QStringLiteral("OpenAI 兼容服务"),
+                       QStringLiteral("Ollama 本地模型")});
+    service->setCurrentText(modelService_);
+    auto* model = new QComboBox;
+    model->setEditable(true);
+    model->addItem(modelName_);
+    model->setEditText(modelName_);
+    auto* endpoint = new QLineEdit(modelEndpoint_);
+    endpoint->setCursorPosition(0);
+    auto* apiKey = new QLineEdit;
+    apiKey->setEchoMode(QLineEdit::Password);
+    apiKey->setPlaceholderText(QStringLiteral("本地 Ollama 不需要填写"));
+    auto* hint = mutedLabel(QString());
+    hint->setObjectName(QStringLiteral("notice"));
+    form->addRow(QStringLiteral("模型服务"), service);
+    form->addRow(QStringLiteral("模型"), model);
+    form->addRow(QStringLiteral("服务地址"), endpoint);
+    form->addRow(QStringLiteral("API Key"), apiKey);
+    layout->addLayout(form);
+    layout->addWidget(hint);
+
+    const auto refresh = [service, model, endpoint, apiKey, hint](bool resetValues) {
+        const int selected = service->currentIndex();
+        if (resetValues) {
+            model->clear();
+            if (selected == 0) {
+                model->addItems({QStringLiteral("自动选择（推荐）"), QStringLiteral("填写模型名称…")});
+                endpoint->setText(QStringLiteral("https://api.openai.com/v1"));
+            } else if (selected == 1) {
+                model->addItem(QStringLiteral("填写模型名称"));
+                endpoint->setText(QStringLiteral("https://your-endpoint.example/v1"));
+            } else {
+                model->addItems({QStringLiteral("qwen3:8b"), QStringLiteral("qwen3:4b")});
+                endpoint->setText(QStringLiteral("http://127.0.0.1:11434/v1"));
+            }
+            endpoint->setCursorPosition(0);
+        }
+        apiKey->setEnabled(selected != 2);
+        if (selected == 0)
+            hint->setText(QStringLiteral("云端模式：开始前会显示预计上传的文本量。"));
+        else if (selected == 1)
+            hint->setText(QStringLiteral("请确认所选兼容服务的隐私与数据保留政策。"));
+        else
+            hint->setText(QStringLiteral("本地模式：资料不离开电脑，但速度取决于本机性能。"));
+    };
+    refresh(false);
+    connect(service, &QComboBox::currentIndexChanged, &dialog,
+            [refresh](int) { refresh(true); });
+    auto* test = new QPushButton(QStringLiteral("测试连接"));
+    test->setObjectName(QStringLiteral("secondaryButton"));
+    layout->addWidget(test, 0, Qt::AlignLeft);
+    connect(test, &QPushButton::clicked, &dialog, [hint] {
+        hint->setText(QStringLiteral("连接功能尚未接入；当前不会发送 API Key 或资料。"));
+    });
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Ok);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("保存"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted) return;
+    modelService_ = service->currentText();
+    modelName_ = model->currentText().trimmed();
+    modelEndpoint_ = endpoint->text().trimmed();
+    if (modelSummary_)
+        modelSummary_->setText(QStringLiteral("当前模型：%1 · %2（可在“设置 → 模型设置”中修改）")
+                                   .arg(modelService_, modelName_));
 }
 
 void StudioWindow::movePage(int delta) {
@@ -370,11 +409,12 @@ void StudioWindow::movePage(int delta) {
 
 void StudioWindow::updateNavigation() {
     const int page = pages_->currentIndex();
-    backButton_->setVisible(page > 0 && page != 2);
-    nextButton_->setVisible(page < 2 || page == 3);
-    startButton_->setVisible(page == 2 || page == 4);
+    backButton_->setVisible(page > 0);
+    nextButton_->setVisible(page == 0 || page == 2);
+    startButton_->setVisible(page == 1 || page == 3);
     nextButton_->setEnabled(page != 0 || !sourcePaths_.isEmpty());
-    startButton_->setText(page == 4 ? QStringLiteral("生成题库安装包") : QStringLiteral("开始整理"));
+    startButton_->setEnabled(true);
+    startButton_->setText(page == 3 ? QStringLiteral("生成题库安装包") : QStringLiteral("开始整理"));
     const auto steps = findChildren<QLabel*>(QStringLiteral("sideStep"));
     for (QLabel* step : steps) {
         step->setProperty("active", step->property("stepIndex").toInt() == page);
@@ -383,7 +423,7 @@ void StudioWindow::updateNavigation() {
 }
 
 void StudioWindow::beginPreflight() {
-    if (pages_->currentIndex() == 4) {
+    if (pages_->currentIndex() == 3) {
         finishPath_->setText(QStringLiteral("生成工作流将在模型与复核模块接入后启用。"));
         return;
     }
