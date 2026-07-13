@@ -1,5 +1,6 @@
 #include "main_window.hpp"
 #include "../platform/global_hotkey.hpp"
+#include "../platform/window_pinning.hpp"
 #include "app_dialogs.hpp"
 #include "line_icons.hpp"
 
@@ -8,6 +9,7 @@
 #include <QDragEnterEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QIcon>
@@ -24,6 +26,7 @@
 #include <QResizeEvent>
 #include <QScreen>
 #include <QSettings>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -96,8 +99,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Qt Widgets 采用“对象树”管理生命周期：把 card_、按钮、Label 的 parent
     // 指向窗口后，窗口析构时会递归释放它们。这里的 new 不等于 Java 中必然泄漏，
     // 也不需要逐个 delete；没有 parent 的普通 C++ 对象才需要 RAII/智能指针。
-    setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint |
-                   Qt::NoDropShadowWindowHint | Qt::Tool);
+    pinned_ = QSettings().value(QStringLiteral("window/pinned"), true).toBool();
+    Qt::WindowFlags flags = Qt::FramelessWindowHint |
+                            Qt::NoDropShadowWindowHint | Qt::Tool;
+    if (pinned_) flags |= Qt::WindowStaysOnTopHint;
+    setWindowFlags(flags);
     setAttribute(Qt::WA_TranslucentBackground);
     setAcceptDrops(true);
     resize(420, 640);
@@ -131,7 +137,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     pinButton_->setObjectName(QStringLiteral("pinButton"));
     pinButton_->setIcon(makeLineIcon(LineIcon::Pin));
     pinButton_->setCheckable(true);
-    pinButton_->setChecked(true);
+    pinButton_->setChecked(pinned_);
     pinButton_->setAccessibleName(QStringLiteral("始终置顶"));
     pinButton_->setFixedSize(28, 28);
     pinButton_->setToolTip(QStringLiteral("保持窗口显示在其他窗口上方"));
@@ -265,6 +271,33 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     practiceLayout->addWidget(practiceProgressLabel_);
     practiceLayout->addWidget(questionScroll_);
     practiceLayout->addWidget(practiceControlBar_);
+
+    // 非模态确认气泡是答题页的覆盖层，不进入主布局，因此出现时不会撑高窗口。
+    submitConfirmationBubble_ = new QFrame(practicePage_);
+    submitConfirmationBubble_->setObjectName(QStringLiteral("submitConfirmationBubble"));
+    auto* confirmationLayout = new QVBoxLayout(submitConfirmationBubble_);
+    confirmationLayout->setContentsMargins(10, 9, 10, 9);
+    confirmationLayout->setSpacing(7);
+    submitConfirmationLabel_ = new QLabel;
+    submitConfirmationLabel_->setObjectName(QStringLiteral("submitConfirmationText"));
+    submitConfirmationLabel_->setWordWrap(true);
+    auto* confirmationActions = new QHBoxLayout;
+    confirmationActions->setContentsMargins(0, 0, 0, 0);
+    confirmationActions->addStretch();
+    auto* cancelSubmitButton = new QPushButton(QStringLiteral("再检查一下"));
+    cancelSubmitButton->setObjectName(QStringLiteral("confirmationSecondary"));
+    auto* confirmSubmitButton = new QPushButton(QStringLiteral("交卷"));
+    confirmSubmitButton->setObjectName(QStringLiteral("confirmationPrimary"));
+    confirmationActions->addWidget(cancelSubmitButton);
+    confirmationActions->addWidget(confirmSubmitButton);
+    confirmationLayout->addWidget(submitConfirmationLabel_);
+    confirmationLayout->addLayout(confirmationActions);
+    submitConfirmationBubble_->setFixedWidth(232);
+    submitConfirmationBubble_->hide();
+    connect(cancelSubmitButton, &QPushButton::clicked,
+            this, &MainWindow::hideSubmitConfirmation);
+    connect(confirmSubmitButton, &QPushButton::clicked,
+            this, &MainWindow::confirmSubmitAttempt);
 
     solutionPage_ = new QWidget;
     auto* solutionLayout = new QVBoxLayout(solutionPage_);
@@ -484,7 +517,8 @@ void MainWindow::toggleWindowVisibility() {
         return;
     }
     show();
-    raise();
+    platform::applyNativeWindowPin(this, pinned_);
+    if (pinned_) raise();
     activateWindow();
     if (showHideAction_) showHideAction_->setText(QStringLiteral("隐藏窗口"));
 }
@@ -659,6 +693,7 @@ void MainWindow::requestQuestions() {
 
 void MainWindow::showQuestion(int index) {
     if (questions_.isEmpty()) return;
+    hideSubmitConfirmation();
     currentQuestionIndex_ = qBound(0, index, static_cast<int>(questions_.size()) - 1);
     const QJsonObject question = questions_.at(currentQuestionIndex_).toObject();
     practiceProgressLabel_->setText(QStringLiteral("第 %1 / %2 题 · 已作答 %3 题")
@@ -710,6 +745,21 @@ void MainWindow::chooseAnswer(int choice) {
          {"params", QJsonObject{{"attemptId", attemptId_}, {"answers", payload}}}},
         &error);
     saveDraft();
+    // 留出极短的选中反馈，再自动进入下一题。若用户已经手动切题，index 校验
+    // 会阻止旧定时器把新页面再次向前推进。
+    const int answeredIndex = currentQuestionIndex_;
+    if (answeredIndex + 1 < questions_.size()) {
+        QTimer::singleShot(120, this, [this, answeredIndex] {
+            if (currentQuestionIndex_ == answeredIndex)
+                showQuestion(answeredIndex + 1);
+        });
+    } else {
+        // 最后一题没有“下一题”可跳，短暂停留显示选中反馈后直接询问是否交卷。
+        QTimer::singleShot(120, this, [this, answeredIndex] {
+            if (currentQuestionIndex_ == answeredIndex)
+                submitAttempt();
+        });
+    }
 }
 
 QJsonArray MainWindow::answerPayload() const {
@@ -731,11 +781,30 @@ void MainWindow::submitAttempt() {
     const int answered = static_cast<int>(std::count_if(
         answers_.cbegin(), answers_.cend(), [](int value) { return value >= 0; }));
     const int unanswered = answers_.size() - answered;
-    const QString message = unanswered > 0
+    submitConfirmationLabel_->setText(unanswered > 0
         ? QStringLiteral("还有 %1 题未作答，确定交卷吗？").arg(unanswered)
-        : QStringLiteral("已完成全部题目，确定交卷吗？");
-    if (QMessageBox::question(this, QStringLiteral("确认交卷"), message) !=
-        QMessageBox::Yes) return;
+        : QStringLiteral("已完成全部题目，确定交卷吗？"));
+    submitConfirmationBubble_->adjustSize();
+    positionSubmitConfirmation();
+    submitConfirmationBubble_->show();
+    submitConfirmationBubble_->raise();
+}
+
+void MainWindow::hideSubmitConfirmation() {
+    if (submitConfirmationBubble_) submitConfirmationBubble_->hide();
+}
+
+void MainWindow::positionSubmitConfirmation() {
+    if (!submitConfirmationBubble_ || !practiceControlBar_) return;
+    const int x = qMax(4, practicePage_->width() -
+                             submitConfirmationBubble_->width() - 4);
+    const int y = qMax(4, practiceControlBar_->y() -
+                             submitConfirmationBubble_->height() - 7);
+    submitConfirmationBubble_->move(x, y);
+}
+
+void MainWindow::confirmSubmitAttempt() {
+    hideSubmitConfirmation();
     submitButton_->setEnabled(false);
     practiceProgressLabel_->setText(QStringLiteral("正在保存答案…"));
     QString error;
@@ -979,6 +1048,8 @@ void MainWindow::mouseMoveEvent(QMouseEvent* event) {
 
 void MainWindow::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
+    if (submitConfirmationBubble_ && submitConfirmationBubble_->isVisible())
+        positionSubmitConfirmation();
     if (!pages_ || pages_->currentWidget() != practicePage_ ||
         questions_.isEmpty() || !questionScroll_) return;
     const auto* root = qobject_cast<QVBoxLayout*>(card_->layout());
@@ -1347,13 +1418,14 @@ void MainWindow::lockCompactPracticeHeight() {
 }
 
 void MainWindow::setPinned(bool pinned) {
-    if (pinned_ == pinned) return;
     const QPoint position = pos();
     pinned_ = pinned;
     setWindowFlag(Qt::WindowStaysOnTopHint, pinned_);
     move(position);
     show();
+    platform::applyNativeWindowPin(this, pinned_);
     if (pinned_) raise();
+    QSettings().setValue(QStringLiteral("window/pinned"), pinned_);
     if (pinAction_) {
         const QSignalBlocker blocker(pinAction_);
         pinAction_->setChecked(pinned_);
@@ -1361,6 +1433,14 @@ void MainWindow::setPinned(bool pinned) {
     pinButton_->setToolTip(pinned_
         ? QStringLiteral("已置顶，点击取消始终悬浮")
         : QStringLiteral("点击后保持在其他窗口上方"));
+}
+
+void MainWindow::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    QTimer::singleShot(0, this, [this] {
+        platform::applyNativeWindowPin(this, pinned_);
+        if (pinned_) raise();
+    });
 }
 
 void MainWindow::applyCardStyle() {
@@ -1477,6 +1557,25 @@ void MainWindow::applyCardStyle() {
         QLabel[correct="false"] { color: #b89d9c; font-weight: 550; }
         QPushButton#pinButton:checked {
             background: rgba(255,255,255,18);
+        }
+        QFrame#submitConfirmationBubble {
+            background: rgba(25, 28, 33, 236);
+            border: none;
+            border-radius: 9px;
+        }
+        QLabel#submitConfirmationText {
+            color: #d0d4d9;
+            background: transparent;
+        }
+        QPushButton#confirmationSecondary {
+            background: transparent;
+            color: #9299a2;
+            padding: 4px 7px;
+        }
+        QPushButton#confirmationPrimary {
+            background: rgba(255,255,255,16);
+            color: #cbd0d6;
+            padding: 4px 7px;
         }
         QPushButton:hover { background: rgba(255,255,255,18); }
         QPushButton:pressed { background: rgba(255,255,255,28); }

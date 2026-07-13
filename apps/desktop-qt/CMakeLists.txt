@@ -2,6 +2,7 @@ qt_add_executable(quizpane
     src/main.cpp
     src/platform/global_hotkey.cpp
     src/platform/global_hotkey.hpp
+    src/platform/window_pinning.hpp
     src/ui/main_window.cpp
     src/ui/main_window.hpp
     src/ui/line_icons.cpp
@@ -11,7 +12,9 @@ qt_add_executable(quizpane
     resources/resources.qrc
 )
 if(APPLE)
+    enable_language(OBJCXX)
     target_sources(quizpane PRIVATE
+        src/platform/window_pinning.mm
         resources/app-icon.icns
         "${PROJECT_SOURCE_DIR}/LICENSE"
     )
@@ -21,14 +24,18 @@ if(APPLE)
         PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources"
     )
-    target_link_libraries(quizpane PRIVATE "-framework Carbon")
+    target_link_libraries(quizpane PRIVATE "-framework Carbon" "-framework AppKit")
 elseif(WIN32)
-    target_sources(quizpane PRIVATE resources/windows.rc)
+    target_sources(quizpane PRIVATE
+        src/platform/window_pinning.cpp
+        resources/windows.rc
+    )
     target_include_directories(quizpane PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/resources"
     )
     target_link_libraries(quizpane PRIVATE User32)
 elseif(UNIX)
+    target_sources(quizpane PRIVATE src/platform/window_pinning.cpp)
     find_package(X11 QUIET)
     if(X11_FOUND)
         target_compile_definitions(quizpane PRIVATE QUIZPANE_HAVE_X11=1)

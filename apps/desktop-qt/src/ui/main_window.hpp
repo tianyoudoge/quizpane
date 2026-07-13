@@ -14,6 +14,8 @@ class QLabel;
 class QLayout;
 class QAction;
 class QMenu;
+class QFrame;
+class QShowEvent;
 class QPushButton;
 class QScrollArea;
 class QStackedWidget;
@@ -43,6 +45,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     // ActionMode 是登录/引导页主按钮的有限状态机，避免用多组 bool 拼状态。
@@ -64,6 +67,9 @@ private:
     void chooseAnswer(int choice);
     QJsonArray answerPayload() const;
     void submitAttempt();
+    void confirmSubmitAttempt();
+    void hideSubmitConfirmation();
+    void positionSubmitConfirmation();
     void sendSubmit();
     void requestResults();
     void showSolution(int index);
@@ -131,6 +137,8 @@ private:
     QPushButton* previousQuestionButton_ = nullptr;
     QPushButton* nextQuestionButton_ = nullptr;
     QPushButton* submitButton_ = nullptr;
+    QFrame* submitConfirmationBubble_ = nullptr;
+    QLabel* submitConfirmationLabel_ = nullptr;
     QLabel* resultSummaryLabel_ = nullptr;
     QLabel* solutionProgressLabel_ = nullptr;
     QLabel* solutionQuestionLabel_ = nullptr;
