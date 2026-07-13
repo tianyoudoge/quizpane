@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=小窗刷题
+Comment=轻量、可扩展的桌面刷题工具
+Exec=小窗刷题
+Icon=org.quizpane.app
+Categories=Education;Utility;
+Terminal=false

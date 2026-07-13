@@ -1,0 +1,16 @@
+{
+  "formatVersion": 1,
+  "title": "示例常识题库",
+  "categories": ["常识"],
+  "questions": [
+    {
+      "id": "example-1",
+      "category": "常识",
+      "type": "single_choice",
+      "content": "水在标准大气压下的沸点是多少？",
+      "options": ["0℃", "50℃", "100℃", "150℃"],
+      "answer": 2,
+      "solution": "标准大气压下，水的沸点是 100℃。"
+    }
+  ]
+}

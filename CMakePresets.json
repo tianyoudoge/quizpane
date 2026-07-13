@@ -1,0 +1,25 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "dev",
+      "displayName": "QuizPane development",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "QUIZPANE_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {"name": "dev", "configurePreset": "dev"}
+  ],
+  "testPresets": [
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "output": {"outputOnFailure": true}
+    }
+  ]
+}
