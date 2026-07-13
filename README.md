@@ -4,6 +4,13 @@
   <p><strong>把题目贴在桌面角落，随时做两道，随时一键收起。</strong></p>
   <p>透明悬浮 · 老板键 · 草稿恢复 · 多题库 · 原生低占用</p>
   <p>
+    <a href="https://github.com/tianyoudoge/quizpane/stargazers"><img src="https://img.shields.io/github/stars/tianyoudoge/quizpane?logo=github&label=Stars" alt="GitHub Stars"></a>
+    <a href="https://github.com/tianyoudoge/quizpane/forks"><img src="https://img.shields.io/github/forks/tianyoudoge/quizpane?logo=github&label=Forks" alt="GitHub Forks"></a>
+    <a href="https://github.com/tianyoudoge/quizpane/releases/latest"><img src="https://img.shields.io/github/v/release/tianyoudoge/quizpane?label=Release" alt="Latest Release"></a>
+    <a href="https://github.com/tianyoudoge/quizpane/actions/workflows/release.yml"><img src="https://github.com/tianyoudoge/quizpane/actions/workflows/release.yml/badge.svg?branch=master" alt="Cross-platform Build"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-2f7d75" alt="PolyForm Noncommercial License"></a>
+  </p>
+  <p>
     <a href="https://github.com/tianyoudoge/quizpane/releases/latest">下载最新版</a> ·
     <a href="#安装和使用">安装教程</a> ·
     <a href="#题库怎么安装">题库教程</a> ·
