@@ -149,7 +149,11 @@ bool GlobalHotkey::registerBossKey(const QKeySequence& sequence, QString* error)
     if (modifiers.testFlag(Qt::ShiftModifier)) base |= ShiftMask;
     if (modifiers.testFlag(Qt::AltModifier)) base |= Mod1Mask;
     if (modifiers.testFlag(Qt::MetaModifier)) base |= Mod4Mask;
-    for (unsigned int extra : {0u, LockMask, Mod2Mask, LockMask | Mod2Mask})
+    for (unsigned int extra : {
+             0u,
+             static_cast<unsigned int>(LockMask),
+             static_cast<unsigned int>(Mod2Mask),
+             static_cast<unsigned int>(LockMask | Mod2Mask)})
         XGrabKey(display, keycode, base | extra, root, True,
                  GrabModeAsync, GrabModeAsync);
     XSync(display, False);
