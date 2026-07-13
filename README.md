@@ -53,25 +53,51 @@
 
 ## 安装和使用
 
-### macOS Apple Silicon
+### 先分清两个程序
+
+每个平台都提供两个独立下载包，不需要两个都安装：
+
+| 你要做什么 | 下载文件前缀 | 解压后的程序 |
+|---|---|---|
+| 在桌面小窗里刷题 | `QuizPane-*` | 小窗刷题 |
+| 把 TXT、Word、PDF、JSON 整理成题库 | `QuizPane-Bank-Studio-*` | 题库生成器 |
+
+题库生成器的输出是 `.quizpane-provider` 文件。生成完成后，再用“小窗刷题”导入；只想使用别人提供的题库时，无需下载题库生成器。
+
+### 按系统选择下载文件
+
+| 系统 | 小窗刷题 | 题库生成器 |
+|---|---|---|
+| macOS Apple Silicon（M1/M2/M3/M4） | `QuizPane-macos-arm64.zip` | `QuizPane-Bank-Studio-macos-arm64.zip` |
+| macOS Intel | `QuizPane-macos-x86_64.zip` | `QuizPane-Bank-Studio-macos-x86_64.zip` |
+| Windows 10/11 64 位 | `QuizPane-windows-x64.zip` | `QuizPane-Bank-Studio-windows-x64.zip` |
+| Linux/UOS/银河麒麟 64 位 | `QuizPane-linux-x86_64.tar.gz` | `QuizPane-Bank-Studio-linux-x86_64.tar.gz` |
+
+所有文件都在 [最新版 Releases](https://github.com/tianyoudoge/quizpane/releases/latest)。Windows 7、Linux ARM64、macOS 10.14/10.15 当前暂不支持，请勿下载名称相近的其他架构包尝试覆盖安装。
+
+### macOS 安装
 
 1. 打开 [Releases](https://github.com/tianyoudoge/quizpane/releases/latest)；
-2. 下载 `QuizPane-macos-arm64.zip`；
-3. 解压后，把“小窗刷题.app”拖入“应用程序”；
+2. 根据处理器和用途，从上表选择 ARM64 或 x86_64 的主程序/题库生成器；
+3. 解压后，把对应 `.app` 拖入“应用程序”；
 4. 第一次启动时，右键应用并选择“打开”；
-5. 进入小窗后安装题库文件。
+5. 小窗刷题负责安装题库，题库生成器负责创建题库，二者可以独立启动。
 
 当前自动构建版本使用临时签名，尚未完成 Apple Developer ID 公证。如果 macOS 阻止运行，请先确认文件来自本仓库的正式 Release，并核对同页面提供的 SHA-256；不要关闭整台电脑的 Gatekeeper。
 
 校验下载文件：
 
 ```bash
-shasum -a 256 QuizPane-macos-arm64.zip
+shasum -a 256 <下载的文件名>
 ```
 
-### Windows、Intel Mac、UOS 和银河麒麟
+### Windows 安装
 
-从 [Releases](https://github.com/tianyoudoge/quizpane/releases/latest) 下载文件名中包含对应平台和架构的压缩包。`QuizPane-*` 是刷题主程序，`QuizPane-Bank-Studio-*` 是独立题库生成器。Linux x64 包用于普通 Linux 桌面，也作为统信 UOS、银河麒麟的首期兼容构建。
+下载对应 `.zip` 后解压到普通文件夹：运行“小窗刷题.exe”开始刷题，或运行“题库生成器.exe”创建题库。两个压缩包已经分别携带所需 Qt 运行库，不要只复制其中的 `.exe` 到别处。
+
+### Linux、统信 UOS、银河麒麟安装
+
+下载对应 `.tar.gz` 并完整解压。主程序运行 `QuizPane.AppDir/AppRun`，题库生成器运行 `QuizPane-Bank-Studio.AppDir/AppRun`。不要把 `usr/bin` 中的单个文件拿出来运行；Qt 插件和运行库位于同一个 AppDir 中。当前属于 Linux x64 兼容构建，并非统信或麒麟官方认证版本。
 
 ## 题库怎么安装？
 
@@ -316,7 +342,9 @@ QuizPane is a compact, native desktop quiz window designed to stay in a corner i
 
 ### Install
 
-Apple Silicon users can download `QuizPane-macos-arm64.zip` from the [latest release](https://github.com/tianyoudoge/quizpane/releases/latest). Move the app to Applications, open it from the context menu on first launch, then import a trusted `.quizpane-provider` from the menu or by drag and drop.
+Each platform has two separate downloads: `QuizPane-*` is the floating quiz client, while `QuizPane-Bank-Studio-*` is the optional question-bank creator. Choose `macos-arm64` for Apple Silicon, `macos-x86_64` for Intel Macs, `windows-x64` for 64-bit Windows 10/11, or `linux-x86_64` for Linux/UOS/Kylin. Download them from the [latest release](https://github.com/tianyoudoge/quizpane/releases/latest).
+
+The Bank Studio creates `.quizpane-provider` files that can then be imported into QuizPane. Users who only install existing question banks do not need Bank Studio. Windows 7, Linux ARM64, and macOS 10.14/10.15 are not supported by the current release.
 
 The current build is an unnotarized technical preview. Verify the SHA-256 published with the release and do not disable Gatekeeper globally.
 

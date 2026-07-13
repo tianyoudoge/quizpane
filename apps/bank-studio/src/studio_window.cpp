@@ -1,6 +1,7 @@
 #include "studio_window.hpp"
 
 #include <QComboBox>
+#include <QColor>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDragEnterEvent>
@@ -13,19 +14,32 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMimeData>
 #include <QMenuBar>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QPainter>
+#include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSet>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QTableWidget>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#include <functional>
 
 namespace quizpane::studio {
 namespace {
@@ -53,6 +67,117 @@ QFrame* metricCard(const QString& name, QLabel** value) {
 bool acceptedSource(const QString& path) {
     const QString suffix = QFileInfo(path).suffix().toLower();
     return QStringList{"txt", "md", "docx", "pdf", "json"}.contains(suffix);
+}
+
+struct ModelVendor {
+    QString id;
+    QString name;
+    QString badge;
+    QColor badgeColor;
+    QString endpoint;
+    QString accountUrl;
+    QString tutorialUrl;
+    QStringList fallbackModels;
+    bool local = false;
+    bool custom = false;
+    bool anthropicProtocol = false;
+};
+
+const QList<ModelVendor>& modelVendors() {
+    // Endpoint 属于应用内置兼容契约。普通用户只能选择厂商，不能误改地址；
+    // 真正需要代理、网关或私有部署的高级用户使用“自定义供应商”。
+    static const QList<ModelVendor> vendors{
+        {QStringLiteral("openai"), QStringLiteral("OpenAI"), QStringLiteral("AI"),
+         QColor(QStringLiteral("#2f6f61")), QStringLiteral("https://api.openai.com/v1"),
+         QStringLiteral("https://platform.openai.com/api-keys"),
+         QStringLiteral("https://platform.openai.com/docs/quickstart"),
+         {QStringLiteral("gpt-5.2"), QStringLiteral("gpt-5-mini"),
+          QStringLiteral("gpt-4.1-mini")}},
+        {QStringLiteral("anthropic"), QStringLiteral("Anthropic Claude"), QStringLiteral("C"),
+         QColor(QStringLiteral("#8b6248")), QStringLiteral("https://api.anthropic.com/v1"),
+         QStringLiteral("https://console.anthropic.com/settings/keys"),
+         QStringLiteral("https://docs.anthropic.com/en/api/getting-started"),
+         {QStringLiteral("claude-sonnet-4-5"), QStringLiteral("claude-haiku-4-5")},
+         false, false, true},
+        {QStringLiteral("deepseek"), QStringLiteral("DeepSeek"), QStringLiteral("DS"),
+         QColor(QStringLiteral("#355d91")), QStringLiteral("https://api.deepseek.com/v1"),
+         QStringLiteral("https://platform.deepseek.com/api_keys"),
+         QStringLiteral("https://api-docs.deepseek.com/"),
+         {QStringLiteral("deepseek-v4-flash"), QStringLiteral("deepseek-v4-pro")}},
+        {QStringLiteral("dashscope"), QStringLiteral("阿里云百炼 · 通义千问"), QStringLiteral("Q"),
+         QColor(QStringLiteral("#6a55a6")),
+         QStringLiteral("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+         QStringLiteral("https://bailian.console.aliyun.com/?apiKey=1"),
+         QStringLiteral("https://help.aliyun.com/zh/model-studio/get-api-key"),
+         {QStringLiteral("qwen3.7-plus"), QStringLiteral("qwen3.6-flash"),
+          QStringLiteral("qwen-plus")}},
+        {QStringLiteral("zhipu"), QStringLiteral("智谱 AI"), QStringLiteral("GLM"),
+         QColor(QStringLiteral("#3c6c8c")),
+         QStringLiteral("https://open.bigmodel.cn/api/paas/v4"),
+         QStringLiteral("https://open.bigmodel.cn/usercenter/apikeys"),
+         QStringLiteral("https://docs.bigmodel.cn/cn/guide/develop/http/introduction"),
+         {QStringLiteral("glm-5.1"), QStringLiteral("glm-5-turbo"),
+          QStringLiteral("glm-4.7")}},
+        {QStringLiteral("ollama"), QStringLiteral("Ollama 本地模型"), QStringLiteral("O"),
+         QColor(QStringLiteral("#4e5964")), QStringLiteral("http://127.0.0.1:11434/v1"),
+         QStringLiteral("https://ollama.com/download"),
+         QStringLiteral("https://docs.ollama.com/api/introduction"),
+         {QStringLiteral("qwen3:8b"), QStringLiteral("qwen3:4b"),
+          QStringLiteral("llama3.2:3b")}, true},
+        {QStringLiteral("custom"), QStringLiteral("自定义供应商（高级）"), QStringLiteral("+"),
+         QColor(QStringLiteral("#59616a")), QString(), QString(),
+         QStringLiteral("https://github.com/tianyoudoge/quizpane/blob/master/docs/题库生成器UI与集成方案.md"),
+         {QStringLiteral("填写模型名称")}, false, true}
+    };
+    return vendors;
+}
+
+const ModelVendor& vendorById(const QString& id) {
+    for (const auto& vendor : modelVendors())
+        if (vendor.id == id) return vendor;
+    return modelVendors().first();
+}
+
+QIcon vendorIcon(const ModelVendor& vendor) {
+    QPixmap pixmap(28, 28);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(vendor.badgeColor);
+    painter.drawRoundedRect(QRectF(2, 2, 24, 24), 6, 6);
+    QFont font = painter.font();
+    font.setBold(true);
+    font.setPixelSize(vendor.badge.size() > 2 ? 8 : 11);
+    painter.setFont(font);
+    painter.setPen(QColor(QStringLiteral("#f0f2f4")));
+    painter.drawText(pixmap.rect(), Qt::AlignCenter, vendor.badge);
+    return QIcon(pixmap);
+}
+
+QString modelsEndpoint(const ModelVendor& vendor, const QString& endpoint) {
+    if (vendor.local) return QStringLiteral("http://127.0.0.1:11434/api/tags");
+    QString base = endpoint.trimmed();
+    while (base.endsWith('/')) base.chop(1);
+    return base + QStringLiteral("/models");
+}
+
+QStringList parseModelNames(const QByteArray& payload, bool ollama) {
+    const QJsonDocument document = QJsonDocument::fromJson(payload);
+    if (!document.isObject()) return {};
+    const QJsonArray values = document.object()
+        .value(ollama ? QStringLiteral("models") : QStringLiteral("data")).toArray();
+    QSet<QString> unique;
+    for (const QJsonValue& value : values) {
+        const QJsonObject object = value.toObject();
+        const QString name = object.value(ollama ? QStringLiteral("name")
+                                                 : QStringLiteral("id")).toString().trimmed();
+        if (!name.isEmpty()) unique.insert(name);
+    }
+    QStringList names;
+    for (const QString& name : unique) names.append(name);
+    names.sort(Qt::CaseInsensitive);
+    return names;
 }
 
 }  // namespace
@@ -127,8 +252,9 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     preflightTimer_->setInterval(380);
     connect(preflightTimer_, &QTimer::timeout, this, &StudioWindow::runPreflightStep);
     auto* settingsMenu = menuBar()->addMenu(QStringLiteral("设置"));
-    settingsMenu->addAction(QStringLiteral("模型设置…"), this,
-                            &StudioWindow::showModelSettings);
+    auto* modelSettingsAction = settingsMenu->addAction(
+        QStringLiteral("模型设置…"), this, &StudioWindow::showModelSettings);
+    modelSettingsAction->setShortcut(QKeySequence::Preferences);
     applyStyle();
     updateNavigation();
 }
@@ -322,82 +448,198 @@ void StudioWindow::removeSelectedSource() {
 void StudioWindow::showModelSettings() {
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("模型设置"));
-    dialog.setMinimumWidth(620);
+    dialog.setMinimumWidth(660);
     auto* layout = new QVBoxLayout(&dialog);
     auto* title = new QLabel(QStringLiteral("模型设置"));
     title->setObjectName(QStringLiteral("pageTitle"));
     layout->addWidget(title);
     layout->addWidget(mutedLabel(QStringLiteral(
-        "这是全局设置，不属于单次生成步骤。API Key 接入后将存入系统安全凭据库。")));
+        "选择厂商并填写 API Key，生成器会优先获取账号当前可用模型；网络失败时自动使用内置推荐列表。")));
 
     auto* form = new QFormLayout;
     form->setSpacing(10);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     auto* service = new QComboBox;
-    service->addItems({QStringLiteral("OpenAI"), QStringLiteral("OpenAI 兼容服务"),
-                       QStringLiteral("Ollama 本地模型")});
-    service->setCurrentText(modelService_);
+    for (const auto& vendor : modelVendors())
+        service->addItem(vendorIcon(vendor), vendor.name, vendor.id);
+    const int savedVendor = service->findData(modelVendorId_);
+    service->setCurrentIndex(savedVendor < 0 ? 0 : savedVendor);
     auto* model = new QComboBox;
     model->setEditable(true);
-    model->addItem(modelName_);
-    model->setEditText(modelName_);
     auto* endpoint = new QLineEdit(modelEndpoint_);
     endpoint->setCursorPosition(0);
     auto* apiKey = new QLineEdit;
     apiKey->setEchoMode(QLineEdit::Password);
-    apiKey->setPlaceholderText(QStringLiteral("本地 Ollama 不需要填写"));
+    apiKey->setText(modelApiKey_);
+    apiKey->setClearButtonEnabled(true);
+    apiKey->setPlaceholderText(QStringLiteral("粘贴 API Key"));
+    auto* links = new QLabel;
+    links->setOpenExternalLinks(true);
+    links->setTextInteractionFlags(Qt::TextBrowserInteraction);
     auto* hint = mutedLabel(QString());
     hint->setObjectName(QStringLiteral("notice"));
-    form->addRow(QStringLiteral("模型服务"), service);
+    form->addRow(QStringLiteral("模型厂商"), service);
     form->addRow(QStringLiteral("模型"), model);
-    form->addRow(QStringLiteral("服务地址"), endpoint);
+    form->addRow(QStringLiteral("Endpoint"), endpoint);
     form->addRow(QStringLiteral("API Key"), apiKey);
+    form->addRow(QStringLiteral("帮助"), links);
     layout->addLayout(form);
     layout->addWidget(hint);
 
-    const auto refresh = [service, model, endpoint, apiKey, hint](bool resetValues) {
-        const int selected = service->currentIndex();
-        if (resetValues) {
-            model->clear();
-            if (selected == 0) {
-                model->addItems({QStringLiteral("自动选择（推荐）"), QStringLiteral("填写模型名称…")});
-                endpoint->setText(QStringLiteral("https://api.openai.com/v1"));
-            } else if (selected == 1) {
-                model->addItem(QStringLiteral("填写模型名称"));
-                endpoint->setText(QStringLiteral("https://your-endpoint.example/v1"));
-            } else {
-                model->addItems({QStringLiteral("qwen3:8b"), QStringLiteral("qwen3:4b")});
-                endpoint->setText(QStringLiteral("http://127.0.0.1:11434/v1"));
-            }
-            endpoint->setCursorPosition(0);
-        }
-        apiKey->setEnabled(selected != 2);
-        if (selected == 0)
-            hint->setText(QStringLiteral("云端模式：开始前会显示预计上传的文本量。"));
-        else if (selected == 1)
-            hint->setText(QStringLiteral("请确认所选兼容服务的隐私与数据保留政策。"));
-        else
-            hint->setText(QStringLiteral("本地模式：资料不离开电脑，但速度取决于本机性能。"));
+    auto* manager = new QNetworkAccessManager(&dialog);
+    QNetworkReply* currentReply = nullptr;
+    const auto selectedVendor = [service]() -> const ModelVendor& {
+        return vendorById(service->currentData().toString());
     };
-    refresh(false);
-    connect(service, &QComboBox::currentIndexChanged, &dialog,
-            [refresh](int) { refresh(true); });
-    auto* test = new QPushButton(QStringLiteral("测试连接"));
-    test->setObjectName(QStringLiteral("secondaryButton"));
-    layout->addWidget(test, 0, Qt::AlignLeft);
-    connect(test, &QPushButton::clicked, &dialog, [hint] {
-        hint->setText(QStringLiteral("连接功能尚未接入；当前不会发送 API Key 或资料。"));
+    const auto loadModels = [model](const QStringList& names, const QString& preferred) {
+        model->clear();
+        model->addItems(names);
+        if (!preferred.isEmpty() && model->findText(preferred) < 0)
+            model->insertItem(0, preferred);
+        if (!preferred.isEmpty()) model->setCurrentText(preferred);
+        else if (!names.isEmpty()) model->setCurrentIndex(0);
+    };
+    const auto loadFallback = [model, hint, loadModels](const ModelVendor& vendor,
+                                                        const QString& reason,
+                                                        const QString& preferred = QString()) {
+        loadModels(vendor.fallbackModels, preferred);
+        hint->setText(reason.isEmpty()
+            ? QStringLiteral("已加载内置推荐模型。填写 API Key 后可获取账号当前可用列表。")
+            : QStringLiteral("%1；已回退到内置推荐模型。").arg(reason));
+    };
+
+    auto* fetch = new QPushButton(QStringLiteral("获取最新模型"));
+    fetch->setObjectName(QStringLiteral("secondaryButton"));
+    layout->addWidget(fetch, 0, Qt::AlignLeft);
+
+    std::function<void()> fetchModels;
+    fetchModels = [&, service, model, endpoint, apiKey, hint, fetch, manager,
+                   selectedVendor, loadFallback, loadModels] {
+        const ModelVendor vendor = selectedVendor();
+        if (currentReply) {
+            currentReply->abort();
+            currentReply->deleteLater();
+            currentReply = nullptr;
+        }
+        if (!vendor.local && apiKey->text().trimmed().isEmpty()) {
+            loadFallback(vendor, QStringLiteral("请先填写 API Key"), model->currentText());
+            return;
+        }
+        const QUrl url(modelsEndpoint(vendor, endpoint->text()));
+        if (!url.isValid() || url.scheme().isEmpty() || url.host().isEmpty()) {
+            loadFallback(vendor, QStringLiteral("Endpoint 格式不正确"), model->currentText());
+            return;
+        }
+        QNetworkRequest request(url);
+        request.setHeader(QNetworkRequest::UserAgentHeader,
+                          QStringLiteral("QuizPane-Bank-Studio"));
+        request.setRawHeader("Accept", "application/json");
+        request.setTransferTimeout(12000);
+        const QByteArray key = apiKey->text().trimmed().toUtf8();
+        if (vendor.anthropicProtocol) {
+            request.setRawHeader("x-api-key", key);
+            request.setRawHeader("anthropic-version", "2023-06-01");
+        } else if (!vendor.local) {
+            request.setRawHeader("Authorization", "Bearer " + key);
+        }
+        fetch->setEnabled(false);
+        fetch->setText(QStringLiteral("正在获取…"));
+        hint->setText(QStringLiteral("正在从 %1 获取可用模型，不会上传题目资料…")
+                          .arg(vendor.name));
+        currentReply = manager->get(request);
+        QNetworkReply* reply = currentReply;
+        connect(reply, &QNetworkReply::finished, &dialog,
+                [&, reply, vendor, model, hint, fetch, loadFallback, loadModels] {
+            if (currentReply == reply) currentReply = nullptr;
+            fetch->setEnabled(true);
+            fetch->setText(QStringLiteral("获取最新模型"));
+            const int status = reply->attribute(
+                QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QByteArray payload = reply->readAll();
+            const QString preferred = model->currentText();
+            if (reply->error() != QNetworkReply::NoError || status >= 400) {
+                const QString reason = status == 401 || status == 403
+                    ? QStringLiteral("API Key 无效或没有模型列表权限")
+                    : QStringLiteral("获取失败：%1").arg(reply->errorString());
+                loadFallback(vendor, reason, preferred);
+            } else {
+                const QStringList names = parseModelNames(payload, vendor.local);
+                if (names.isEmpty()) {
+                    loadFallback(vendor, QStringLiteral("厂商没有返回可识别的模型列表"), preferred);
+                } else {
+                    loadModels(names, names.contains(preferred) ? preferred : QString());
+                    hint->setText(QStringLiteral("已从 %1 获取 %2 个可用模型。")
+                                      .arg(vendor.name).arg(names.size()));
+                }
+            }
+            reply->deleteLater();
+        });
+    };
+
+    const auto refreshVendor = [=, this](bool preserveCurrent) {
+        const ModelVendor& vendor = selectedVendor();
+        const QString preferred = preserveCurrent ? model->currentText() : QString();
+        endpoint->setReadOnly(!vendor.custom);
+        endpoint->setText(vendor.custom
+            ? (vendor.id == modelVendorId_ && !modelEndpoint_.isEmpty()
+                   ? modelEndpoint_ : QStringLiteral("https://your-endpoint.example/v1"))
+            : vendor.endpoint);
+        endpoint->setCursorPosition(0);
+        apiKey->setEnabled(!vendor.local);
+        apiKey->setPlaceholderText(vendor.local ? QStringLiteral("本地 Ollama 不需要 API Key")
+                                                : QStringLiteral("粘贴 API Key"));
+        QStringList linkParts;
+        if (!vendor.accountUrl.isEmpty()) {
+            linkParts << QStringLiteral("<a href=\"%1\" style=\"color:#aeb8c3\">%2</a>")
+                             .arg(vendor.accountUrl,
+                                  vendor.local ? QStringLiteral("安装 Ollama")
+                                               : QStringLiteral("注册并申请 API Key"));
+        }
+        if (!vendor.tutorialUrl.isEmpty())
+            linkParts << QStringLiteral("<a href=\"%1\" style=\"color:#aeb8c3\">配置教程</a>")
+                             .arg(vendor.tutorialUrl);
+        links->setText(linkParts.join(QStringLiteral("　·　")));
+        loadFallback(vendor, QString(), preferred);
+        if (vendor.custom)
+            hint->setText(QStringLiteral("高级模式：填写 OpenAI 兼容 Endpoint、API Key 和模型名。"));
+        else if (vendor.local)
+            hint->setText(QStringLiteral("本地模式：点击获取已安装模型，资料不会离开电脑。"));
+    };
+    refreshVendor(false);
+    if (modelVendorId_ == service->currentData().toString() &&
+        !modelName_.isEmpty()) {
+        if (model->findText(modelName_) < 0) model->insertItem(0, modelName_);
+        model->setCurrentText(modelName_);
+    }
+    connect(service, &QComboBox::currentIndexChanged, &dialog, [&, refreshVendor](int) {
+        apiKey->clear();
+        refreshVendor(false);
+        if (selectedVendor().local) QTimer::singleShot(0, &dialog, fetchModels);
     });
+    connect(fetch, &QPushButton::clicked, &dialog, fetchModels);
+    connect(apiKey, &QLineEdit::editingFinished, &dialog, [&, selectedVendor] {
+        if (!selectedVendor().local && !apiKey->text().trimmed().isEmpty()) fetchModels();
+    });
+    if (selectedVendor().local) QTimer::singleShot(0, &dialog, fetchModels);
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Ok);
     buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("保存"));
     buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
     layout->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        if (model->currentText().trimmed().isEmpty() || endpoint->text().trimmed().isEmpty()) {
+            hint->setText(QStringLiteral("请填写模型名称和 Endpoint。"));
+            return;
+        }
+        dialog.accept();
+    });
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() != QDialog::Accepted) return;
+    modelVendorId_ = service->currentData().toString();
     modelService_ = service->currentText();
     modelName_ = model->currentText().trimmed();
     modelEndpoint_ = endpoint->text().trimmed();
+    modelApiKey_ = apiKey->text().trimmed();
     if (modelSummary_)
         modelSummary_->setText(QStringLiteral("当前模型：%1 · %2（可在“设置 → 模型设置”中修改）")
                                    .arg(modelService_, modelName_));

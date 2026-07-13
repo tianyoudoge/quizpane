@@ -61,9 +61,15 @@ private:
     QStringList sourcePaths_;
     int preflightStep_ = 0;
     qint64 estimatedInputTokens_ = 0;
+    QString modelVendorId_ = QStringLiteral("openai");
     QString modelService_ = QStringLiteral("OpenAI");
-    QString modelName_ = QStringLiteral("自动选择（推荐）");
+    // 初次打开时使用 OpenAI 的内置兜底模型；成功获取远端列表后，用户可改选
+    // 当前账号真正可用的模型。这里不能写一个并不存在的“自动选择”占位值。
+    QString modelName_ = QStringLiteral("gpt-5.2");
     QString modelEndpoint_ = QStringLiteral("https://api.openai.com/v1");
+    // 当前只保存在生成器进程内，绝不写入普通配置文件。后续模型调用落地时，
+    // 再接入 Keychain/Credential Manager/Secret Service 持久化。
+    QString modelApiKey_;
 };
 
 }  // namespace quizpane::studio
