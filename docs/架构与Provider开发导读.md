@@ -8,9 +8,9 @@
 |---|---|---|
 | `apps/desktop-qt` | Controller + View | 窗口、菜单、用户交互和流程编排 |
 | `core` | Domain/Service | 答题状态、草稿和图片处理 |
-| `sdk` | SPI + Adapter | Provider ABI、动态加载、安装和安全存储 |
+| `sdk` | SPI + Adapter | Provider ABI、原生/声明式运行时、安装和安全存储 |
 | `providers/demo` | Mock Adapter | 完全离线的参考实现 |
-| `tools/bank-generator` | Import Tool | 本地题库源校验与后续打包 |
+| `tools/bank-generator` | Import Tool | 声明式题库校验与确定性打包 |
 | `tests` | JUnit tests | Host、领域模型和 Provider 流程测试 |
 
 依赖方向：

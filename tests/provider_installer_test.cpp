@@ -13,12 +13,13 @@ namespace {
 
 QByteArray manifest(const QString& platform, const QString& library) {
     return QJsonDocument(QJsonObject{
-        {"manifestVersion", 1},
+        {"manifestVersion", 2},
         {"id", "org.quizpane.installer-test"},
         {"name", "Installer Test"},
         {"version", "1.2.3"},
+        {"kind", "native"},
         {"providerAbi", 1},
-        {"library", QJsonObject{{platform, library}}},
+        {"runtime", QJsonObject{{"libraries", QJsonObject{{platform, library}}}}},
         {"permissions", QJsonObject{{"network", false}}}})
         .toJson(QJsonDocument::Compact);
 }
@@ -65,14 +66,36 @@ int main(int argc, char** argv) {
         qCritical() << error;
         return 4;
     }
-    if (!QFileInfo(result.libraryPath).isFile()) return 5;
+    if (!QFileInfo(result.entryPath).isFile()) return 5;
     quizpane::ProviderInstallResult repeatedResult;
     if (!installer.install(info, &repeatedResult, &error) ||
-        repeatedResult.libraryPath != result.libraryPath) return 6;
+        repeatedResult.entryPath != result.entryPath) return 6;
     const auto installed = installer.listInstalled(&error);
     if (installed.size() != 1 ||
         installed.first().id != QStringLiteral("org.quizpane.installer-test") ||
-        installed.first().libraryPath != result.libraryPath) return 8;
+        installed.first().entryPath != result.entryPath) return 8;
+
+    const QString declarativePath = QDir(temp.path()).filePath(
+        QStringLiteral("declarative.quizpane-provider"));
+    const QByteArray declarativeManifest = QJsonDocument(QJsonObject{
+        {"manifestVersion", 2}, {"id", "org.quizpane.local-test"},
+        {"name", "Local Test"}, {"version", "1.0.0"},
+        {"kind", "declarative"},
+        {"runtime", QJsonObject{{"format", "quizpane.bank+json"},
+            {"schemaVersion", 1}, {"entry", "content/bank.json"}}},
+        {"permissions", QJsonObject{{"network", false}}}}).toJson();
+    {
+        QZipWriter zip(declarativePath);
+        zip.addFile(QStringLiteral("manifest.json"), declarativeManifest);
+        zip.addFile(QStringLiteral("content/bank.json"), QByteArrayLiteral("{}"));
+        zip.close();
+    }
+    quizpane::ProviderPackageInfo declarativeInfo;
+    quizpane::ProviderInstallResult declarativeResult;
+    if (!installer.inspect(declarativePath, &declarativeInfo, &error) ||
+        declarativeInfo.kind != QStringLiteral("declarative") ||
+        !installer.install(declarativeInfo, &declarativeResult, &error) ||
+        !QFileInfo(declarativeResult.entryPath).isFile()) return 11;
 
     const QString unsafePath = QDir(temp.path()).filePath(
         QStringLiteral("unsafe.quizpane-provider"));
@@ -86,6 +109,7 @@ int main(int argc, char** argv) {
     if (installer.inspect(unsafePath, &info, &error)) return 7;
     if (!installer.removeInstalled(QStringLiteral("org.quizpane.installer-test"),
                                    &error) ||
+        !installer.removeInstalled(QStringLiteral("org.quizpane.local-test"), &error) ||
         !installer.listInstalled(&error).isEmpty()) return 9;
     return 0;
 }

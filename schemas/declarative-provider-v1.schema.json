@@ -67,7 +67,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "catalogId": { "$ref": "#/$defs/id" },
-        "type": { "enum": ["single_choice", "multiple_choice", "true_false"] },
+        "type": { "enum": ["single_choice", "true_false"] },
         "stem": { "type": "string", "minLength": 1, "maxLength": 20000 },
         "stemImage": { "$ref": "#/$defs/asset" },
         "options": { "type": "array", "minItems": 2, "maxItems": 20, "items": { "$ref": "#/$defs/option" } },

@@ -14,8 +14,9 @@ struct ProviderPackageInfo {
     QString id;
     QString name;
     QString version;
+    QString kind;
     QString platformKey;
-    QString libraryRelativePath;
+    QString entryRelativePath;
     bool requestsNetwork = false;
     QByteArray packageSha256;
     QJsonObject manifest;
@@ -23,7 +24,7 @@ struct ProviderPackageInfo {
 
 struct ProviderInstallResult {
     QString installDirectory;
-    QString libraryPath;
+    QString entryPath;
 };
 
 struct InstalledProviderInfo {
@@ -31,7 +32,8 @@ struct InstalledProviderInfo {
     QString name;
     QString version;
     QString installDirectory;
-    QString libraryPath;
+    QString kind;
+    QString entryPath;
     QJsonObject manifest;
 };
 

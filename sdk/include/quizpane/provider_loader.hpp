@@ -6,6 +6,7 @@
 #include <QString>
 
 #include "quizpane/provider_abi.h"
+#include "quizpane/declarative_provider.hpp"
 
 namespace quizpane {
 
@@ -45,6 +46,7 @@ private:
     void acceptResponse(const QByteArray& json);
 
     QLibrary library_;
+    DeclarativeProvider declarative_;
     QJsonObject descriptor_;
     QString providerId_;
     qp_provider_handle* handle_ = nullptr;

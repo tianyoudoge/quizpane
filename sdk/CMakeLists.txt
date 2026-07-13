@@ -5,8 +5,10 @@ target_include_directories(quizpane_provider_sdk INTERFACE
 )
 
 add_library(quizpane_provider_host STATIC
+    include/quizpane/declarative_provider.hpp
     include/quizpane/provider_installer.hpp
     include/quizpane/provider_loader.hpp
+    src/declarative_provider.cpp
     src/provider_installer.cpp
     src/provider_loader.cpp
 )

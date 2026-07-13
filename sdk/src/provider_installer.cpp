@@ -12,6 +12,8 @@
 #include <QUuid>
 #include <QtCore/private/qzipreader_p.h>
 
+#include <algorithm>
+
 #include "quizpane/provider_abi.h"
 
 namespace quizpane {
@@ -144,27 +146,45 @@ bool ProviderInstaller::inspect(const QString& packagePath, ProviderPackageInfo*
         QStringLiteral("^[a-z0-9]+(?:[.-][a-z0-9-]+)+$"));
     static const QRegularExpression versionPattern(
         QStringLiteral("^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"));
-    if (manifest.value(QStringLiteral("manifestVersion")).toInt() != 1 ||
-        manifest.value(QStringLiteral("providerAbi")).toInt() != QP_PROVIDER_ABI_V1 ||
+    const QString kind = manifest.value(QStringLiteral("kind")).toString();
+    if (manifest.value(QStringLiteral("manifestVersion")).toInt() != 2 ||
+        (kind != QStringLiteral("native") && kind != QStringLiteral("declarative")) ||
         !idPattern.match(id).hasMatch() || name.trimmed().isEmpty() ||
         !versionPattern.match(version).hasMatch())
         return fail(error, QStringLiteral("题库安装包的名称、版本或标识不合法"));
 
     const QString platform = currentPlatformKey();
-    const QString library = manifest.value(QStringLiteral("library"))
-                                .toObject().value(platform).toString();
-    if (!safeRelativePath(library))
-        return fail(error, QStringLiteral("安装包不支持当前平台：%1").arg(platform));
-    bool hasLibrary = false;
-    for (const auto& entry : entries)
-        if (entry.isFile && entry.filePath == library) hasLibrary = true;
-    if (!hasLibrary)
-        return fail(error, QStringLiteral("安装包缺少动态库：%1").arg(library));
+    QString entry;
+    if (kind == QStringLiteral("native")) {
+        if (manifest.value(QStringLiteral("providerAbi")).toInt() != QP_PROVIDER_ABI_V1)
+            return fail(error, QStringLiteral("原生题库 ABI 与当前应用不兼容"));
+        entry = manifest.value(QStringLiteral("runtime")).toObject()
+                    .value(QStringLiteral("libraries")).toObject().value(platform).toString();
+        if (!safeRelativePath(entry))
+            return fail(error, QStringLiteral("安装包不支持当前平台：%1").arg(platform));
+    } else {
+        const QJsonObject runtime = manifest.value(QStringLiteral("runtime")).toObject();
+        if (runtime.value(QStringLiteral("format")).toString() !=
+                QStringLiteral("quizpane.bank+json") ||
+            runtime.value(QStringLiteral("schemaVersion")).toInt() != 1)
+            return fail(error, QStringLiteral("声明式题库格式与当前应用不兼容"));
+        entry = runtime.value(QStringLiteral("entry")).toString();
+        if (!safeRelativePath(entry) || !entry.endsWith(QStringLiteral(".json")))
+            return fail(error, QStringLiteral("声明式题库入口路径不合法"));
+        if (manifest.value(QStringLiteral("permissions")).toObject()
+                .value(QStringLiteral("network")).toBool())
+            return fail(error, QStringLiteral("声明式题库不能申请网络权限"));
+    }
+    const bool hasEntry = std::any_of(entries.cbegin(), entries.cend(), [&entry](const auto& item) {
+        return item.isFile && item.filePath == entry;
+    });
+    if (!hasEntry)
+        return fail(error, QStringLiteral("安装包缺少题库入口：%1").arg(entry));
 
     const QByteArray packageHash = sha256File(packagePath);
     if (packageHash.isEmpty()) return fail(error, QStringLiteral("无法计算安装包摘要"));
     *info = ProviderPackageInfo{
-        packagePath, id, name.trimmed(), version, platform, library,
+        packagePath, id, name.trimmed(), version, kind, platform, entry,
         manifest.value(QStringLiteral("permissions")).toObject()
             .value(QStringLiteral("network")).toBool(),
         packageHash,
@@ -185,13 +205,13 @@ bool ProviderInstaller::install(const ProviderPackageInfo& package,
     const QString providerRoot = QDir(root).filePath(verified.id);
     const QString target = QDir(providerRoot).filePath(verified.version);
     if (QFileInfo::exists(target)) {
-        const QString installedLibrary =
-            QDir(target).filePath(verified.libraryRelativePath);
-        if (!QFileInfo(installedLibrary).isFile())
+        const QString installedEntry =
+            QDir(target).filePath(verified.entryRelativePath);
+        if (!QFileInfo(installedEntry).isFile())
             return fail(error, QStringLiteral("已导入的题库不完整，请先移除后重试"));
         if (result) {
             result->installDirectory = target;
-            result->libraryPath = installedLibrary;
+            result->entryPath = installedEntry;
         }
         return true;
     }
@@ -238,7 +258,7 @@ bool ProviderInstaller::install(const ProviderPackageInfo& package,
         return false;
     if (result) {
         result->installDirectory = target;
-        result->libraryPath = QDir(target).filePath(verified.libraryRelativePath);
+        result->entryPath = QDir(target).filePath(verified.entryRelativePath);
     }
     return true;
 }
@@ -260,18 +280,23 @@ QList<InstalledProviderInfo> ProviderInstaller::listInstalled(QString* error) co
             QDir(providerEntry.filePath()).filePath(version);
         const QJsonObject manifest = readJson(
             QDir(installDirectory).filePath(QStringLiteral("manifest.json")));
-        const QString libraryRelative = manifest.value(QStringLiteral("library"))
-                                            .toObject().value(platform).toString();
-        const QString libraryPath = QDir(installDirectory).filePath(libraryRelative);
+        const QString kind = manifest.value(QStringLiteral("kind")).toString();
+        const QJsonObject runtime = manifest.value(QStringLiteral("runtime")).toObject();
+        const QString entryRelative = kind == QStringLiteral("native")
+            ? runtime.value(QStringLiteral("libraries")).toObject().value(platform).toString()
+            : runtime.value(QStringLiteral("entry")).toString();
+        const QString entryPath = QDir(installDirectory).filePath(entryRelative);
         if (manifest.value(QStringLiteral("id")).toString() != id ||
-            !safeRelativePath(libraryRelative) || !QFileInfo::exists(libraryPath))
+            manifest.value(QStringLiteral("manifestVersion")).toInt() != 2 ||
+            !safeRelativePath(entryRelative) || !QFileInfo::exists(entryPath))
             continue;
         result.append(InstalledProviderInfo{
             id,
             manifest.value(QStringLiteral("name")).toString(id),
             version,
             installDirectory,
-            libraryPath,
+            kind,
+            entryPath,
             manifest
         });
     }

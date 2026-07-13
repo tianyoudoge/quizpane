@@ -38,3 +38,12 @@ target_compile_definitions(provider_flow_test PRIVATE
 )
 add_dependencies(provider_flow_test quizpane_provider_demo)
 add_test(NAME provider_flow_test COMMAND provider_flow_test)
+
+add_executable(declarative_provider_flow_test declarative_provider_flow_test.cpp)
+target_link_libraries(declarative_provider_flow_test PRIVATE
+    quizpane_provider_host Qt6::Core
+)
+target_compile_definitions(declarative_provider_flow_test PRIVATE
+    DECLARATIVE_BANK_PATH="${PROJECT_SOURCE_DIR}/schemas/examples/declarative/content/bank.json"
+)
+add_test(NAME declarative_provider_flow_test COMMAND declarative_provider_flow_test)

@@ -2,6 +2,8 @@
 
 #include <QJsonDocument>
 #include <QMetaObject>
+#include <QFileInfo>
+#include <QTimer>
 
 #include <cstring>
 
@@ -48,6 +50,13 @@ bool ProviderLoader::load(const QString& libraryPath, QString* error) {
     // QLibrary 对应 Java 的 System.loadLibrary，但这里还会逐个 resolve 导出函数，
     // 并校验 ABI/descriptor，防止把任意 DLL 当作题库执行。
     unload();
+    if (QFileInfo(libraryPath).suffix().compare(QStringLiteral("json"),
+                                                Qt::CaseInsensitive) == 0) {
+        if (!declarative_.load(libraryPath, error)) return false;
+        descriptor_ = declarative_.descriptor();
+        providerId_ = descriptor_.value(QStringLiteral("id")).toString();
+        return true;
+    }
     library_.setFileName(libraryPath);
     // Qt-based providers can register metatypes and process-wide callbacks.
     // Keep their code mapped after destroying the provider instance so those
@@ -113,14 +122,20 @@ void ProviderLoader::unload() {
     destroyFn_ = nullptr;
     descriptor_ = {};
     providerId_.clear();
+    declarative_.unload();
     if (library_.isLoaded()) library_.unload();
 }
 
-bool ProviderLoader::isLoaded() const { return handle_ != nullptr; }
+bool ProviderLoader::isLoaded() const { return handle_ != nullptr || declarative_.isLoaded(); }
 
 QJsonObject ProviderLoader::descriptor() const { return descriptor_; }
 
 bool ProviderLoader::request(const QJsonObject& request, QString* error) {
+    if (declarative_.isLoaded()) {
+        const QJsonObject response = declarative_.request(request);
+        QTimer::singleShot(0, this, [this, response] { emit responseReceived(response); });
+        return true;
+    }
     if (!handle_ || !requestFn_) {
         if (error) *error = QStringLiteral("题库尚未加载");
         return false;
@@ -136,6 +151,10 @@ bool ProviderLoader::request(const QJsonObject& request, QString* error) {
 }
 
 bool ProviderLoader::cancel(const QString& requestId, QString* error) {
+    if (declarative_.isLoaded()) {
+        Q_UNUSED(requestId);
+        return true;
+    }
     if (!handle_ || !cancelFn_) {
         if (error) *error = QStringLiteral("题库尚未加载");
         return false;

@@ -645,19 +645,24 @@ void MainWindow::populateCatalog(const QJsonArray& nodes) {
         rowLayout->setContentsMargins(12, 10, 10, 10);
         auto* label = new QLabel(QStringLiteral("%1\n%2 道可练").arg(title).arg(available));
         label->setWordWrap(true);
-        auto* fiveButton = new QPushButton(QStringLiteral("5 题"));
-        auto* fifteenButton = new QPushButton(QStringLiteral("15 题"));
-        fiveButton->setObjectName(QStringLiteral("smallButton"));
-        fifteenButton->setObjectName(QStringLiteral("smallButton"));
-        fiveButton->setEnabled(available >= 5);
-        fifteenButton->setEnabled(available >= 15);
-        connect(fiveButton, &QPushButton::clicked, this,
-                [this, categoryId, title] { startAttempt(categoryId, title, 5); });
-        connect(fifteenButton, &QPushButton::clicked, this,
-                [this, categoryId, title] { startAttempt(categoryId, title, 15); });
         rowLayout->addWidget(label, 1);
-        rowLayout->addWidget(fiveButton);
-        rowLayout->addWidget(fifteenButton);
+        QList<int> counts;
+        for (const auto& countValue : node.value("suggestedCounts").toArray()) {
+            const int count = countValue.toInt();
+            if (count > 0 && count <= available && !counts.contains(count)) counts.append(count);
+        }
+        if (counts.isEmpty()) {
+            if (available >= 5) counts.append(5);
+            if (available >= 15) counts.append(15);
+            if (counts.isEmpty() && available > 0) counts.append(available);
+        }
+        for (const int count : counts.mid(0, 2)) {
+            auto* button = new QPushButton(QStringLiteral("%1 题").arg(count));
+            button->setObjectName(QStringLiteral("smallButton"));
+            connect(button, &QPushButton::clicked, this,
+                    [this, categoryId, title, count] { startAttempt(categoryId, title, count); });
+            rowLayout->addWidget(button);
+        }
         catalogListLayout_->addWidget(row);
     }
     catalogListLayout_->addStretch();
@@ -1097,7 +1102,7 @@ void MainWindow::installProviderPackage(const QString& path) {
         QMessageBox::warning(this, QStringLiteral("导入失败"), error);
         return;
     }
-    loadProvider(result.libraryPath);
+    loadProvider(result.entryPath);
 }
 
 void MainWindow::loadProvider(const QString& path) {
@@ -1141,7 +1146,7 @@ bool MainWindow::loadLastProvider() {
     }
     if (path.isEmpty() || !QFileInfo(path).isFile()) {
         const auto installed = installer_.listInstalled();
-        if (!installed.isEmpty()) path = installed.first().libraryPath;
+        if (!installed.isEmpty()) path = installed.first().entryPath;
     }
     if (path.isEmpty() || !QFileInfo(path).isFile()) return false;
     loadProvider(path);
@@ -1246,7 +1251,7 @@ void MainWindow::showAboutDialog() {
 
 void MainWindow::switchProvider(const InstalledProviderInfo& provider) {
     if (provider.id == providerId_) return;
-    loadProvider(provider.libraryPath);
+    loadProvider(provider.entryPath);
 }
 
 void MainWindow::deleteProvider(const InstalledProviderInfo& provider) {
