@@ -13,7 +13,17 @@
 #include <windows.h>
 #include <wincred.h>
 #elif defined(QUIZPANE_HAVE_LIBSECRET)
+// Qt 为 signals 定义了关键字宏，而 GLib 的 GDBusSignalInfo 恰好有一个
+// signals 字段。包含 libsecret 时临时撤掉宏，随后恢复 Qt 信号语法。
+#ifdef signals
+#define QUIZPANE_RESTORE_QT_SIGNALS
+#undef signals
+#endif
 #include <libsecret/secret.h>
+#ifdef QUIZPANE_RESTORE_QT_SIGNALS
+#define signals Q_SIGNALS
+#undef QUIZPANE_RESTORE_QT_SIGNALS
+#endif
 #endif
 
 namespace quizpane {

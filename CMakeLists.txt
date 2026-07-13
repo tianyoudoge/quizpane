@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(QuizPane VERSION 0.2.1 LANGUAGES C CXX)
+project(QuizPane VERSION 0.2.2 LANGUAGES C CXX)
 
 include(FetchContent)
 
