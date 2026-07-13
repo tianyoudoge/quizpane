@@ -2,7 +2,8 @@
 Type=Application
 Name=小窗刷题
 Comment=轻量、可扩展的桌面刷题工具
-Exec=小窗刷题
+Exec=小窗刷题 %f
 Icon=org.quizpane.app
 Categories=Education;Utility;
+MimeType=application/vnd.quizpane.provider;
 Terminal=false

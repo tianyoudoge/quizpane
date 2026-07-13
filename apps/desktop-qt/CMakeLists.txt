@@ -1,5 +1,7 @@
 qt_add_executable(quizpane
     src/main.cpp
+    src/platform/file_association.cpp
+    src/platform/file_association.hpp
     src/platform/global_hotkey.cpp
     src/platform/global_hotkey.hpp
     src/platform/window_pinning.hpp
@@ -33,7 +35,7 @@ elseif(WIN32)
     target_include_directories(quizpane PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/resources"
     )
-    target_link_libraries(quizpane PRIVATE User32)
+    target_link_libraries(quizpane PRIVATE User32 Shell32)
 elseif(UNIX)
     target_sources(quizpane PRIVATE src/platform/window_pinning.cpp)
     find_package(X11 QUIET)
@@ -61,4 +63,5 @@ set_target_properties(quizpane PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "小窗刷题"
     MACOSX_BUNDLE_GUI_IDENTIFIER "org.quizpane.app"
     MACOSX_BUNDLE_ICON_FILE "app-icon.icns"
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist.in"
 )
