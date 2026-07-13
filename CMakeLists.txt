@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(QuizPane VERSION 0.2.0 LANGUAGES C CXX)
+project(QuizPane VERSION 0.2.1 LANGUAGES C CXX)
 
 include(FetchContent)
 
@@ -16,7 +16,6 @@ option(QUIZPANE_BUILD_BANK_GENERATOR
 option(QUIZPANE_BUILD_BANK_STUDIO "Build the QuizPane Bank Studio GUI" ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network)
-find_package(Qt6CorePrivate ${Qt6Core_VERSION} EXACT REQUIRED)
 
 FetchContent_Declare(qrcodegen_source
     GIT_REPOSITORY https://github.com/nayuki/QR-Code-generator.git
@@ -30,6 +29,22 @@ add_library(qrcodegen STATIC
 target_include_directories(qrcodegen PUBLIC
     "${qrcodegen_source_SOURCE_DIR}/cpp"
 )
+
+# 题库包本质上是 ZIP。使用独立、稳定的 miniz API，避免依赖 Qt 的
+# QZipReader/QZipWriter 私有接口；后者会随 Qt 补丁版本变化，官方二进制 SDK
+# 也不保证提供，无法可靠进行跨平台 CI 构建。
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
+set(INSTALL_PROJECT OFF CACHE BOOL "" FORCE)
+# miniz 3.0.2 的源码仍声明 cmake_minimum_required(VERSION 3.0)。CMake 4
+# 需要显式说明按 3.5 以后的策略解释它，避免影响我们自己的策略设置。
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+FetchContent_Declare(miniz_source
+    GIT_REPOSITORY https://github.com/richgel999/miniz.git
+    GIT_TAG 3.0.2
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(miniz_source)
 
 # 每个目录生成独立 target，避免使用全局 include/link 配置。依赖方向由各模块的
 # target_link_libraries 明确表达，效果类似 Maven 多模块工程。

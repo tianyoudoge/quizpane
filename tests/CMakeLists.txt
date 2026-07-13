@@ -24,7 +24,7 @@ add_test(NAME image_privacy_filter_test COMMAND image_privacy_filter_test)
 
 add_executable(provider_installer_test provider_installer_test.cpp)
 target_link_libraries(provider_installer_test PRIVATE
-    quizpane_provider_host Qt6::Core Qt6::CorePrivate
+    quizpane_provider_host Qt6::Core
 )
 add_test(NAME provider_installer_test COMMAND provider_installer_test)
 

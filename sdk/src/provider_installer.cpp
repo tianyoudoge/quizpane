@@ -10,11 +10,10 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QUuid>
-#include <QtCore/private/qzipreader_p.h>
-
 #include <algorithm>
 
 #include "quizpane/provider_abi.h"
+#include "quizpane/zip_archive.hpp"
 
 namespace quizpane {
 namespace {
@@ -110,22 +109,22 @@ bool ProviderInstaller::inspect(const QString& packagePath, ProviderPackageInfo*
                               Qt::CaseInsensitive))
         return fail(error, QStringLiteral("文件扩展名必须是 .quizpane-provider"));
 
-    QZipReader zip(packagePath);
-    if (!zip.exists() || !zip.isReadable())
+    ZipArchiveReader zip(packagePath);
+    if (!zip.isReadable())
         return fail(error, QStringLiteral("安装包不是可读取的 ZIP 文件"));
-    const auto entries = zip.fileInfoList();
+    const auto entries = zip.entries();
     if (entries.isEmpty() || entries.size() > kMaxEntries)
         return fail(error, QStringLiteral("安装包文件数量不合法"));
 
     qint64 expandedBytes = 0;
     bool hasManifest = false;
     for (const auto& entry : entries) {
-        if (!safeRelativePath(entry.filePath) || entry.isSymLink)
-            return fail(error, QStringLiteral("安装包包含不安全路径：%1").arg(entry.filePath));
+        if (!safeRelativePath(entry.path) || entry.isSymbolicLink)
+            return fail(error, QStringLiteral("安装包包含不安全路径：%1").arg(entry.path));
         if (entry.size < 0 || expandedBytes > kMaxExpandedBytes - entry.size)
             return fail(error, QStringLiteral("安装包解压后体积超过 128 MiB"));
         expandedBytes += entry.size;
-        if (entry.filePath == QStringLiteral("manifest.json") && entry.isFile)
+        if (entry.path == QStringLiteral("manifest.json") && entry.isFile)
             hasManifest = true;
     }
     if (!hasManifest) return fail(error, QStringLiteral("安装包缺少 manifest.json"));
@@ -176,7 +175,7 @@ bool ProviderInstaller::inspect(const QString& packagePath, ProviderPackageInfo*
             return fail(error, QStringLiteral("声明式题库不能申请网络权限"));
     }
     const bool hasEntry = std::any_of(entries.cbegin(), entries.cend(), [&entry](const auto& item) {
-        return item.isFile && item.filePath == entry;
+        return item.isFile && item.path == entry;
     });
     if (!hasEntry)
         return fail(error, QStringLiteral("安装包缺少题库入口：%1").arg(entry));
@@ -223,31 +222,27 @@ bool ProviderInstaller::install(const ProviderPackageInfo& package,
     const QString staging = QDir(root).filePath(
         QStringLiteral(".staging-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
     QDir().mkpath(staging);
-    QZipReader zip(verified.packagePath);
-    for (const auto& entry : zip.fileInfoList()) {
-        const QString destination = QDir(staging).filePath(entry.filePath);
-        if (entry.isDir) {
+    ZipArchiveReader zip(verified.packagePath);
+    for (const auto& entry : zip.entries()) {
+        const QString destination = QDir(staging).filePath(entry.path);
+        if (entry.isDirectory) {
             if (!QDir().mkpath(destination)) {
                 QDir(staging).removeRecursively();
-                return fail(error, QStringLiteral("无法创建安装目录：%1").arg(entry.filePath));
+                return fail(error, QStringLiteral("无法创建安装目录：%1").arg(entry.path));
             }
             continue;
         }
         if (!entry.isFile) continue;
         QDir().mkpath(QFileInfo(destination).absolutePath());
         QFile output(destination);
-        if (!output.open(QIODevice::WriteOnly) || output.write(zip.fileData(entry.filePath)) != entry.size) {
+        if (!output.open(QIODevice::WriteOnly) || output.write(zip.fileData(entry.path)) != entry.size) {
             QDir(staging).removeRecursively();
-            return fail(error, QStringLiteral("无法解压文件：%1").arg(entry.filePath));
+            return fail(error, QStringLiteral("无法解压文件：%1").arg(entry.path));
         }
         output.close();
-        output.setPermissions(entry.permissions &
-                              (QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                               QFileDevice::ExeOwner | QFileDevice::ReadGroup |
-                               QFileDevice::ExeGroup | QFileDevice::ReadOther |
-                               QFileDevice::ExeOther));
+        output.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                              QFileDevice::ReadGroup | QFileDevice::ReadOther);
     }
-    zip.close();
     if (!QDir().rename(staging, target)) {
         QDir(staging).removeRecursively();
         return fail(error, QStringLiteral("无法启用题库安装目录"));

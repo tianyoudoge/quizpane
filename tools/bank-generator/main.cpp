@@ -7,7 +7,8 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QTextStream>
-#include <QtCore/private/qzipwriter_p.h>
+
+#include "quizpane/zip_archive.hpp"
 
 namespace {
 
@@ -82,12 +83,12 @@ int package(const QString& bankPath, const QString& manifestPath, const QString&
         runtime.value("entry") != QStringLiteral("content/bank.json")) {
         qCritical() << "Manifest 必须是入口为 content/bank.json 的 declarative v2"; return 3;
     }
-    QZipWriter zip(outputPath);
-    zip.setCompressionPolicy(QZipWriter::AutoCompress);
-    zip.addFile(QStringLiteral("manifest.json"), QJsonDocument(manifest).toJson(QJsonDocument::Indented));
-    zip.addFile(QStringLiteral("content/bank.json"), QJsonDocument(bank).toJson(QJsonDocument::Indented));
-    zip.close();
-    if (zip.status() != QZipWriter::NoError) { qCritical() << "题库包写入失败"; return 4; }
+    if (!quizpane::writeZipArchive(outputPath, {
+            {QStringLiteral("manifest.json"), QJsonDocument(manifest).toJson(QJsonDocument::Indented)},
+            {QStringLiteral("content/bank.json"), QJsonDocument(bank).toJson(QJsonDocument::Indented)}},
+            &error)) {
+        qCritical().noquote() << QStringLiteral("题库包写入失败：%1").arg(error); return 4;
+    }
     qInfo().noquote() << QStringLiteral("已生成：%1").arg(QFileInfo(outputPath).absoluteFilePath());
     return 0;
 }

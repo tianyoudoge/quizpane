@@ -5,9 +5,9 @@
 #include <QJsonObject>
 #include <QDebug>
 #include <QTemporaryDir>
-#include <QtCore/private/qzipwriter_p.h>
 
 #include "quizpane/provider_installer.hpp"
+#include "quizpane/zip_archive.hpp"
 
 namespace {
 
@@ -46,10 +46,9 @@ int main(int argc, char** argv) {
     const QString packagePath = QDir(temp.path()).filePath(
         QStringLiteral("valid.quizpane-provider"));
     {
-        QZipWriter zip(packagePath);
-        zip.addFile(QStringLiteral("manifest.json"), manifest(platform, library));
-        zip.addFile(library, QByteArrayLiteral("provider-binary"));
-        zip.close();
+        if (!quizpane::writeZipArchive(packagePath, {
+                {QStringLiteral("manifest.json"), manifest(platform, library)},
+                {library, QByteArrayLiteral("provider-binary")}})) return 12;
     }
 
     quizpane::ProviderInstaller installer;
@@ -85,10 +84,9 @@ int main(int argc, char** argv) {
             {"schemaVersion", 1}, {"entry", "content/bank.json"}}},
         {"permissions", QJsonObject{{"network", false}}}}).toJson();
     {
-        QZipWriter zip(declarativePath);
-        zip.addFile(QStringLiteral("manifest.json"), declarativeManifest);
-        zip.addFile(QStringLiteral("content/bank.json"), QByteArrayLiteral("{}"));
-        zip.close();
+        if (!quizpane::writeZipArchive(declarativePath, {
+                {QStringLiteral("manifest.json"), declarativeManifest},
+                {QStringLiteral("content/bank.json"), QByteArrayLiteral("{}")}})) return 13;
     }
     quizpane::ProviderPackageInfo declarativeInfo;
     quizpane::ProviderInstallResult declarativeResult;
@@ -100,11 +98,10 @@ int main(int argc, char** argv) {
     const QString unsafePath = QDir(temp.path()).filePath(
         QStringLiteral("unsafe.quizpane-provider"));
     {
-        QZipWriter zip(unsafePath);
-        zip.addFile(QStringLiteral("manifest.json"), manifest(platform, library));
-        zip.addFile(QStringLiteral("unsafe\\escape"), QByteArrayLiteral("bad"));
-        zip.addFile(library, QByteArrayLiteral("provider-binary"));
-        zip.close();
+        if (!quizpane::writeZipArchive(unsafePath, {
+                {QStringLiteral("manifest.json"), manifest(platform, library)},
+                {QStringLiteral("unsafe\\escape"), QByteArrayLiteral("bad")},
+                {library, QByteArrayLiteral("provider-binary")}})) return 14;
     }
     if (installer.inspect(unsafePath, &info, &error)) return 7;
     if (!installer.removeInstalled(QStringLiteral("org.quizpane.installer-test"),

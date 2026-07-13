@@ -11,11 +11,12 @@ add_library(quizpane_provider_host STATIC
     src/declarative_provider.cpp
     src/provider_installer.cpp
     src/provider_loader.cpp
+    src/zip_archive.cpp
 )
 target_include_directories(quizpane_provider_host PUBLIC include)
 target_link_libraries(quizpane_provider_host
     PUBLIC quizpane_provider_sdk Qt6::Core
-    PRIVATE Qt6::CorePrivate
+    PRIVATE miniz
 )
 if(APPLE)
     target_link_libraries(quizpane_provider_host PUBLIC
