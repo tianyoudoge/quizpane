@@ -36,15 +36,16 @@ jobs:
       - name: Generate checksum
         run: |
           cd dist/macos
-          shasum -a 256 小窗刷题-macos-arm64.zip > 小窗刷题-macos-arm64.zip.sha256
+          cp 小窗刷题-macos-arm64.zip QuizPane-macos-arm64.zip
+          shasum -a 256 QuizPane-macos-arm64.zip > QuizPane-macos-arm64.zip.sha256
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
         with:
           name: quizpane-macos-arm64-${{ github.ref_name }}
           path: |
-            dist/macos/小窗刷题-macos-arm64.zip
-            dist/macos/小窗刷题-macos-arm64.zip.sha256
+            dist/macos/QuizPane-macos-arm64.zip
+            dist/macos/QuizPane-macos-arm64.zip.sha256
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -53,7 +54,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
-            dist/macos/小窗刷题-macos-arm64.zip \
-            dist/macos/小窗刷题-macos-arm64.zip.sha256 \
+            dist/macos/QuizPane-macos-arm64.zip \
+            dist/macos/QuizPane-macos-arm64.zip.sha256 \
             --title "QuizPane ${GITHUB_REF_NAME}" \
             --generate-notes
