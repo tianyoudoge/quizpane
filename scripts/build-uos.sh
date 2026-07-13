@@ -25,6 +25,8 @@ package_app() {
   local executable="$2"
   local source_binary="$3"
   local desktop_file="$4"
+  local icon_source="$5"
+  local icon_id="$6"
   local appdir="$DIST_DIR/$package_name.AppDir"
   local archive="$DIST_DIR/$package_name-$DISTRO_ID-$ARCH.tar.gz"
 
@@ -32,11 +34,11 @@ package_app() {
   mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \
     "$appdir/usr/share/icons/hicolor/512x512/apps"
   cp "$source_binary" "$appdir/usr/bin/$executable"
-  local deployed_icon="$appdir/usr/share/icons/hicolor/512x512/apps/org.quizpane.app.png"
+  local deployed_icon="$appdir/usr/share/icons/hicolor/512x512/apps/$icon_id.png"
   if command -v magick >/dev/null 2>&1; then
-    magick "$ROOT/apps/desktop-qt/resources/app-icon.png" -resize 512x512 "$deployed_icon"
+    magick "$icon_source" -resize 512x512 "$deployed_icon"
   elif command -v convert >/dev/null 2>&1; then
-    convert "$ROOT/apps/desktop-qt/resources/app-icon.png" -resize 512x512 "$deployed_icon"
+    convert "$icon_source" -resize 512x512 "$deployed_icon"
   else
     echo "缺少 ImageMagick，无法生成符合 Linux 桌面规范的 512x512 图标" >&2
     return 1
@@ -58,7 +60,9 @@ package_app() {
 
 package_app "QuizPane" "小窗刷题" \
   "$BUILD_DIR/apps/desktop-qt/小窗刷题" \
-  "$ROOT/packaging/linux/org.quizpane.app.desktop"
+  "$ROOT/packaging/linux/org.quizpane.app.desktop" \
+  "$ROOT/apps/desktop-qt/resources/app-icon.png" \
+  "org.quizpane.app"
 mkdir -p "$DIST_DIR/QuizPane.AppDir/usr/share/mime/packages"
 cp "$ROOT/packaging/linux/org.quizpane.provider.xml" \
   "$DIST_DIR/QuizPane.AppDir/usr/share/mime/packages/"
@@ -68,4 +72,6 @@ tar -C "$DIST_DIR" -czf "$DIST_DIR/QuizPane-$DISTRO_ID-$ARCH.tar.gz" \
 
 package_app "QuizPane-Question-Maker" "题库制作器" \
   "$BUILD_DIR/apps/bank-studio/题库制作器" \
-  "$ROOT/packaging/linux/org.quizpane.bank-studio.desktop"
+  "$ROOT/packaging/linux/org.quizpane.bank-studio.desktop" \
+  "$ROOT/apps/bank-studio/resources/app-icon.png" \
+  "org.quizpane.question-maker"

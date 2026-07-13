@@ -1,5 +1,5 @@
 <RCC>
   <qresource prefix="/icons">
-    <file alias="app-icon.png">../../desktop-qt/resources/app-icon.png</file>
+    <file alias="app-icon.png">app-icon.png</file>
   </qresource>
 </RCC>

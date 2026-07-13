@@ -4,6 +4,9 @@ qt_add_executable(quizpane_bank_studio
     src/studio_window.hpp
     resources/resources.qrc
 )
+if(WIN32)
+    target_sources(quizpane_bank_studio PRIVATE resources/windows.rc)
+endif()
 target_link_libraries(quizpane_bank_studio PRIVATE Qt6::Core Qt6::Network Qt6::Widgets)
 set_target_properties(quizpane_bank_studio PROPERTIES
     AUTORCC TRUE
@@ -16,11 +19,11 @@ set_target_properties(quizpane_bank_studio PROPERTIES
 )
 if(APPLE)
     target_sources(quizpane_bank_studio PRIVATE
-        ../desktop-qt/resources/app-icon.icns
+        resources/app-icon.icns
         "${PROJECT_SOURCE_DIR}/LICENSE"
     )
     set_source_files_properties(
-        ../desktop-qt/resources/app-icon.icns
+        resources/app-icon.icns
         "${PROJECT_SOURCE_DIR}/LICENSE"
         PROPERTIES MACOSX_PACKAGE_LOCATION "Resources"
     )

@@ -3,6 +3,6 @@ Type=Application
 Name=题库制作器
 Comment=把 TXT、Word、PDF 整理为小窗刷题本地题库
 Exec=题库制作器
-Icon=org.quizpane.app
+Icon=org.quizpane.question-maker
 Categories=Education;Utility;
 Terminal=false
