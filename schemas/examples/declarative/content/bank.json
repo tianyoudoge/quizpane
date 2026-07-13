@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "title": "本地常识示例题库",
+  "catalogs": [
+    {
+      "id": "general-knowledge",
+      "title": "常识判断",
+      "practice": { "mode": "sequential", "questionCount": 15 }
+    }
+  ],
+  "questions": [
+    {
+      "id": "q-water-boiling-point",
+      "catalogId": "general-knowledge",
+      "type": "single_choice",
+      "stem": "水在标准大气压下的沸点是多少？",
+      "options": [
+        { "id": "a", "text": "0℃" },
+        { "id": "b", "text": "50℃" },
+        { "id": "c", "text": "100℃" },
+        { "id": "d", "text": "150℃" }
+      ],
+      "answer": { "optionIds": ["c"] },
+      "solution": "在标准大气压下，水的沸点是 100℃。"
+    }
+  ]
+}

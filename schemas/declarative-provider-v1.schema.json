@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quizpane.org/schema/declarative-provider-v1.json",
+  "title": "QuizPane Declarative Bank v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "title", "catalogs", "questions"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "description": { "type": "string", "maxLength": 2000 },
+    "catalogs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "practice"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "description": { "type": "string", "maxLength": 500 },
+          "practice": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mode"],
+            "properties": {
+              "mode": { "enum": ["all", "sequential", "random"] },
+              "questionCount": { "type": "integer", "minimum": 1, "maximum": 200 },
+              "preferMistakes": { "type": "boolean", "default": false }
+            }
+          }
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/question" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^assets/[A-Za-z0-9._/-]+$" },
+        "alt": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "image": { "$ref": "#/$defs/asset" }
+      }
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "catalogId", "type", "stem", "options", "answer", "solution"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "catalogId": { "$ref": "#/$defs/id" },
+        "type": { "enum": ["single_choice", "multiple_choice", "true_false"] },
+        "stem": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "stemImage": { "$ref": "#/$defs/asset" },
+        "options": { "type": "array", "minItems": 2, "maxItems": 20, "items": { "$ref": "#/$defs/option" } },
+        "answer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["optionIds"],
+          "properties": {
+            "optionIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+          }
+        },
+        "solution": { "type": "string", "maxLength": 20000 },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "document": { "type": "string", "maxLength": 300 },
+            "page": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "needsReview": { "type": "boolean" },
+            "reason": { "type": "string", "maxLength": 1000 }
+          }
+        }
+      }
+    }
+  }
+}
