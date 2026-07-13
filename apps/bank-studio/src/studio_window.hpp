@@ -1,5 +1,7 @@
 #pragma once
 
+#include "model_settings_dialog.hpp"
+
 #include <QMainWindow>
 #include <QStringList>
 
@@ -15,6 +17,9 @@ class QTimer;
 
 namespace quizpane::studio {
 
+// 题库制作器的顶层页面控制器，只负责四步向导、文件选择和进度展示。
+// 模型厂商协议与网络请求放在 model_settings_dialog 中，避免 UI Controller
+// 同时承担 Adapter/Service 职责。Qt 控件仍由父子对象树托管生命周期。
 class StudioWindow final : public QMainWindow {
     Q_OBJECT
 public:
@@ -61,15 +66,9 @@ private:
     QStringList sourcePaths_;
     int preflightStep_ = 0;
     qint64 estimatedInputTokens_ = 0;
-    QString modelVendorId_ = QStringLiteral("openai");
-    QString modelService_ = QStringLiteral("OpenAI");
-    // 初次打开时使用 OpenAI 的内置兜底模型；成功获取远端列表后，用户可改选
-    // 当前账号真正可用的模型。这里不能写一个并不存在的“自动选择”占位值。
-    QString modelName_ = QStringLiteral("gpt-5.2");
-    QString modelEndpoint_ = QStringLiteral("https://api.openai.com/v1");
-    // 当前只保存在生成器进程内，绝不写入普通配置文件。后续模型调用落地时，
-    // 再接入 Keychain/Credential Manager/Secret Service 持久化。
-    QString modelApiKey_;
+    // 一个 DTO 保存完整模型选择，避免 vendor/model/endpoint 多个平行字段只更新
+    // 其中一部分。API Key 当前只存在进程内，不进入普通配置文件。
+    ModelSettings modelSettings_;
 };
 
 }  // namespace quizpane::studio

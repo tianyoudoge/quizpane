@@ -229,11 +229,15 @@ QuizPane 是通用刷题 Host，题目来自单独安装的题库组件。当前
 
 普通用户读到这里就够了。下面是源码构建、Provider 开发和平台贡献说明。
 
+第一次接触 C++/Qt，建议先阅读面向 Java Web 开发者的
+[`架构与 Code Review 导读`](docs/架构与Provider开发导读.md)，再从窗口源码开始审查。
+
 ## 工程结构
 
 ```text
 quizpane/
 ├── apps/desktop-qt/       # Qt Widgets 桌面 Host
+├── apps/bank-studio/      # 独立题库制作器（历史内部目录名）
 ├── core/                  # 答题、草稿和图片处理领域逻辑
 ├── sdk/                   # Provider ABI、加载器和安装器
 ├── providers/demo/        # 完全离线的示例题库
@@ -244,7 +248,8 @@ quizpane/
 └── docs/                  # 架构与构建文档
 ```
 
-需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets、Network 及匹配版本的 Qt Core private headers。
+需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets 与 Network。
+二维码和 ZIP 依赖由 CMake FetchContent 自动拉取，不需要手工复制第三方源码。
 
 ## macOS 开发构建
 

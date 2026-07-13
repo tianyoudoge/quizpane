@@ -99,6 +99,8 @@ QString userFacingError(QString message) {
 
 }  // namespace
 
+// ===== 窗口与页面装配 =====
+
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Qt Widgets 采用“对象树”管理生命周期：把 card_、按钮、Label 的 parent
     // 指向窗口后，窗口析构时会递归释放它们。这里的 new 不等于 Java 中必然泄漏，
@@ -414,6 +416,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     }
 }
 
+// ===== 桌面外壳：托盘、老板键和系统菜单 =====
+
 void MainWindow::initializeDesktopShell() {
     globalHotkey_ = new GlobalHotkey(this);
     connect(globalHotkey_, &GlobalHotkey::activated, this,
@@ -527,6 +531,8 @@ void MainWindow::toggleWindowVisibility() {
     if (showHideAction_) showHideAction_->setText(QStringLiteral("隐藏窗口"));
 }
 
+// ===== 当前练习会话与草稿 =====
+
 void MainWindow::returnToCatalog() {
     pages_->setCurrentWidget(catalogPage_);
     applyUiSize(uiSize_);
@@ -572,6 +578,8 @@ bool MainWindow::maybeRestoreDraft() {
                         static_cast<int>(questions_.size()) - 1));
     return true;
 }
+
+// ===== 登录、目录和答题请求 =====
 
 void MainWindow::runPrimaryAction() {
     switch (actionMode_) {
@@ -914,6 +922,8 @@ void MainWindow::setActionMode(ActionMode mode, const QString& text) {
         QTimer::singleShot(0, this, &MainWindow::adjustWindowForCurrentPage);
 }
 
+// ===== Provider 异步回包路由 =====
+
 void MainWindow::handleProviderResponse(const QJsonObject& response) {
     // 这是桌面端的“响应路由器”。Provider 回包携带请求 id，我们据此更新对应页面。
     // id 相当于前端 Promise/后端 traceId；同一时刻可并行等待报告和题目解析。
@@ -1025,6 +1035,8 @@ void MainWindow::handleProviderResponse(const QJsonObject& response) {
     }
 }
 
+// ===== 无边框窗口事件与题库包拖放 =====
+
 void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
     const auto urls = event->mimeData()->urls();
     if (urls.size() == 1 && urls.first().isLocalFile() &&
@@ -1077,6 +1089,8 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
         questionScroll_->setFixedHeight(viewportHeight);
     }
 }
+
+// ===== 题库安装、加载和切换 =====
 
 void MainWindow::chooseProviderPackage() {
     const QString path = QFileDialog::getOpenFileName(
@@ -1168,6 +1182,8 @@ void MainWindow::sendInitialize() {
         &error);
     if (!error.isEmpty()) detailLabel_->setText(error);
 }
+
+// ===== 用户菜单与独立题库制作器 =====
 
 void MainWindow::showUiSizeMenu() {
     QMenu menu(this);
@@ -1345,6 +1361,8 @@ void MainWindow::processPendingProviderDeletions() {
     }
     settings.setValue(QStringLiteral("providers/pendingDelete"), remaining);
 }
+
+// ===== 窗口尺寸、置顶和视觉样式 =====
 
 void MainWindow::applyUiSize(UiSize size) {
     // Qt 的布局系统类似浏览器 layout：先设置控件约束，再由 layout 计算最终几何。

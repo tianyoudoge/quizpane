@@ -36,10 +36,14 @@ const SecretSchema kQuizPaneSecretSchema = {
      {nullptr, SECRET_SCHEMA_ATTRIBUTE_STRING}}};
 #endif
 
+#if defined(Q_OS_WIN)
+// Credential Manager 使用字符串 TargetName 定位记录。只在 Windows 编译该辅助
+// 函数，避免 macOS/Linux 产物携带无用平台代码。
 QString credentialTarget(const QString& providerId, const QByteArray& key) {
     return QStringLiteral("QuizPane/%1/%2")
         .arg(providerId, QString::fromUtf8(key));
 }
+#endif
 }  // namespace
 
 ProviderLoader::ProviderLoader(QObject* parent) : QObject(parent) {

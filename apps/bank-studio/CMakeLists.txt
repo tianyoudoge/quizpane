@@ -1,5 +1,7 @@
 qt_add_executable(quizpane_bank_studio
     src/main.cpp
+    src/model_settings_dialog.cpp
+    src/model_settings_dialog.hpp
     src/studio_window.cpp
     src/studio_window.hpp
     resources/resources.qrc
