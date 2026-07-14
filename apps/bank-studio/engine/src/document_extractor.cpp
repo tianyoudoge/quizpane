@@ -5,7 +5,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
-#include <QPainter>
 #include <QPdfDocument>
 #include <QPdfSelection>
 #include <QStringConverter>
@@ -140,24 +139,10 @@ QString docxPlainText(const QByteArray& xmlBytes, QString* error) {
     return result;
 }
 
-// PDF 页面经 Qt PDF 渲染后通常带透明通道。若直接把透明图像转换成灰度或
-// RGB，部分平台（尤其 Windows）会把透明像素的底色保留为黑色，既会把空白
-// 页面误判成“有墨迹”，也会让 Tesseract 实际收到黑底图。OCR 前统一按白纸
-// 合成，保证三个桌面平台看到相同的白底黑字输入。
-QImage flattenOnWhite(const QImage& source) {
-    if (source.isNull())
-        return {};
-    QImage flattened(source.size(), QImage::Format_RGB888);
-    flattened.fill(Qt::white);
-    QPainter painter(&flattened);
-    painter.drawImage(QPoint(0, 0), source);
-    return flattened;
-}
-
 bool hasVisibleInk(const QImage& source) {
     if (source.isNull())
         return false;
-    const QImage image = flattenOnWhite(source).convertToFormat(QImage::Format_Grayscale8);
+    const QImage image = source.convertToFormat(QImage::Format_Grayscale8);
     const int stepX = qMax(1, image.width() / 300);
     const int stepY = qMax(1, image.height() / 300);
     qsizetype samples = 0;
@@ -204,7 +189,7 @@ QString bundledTessdataPath() {
 }
 
 QString recognizePage(const QImage& source, QString* error) {
-    const QImage image = flattenOnWhite(source);
+    QImage image = source.convertToFormat(QImage::Format_RGB888);
     tesseract::TessBaseAPI api;
     const QByteArray tessdataPath = QFile::encodeName(bundledTessdataPath());
     const char* dataPath = tessdataPath.isEmpty() ? nullptr : tessdataPath.constData();

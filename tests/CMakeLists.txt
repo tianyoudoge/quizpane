@@ -85,6 +85,9 @@ if(TARGET question_maker_engine)
     add_executable(document_extractor_test document_extractor_test.cpp)
     target_link_libraries(document_extractor_test PRIVATE
         question_maker_engine quizpane_provider_host Qt6::Core Qt6::Gui)
+    target_compile_definitions(document_extractor_test PRIVATE
+        DOCUMENT_EXTRACTOR_OCR_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ocr-scan-fixture.pdf"
+    )
     add_test(NAME document_extractor_test COMMAND document_extractor_test)
 
     add_executable(rule_based_generator_test rule_based_generator_test.cpp)

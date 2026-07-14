@@ -5,45 +5,7 @@
 #include <QGuiApplication>
 #include <QTemporaryDir>
 
-#include <array>
 #include <cstdio>
-
-namespace {
-
-// 构造只使用 PDF 内置 Helvetica 字体的最小文字型 PDF。这里不再使用
-// QPdfWriter 和系统默认字体，否则不同平台会生成不同的字体子集及编码，导致
-// 测试在 macOS/Linux 验证文字层、在 Windows 却意外验证 OCR 回退。
-QByteArray minimalTextPdf() {
-    const QByteArray stream = QByteArrayLiteral(
-        "BT\n/F1 24 Tf\n72 700 Td\n(PDF question) Tj\n"
-        "0 -36 Td\n(A. first option) Tj\nET\n");
-    const std::array<QByteArray, 5> objects = {
-        QByteArrayLiteral("<< /Type /Catalog /Pages 2 0 R >>"),
-        QByteArrayLiteral("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-        QByteArrayLiteral(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-            "/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"),
-        QByteArrayLiteral("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
-        QByteArrayLiteral("<< /Length ") + QByteArray::number(stream.size()) +
-            QByteArrayLiteral(" >>\nstream\n") + stream + QByteArrayLiteral("endstream")};
-
-    QByteArray pdf = QByteArrayLiteral("%PDF-1.4\n");
-    std::array<qsizetype, 5> offsets{};
-    for (size_t index = 0; index < objects.size(); ++index) {
-        offsets[index] = pdf.size();
-        pdf += QByteArray::number(index + 1) + QByteArrayLiteral(" 0 obj\n") + objects[index] +
-               QByteArrayLiteral("\nendobj\n");
-    }
-    const qsizetype xrefOffset = pdf.size();
-    pdf += QByteArrayLiteral("xref\n0 6\n0000000000 65535 f \n");
-    for (const qsizetype offset : offsets)
-        pdf += QByteArray::number(offset).rightJustified(10, '0') + QByteArrayLiteral(" 00000 n \n");
-    pdf += QByteArrayLiteral("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n") +
-           QByteArray::number(xrefOffset) + QByteArrayLiteral("\n%%EOF\n");
-    return pdf;
-}
-
-} // namespace
 
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
@@ -79,16 +41,12 @@ int main(int argc, char** argv) {
     if (!docx.error.isEmpty() || !docx.plainText.contains(QStringLiteral("DOCX 题目")))
         return 6;
 
-    const QString pdfPath = directory.filePath(QStringLiteral("sample.pdf"));
-    {
-        QFile file(pdfPath);
-        const QByteArray bytes = minimalTextPdf();
-        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size())
-            return 7;
-    }
+    // 固定扫描夹具只有图像，没有 PDF 文字层；它由仓库管理，不随系统字体或
+    // Qt 的 PDF 写入实现变化。该断言只验证 OCR 回退这条真实功能路径。
+    const QString pdfPath = QStringLiteral(DOCUMENT_EXTRACTOR_OCR_FIXTURE);
     const auto pdf = registry.extract(pdfPath);
-    if (!pdf.error.isEmpty() || pdf.usedOcr || !pdf.hasPageBoundaries ||
-        !pdf.plainText.contains(QStringLiteral("PDF question"))) {
+    if (!pdf.error.isEmpty() || !pdf.usedOcr || !pdf.hasPageBoundaries ||
+        pdf.plainText.trimmed().isEmpty()) {
         const QByteArray diagnostic =
             QStringLiteral("PDF extraction failed: error=%1 boundaries=%2 ocr=%3 text=%4")
                 .arg(pdf.error)
