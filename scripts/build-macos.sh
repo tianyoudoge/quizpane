@@ -6,7 +6,8 @@ BUILD_DIR="${BUILD_DIR:-$ROOT/build/release-macos}"
 DIST_DIR="${DIST_DIR:-$ROOT/dist/macos}"
 QT_PREFIX="${QT_PREFIX:-$(brew --prefix qt)}"
 QT5COMPAT_PREFIX="${QT5COMPAT_PREFIX:-}"
-TESSDATA_DIR="${TESSDATA_DIR:-$(brew --prefix)/share/tessdata}"
+TESSDATA_DIR="${TESSDATA_DIR:-$(brew --prefix tesseract)/share/tessdata}"
+TESSDATA_LANG_DIR="${TESSDATA_LANG_DIR:-$(brew --prefix tesseract-lang)/share/tessdata}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 CLEAN_BUILD="${CLEAN_BUILD:-1}"
 DEBUG_BUILD="${DEBUG_BUILD:-0}"
@@ -25,6 +26,39 @@ fi
 CMAKE_PREFIX_PATH="$QT_PREFIX"
 if [[ -n "$QT5COMPAT_PREFIX" ]]; then
   CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH;$QT5COMPAT_PREFIX"
+fi
+
+# Homebrew 的聚合 qt formula 可能不再直接提供 macdeployqt，而是由 qtbase
+# formula 提供；优先尊重显式配置，再依次兼容两种 Homebrew 布局。
+MACDEPLOYQT="${MACDEPLOYQT:-}"
+if [[ -z "$MACDEPLOYQT" && -x "$QT_PREFIX/bin/macdeployqt" ]]; then
+  MACDEPLOYQT="$QT_PREFIX/bin/macdeployqt"
+elif [[ -z "$MACDEPLOYQT" ]] && command -v macdeployqt >/dev/null 2>&1; then
+  MACDEPLOYQT="$(command -v macdeployqt)"
+fi
+if [[ -z "$MACDEPLOYQT" || ! -x "$MACDEPLOYQT" ]]; then
+  echo "未找到 macdeployqt；请安装 qtbase 或设置 MACDEPLOYQT" >&2
+  exit 1
+fi
+
+# Qt 的 Homebrew 拆包会把 QtSvg、QtPdf 等 Framework 放在各自 formula
+# 的 lib 目录。macdeployqt 默认只搜索 qtbase，因而需要把已安装模块显式
+# 加进查找路径，才能收集制作器与主程序的全部 Qt Framework。
+QT_DEPLOY_LIB_PATHS=()
+if [[ -d "$QT_PREFIX/lib" ]]; then
+  QT_DEPLOY_LIB_PATHS+=("$QT_PREFIX/lib")
+fi
+for qt_module in qtbase qtsvg qtwebengine; do
+  if brew list --versions "$qt_module" >/dev/null 2>&1; then
+    qt_module_lib="$(brew --prefix "$qt_module")/lib"
+    if [[ -d "$qt_module_lib" ]]; then
+      QT_DEPLOY_LIB_PATHS+=("$qt_module_lib")
+    fi
+  fi
+done
+if [[ ${#QT_DEPLOY_LIB_PATHS[@]} -eq 0 ]]; then
+  echo "未找到 Qt Framework 搜索目录" >&2
+  exit 1
 fi
 
 BUILD_TYPE="Release"
@@ -71,23 +105,47 @@ STAGED_APP="$STAGE_ROOT/QuizPane.app"
 ditto "$SOURCE_APP" "$STAGED_APP"
 deploy_app() {
   local app_path="$1"
+  local deploy_args=("$MACDEPLOYQT" "$app_path" -always-overwrite)
+  local lib_path
+  for lib_path in "${QT_DEPLOY_LIB_PATHS[@]}"; do
+    deploy_args+=("-libpath=$lib_path")
+  done
   # macOS 自带的 Bash 3.2 在 set -u 下展开空数组会报 unbound variable，
-  # 因此这里显式区分是否保留调试符号，不拼接可选参数数组。
+  # QT_DEPLOY_LIB_PATHS 在初始化时至少有一个元素，因此展开不会触发该问题。
   if [[ "$DEBUG_BUILD" == "1" ]]; then
-    "$QT_PREFIX/bin/macdeployqt" "$app_path" -always-overwrite -no-strip
+    deploy_args+=(-no-strip)
   else
-    "$QT_PREFIX/bin/macdeployqt" "$app_path" -always-overwrite
+    :
   fi
+  "${deploy_args[@]}"
+}
+
+# Homebrew 的 macdeployqt 在 Qt 模块拆分安装时不会始终解析 QtSvg/QtPdf 的
+# rpath；这两个 Framework 是当前 UI 和 PDF 提取的直接依赖，因此明确复制，
+# 后续仍由外层 codesign 统一签名。
+copy_qt_framework() {
+  local app_path="$1"
+  local framework_path="$2"
+  if [[ ! -d "$framework_path" ]]; then
+    echo "缺少 Qt Framework：$framework_path" >&2
+    exit 1
+  fi
+  mkdir -p "$app_path/Contents/Frameworks"
+  local destination="$app_path/Contents/Frameworks/$(basename "$framework_path")"
+  ditto "$framework_path" "$destination"
+  chmod -R u+w "$destination"
 }
 deploy_app "$STAGED_APP"
+copy_qt_framework "$STAGED_APP" "$(brew --prefix qtsvg)/lib/QtSvg.framework"
+copy_qt_framework "$STAGED_APP" "$(brew --prefix qtwebengine)/lib/QtPdf.framework"
 STAGED_STUDIO="$STAGE_ROOT/QuizPaneQuestionMaker.app"
 ditto "$SOURCE_STUDIO" "$STAGED_STUDIO"
-if [[ ! -f "$TESSDATA_DIR/chi_sim.traineddata" || ! -f "$TESSDATA_DIR/eng.traineddata" ]]; then
-  echo "缺少 OCR 语言数据：$TESSDATA_DIR/{chi_sim,eng}.traineddata" >&2
+if [[ ! -f "$TESSDATA_DIR/eng.traineddata" || ! -f "$TESSDATA_LANG_DIR/chi_sim.traineddata" ]]; then
+  echo "缺少 OCR 语言数据：$TESSDATA_DIR/eng.traineddata 或 $TESSDATA_LANG_DIR/chi_sim.traineddata" >&2
   exit 1
 fi
 mkdir -p "$STAGED_STUDIO/Contents/Resources/tessdata"
-cp "$TESSDATA_DIR/chi_sim.traineddata" "$TESSDATA_DIR/eng.traineddata" \
+cp "$TESSDATA_LANG_DIR/chi_sim.traineddata" "$TESSDATA_DIR/eng.traineddata" \
   "$STAGED_STUDIO/Contents/Resources/tessdata/"
 # 先递归收集 Tesseract/Leptonica 等 Homebrew 动态库。macdeployqt 会把非 Qt
 # 依赖改写成 App 内路径却不复制源库，因此必须在它处理制作器之前完成收集。
@@ -96,6 +154,8 @@ dylibbundler -od -b \
   -d "$STAGED_STUDIO/Contents/Frameworks" \
   -p @executable_path/../Frameworks
 deploy_app "$STAGED_STUDIO"
+copy_qt_framework "$STAGED_STUDIO" "$(brew --prefix qtsvg)/lib/QtSvg.framework"
+copy_qt_framework "$STAGED_STUDIO" "$(brew --prefix qtwebengine)/lib/QtPdf.framework"
 if ! find "$STAGED_STUDIO/Contents/Frameworks" -iname '*tesseract*.dylib' -print -quit | grep -q .; then
   echo "OCR 打包失败：应用包中没有 Tesseract 动态库" >&2
   exit 1
