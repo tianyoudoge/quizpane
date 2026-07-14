@@ -41,9 +41,9 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: clang_64
-          # Qt5Compat provides QTextCodec/GB18030 fallback; qtwebengine also
-          # carries QtPdf used by the document extractor.
-          modules: qt5compat qtwebengine
+          # Qt5Compat provides QTextCodec/GB18030 fallback; QtPdf is used by
+          # the document extractor; QtWebEngine renders supported web content.
+          modules: qt5compat qtpdf qtwebengine
           cache: true
 
       - name: Build, test and package both applications
@@ -101,7 +101,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: win64_msvc2019_64
-          modules: qt5compat qtwebengine
+          modules: qt5compat qtpdf qtwebengine
           cache: true
 
       - name: Build, test and package both applications
@@ -149,7 +149,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: gcc_64
-          modules: qt5compat qtwebengine
+          modules: qt5compat qtpdf qtwebengine
           cache: true
 
       - name: Install Linux deployment tool

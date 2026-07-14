@@ -31,7 +31,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: clang_64
-          modules: qt5compat qtwebengine
+          modules: qt5compat qtpdf qtwebengine
           cache: true
 
       - name: Configure
@@ -70,7 +70,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: win64_msvc2019_64
-          modules: qt5compat qtwebengine
+          modules: qt5compat qtpdf qtwebengine
           cache: true
 
       - name: Configure
@@ -109,7 +109,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: gcc_64
-          modules: qt5compat qtwebengine
+          modules: qt5compat qtpdf qtwebengine
           cache: true
 
       - name: Configure
