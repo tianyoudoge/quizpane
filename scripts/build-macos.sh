@@ -15,13 +15,11 @@ export PKG_CONFIG_PATH="$(brew --prefix tesseract)/lib/pkgconfig${PKG_CONFIG_PAT
 BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
 PACKAGE_SUFFIX=""
-DEPLOY_DEBUG_ARGS=()
 VERBOSE_DIAGNOSTICS="OFF"
 if [[ "$DEBUG_BUILD" == "1" ]]; then
   BUILD_TYPE="RelWithDebInfo"
   DIAGNOSTIC_LOGGING="ON"
   PACKAGE_SUFFIX="-debug"
-  DEPLOY_DEBUG_ARGS=(-no-strip)
 fi
 if [[ "$VERBOSE_LOGS" == "1" ]]; then
   if [[ "$DEBUG_BUILD" != "1" ]]; then
@@ -56,11 +54,20 @@ rm -rf "$STAGE_ROOT"
 mkdir -p "$STAGE_ROOT"
 STAGED_APP="$STAGE_ROOT/QuizPane.app"
 ditto "$SOURCE_APP" "$STAGED_APP"
-DEPLOY_ARGS=("$STAGED_APP" -always-overwrite "${DEPLOY_DEBUG_ARGS[@]}")
-"$QT_PREFIX/bin/macdeployqt" "${DEPLOY_ARGS[@]}"
+deploy_app() {
+  local app_path="$1"
+  # macOS 自带的 Bash 3.2 在 set -u 下展开空数组会报 unbound variable，
+  # 因此这里显式区分是否保留调试符号，不拼接可选参数数组。
+  if [[ "$DEBUG_BUILD" == "1" ]]; then
+    "$QT_PREFIX/bin/macdeployqt" "$app_path" -always-overwrite -no-strip
+  else
+    "$QT_PREFIX/bin/macdeployqt" "$app_path" -always-overwrite
+  fi
+}
+deploy_app "$STAGED_APP"
 STAGED_STUDIO="$STAGE_ROOT/QuizPaneQuestionMaker.app"
 ditto "$SOURCE_STUDIO" "$STAGED_STUDIO"
-"$QT_PREFIX/bin/macdeployqt" "$STAGED_STUDIO" -always-overwrite "${DEPLOY_DEBUG_ARGS[@]}"
+deploy_app "$STAGED_STUDIO"
 if [[ ! -f "$TESSDATA_DIR/chi_sim.traineddata" || ! -f "$TESSDATA_DIR/eng.traineddata" ]]; then
   echo "缺少 OCR 语言数据：$TESSDATA_DIR/{chi_sim,eng}.traineddata" >&2
   exit 1
