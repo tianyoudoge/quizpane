@@ -68,11 +68,17 @@ class FixedModelServer final : public QTcpServer {
                             {"questions", QJsonArray{question("reading")}}};
                     }
                     const QByteArray payload = modelResponse(candidate);
+                    // 等待响应实际交给内核再关闭连接，避免测试依赖不同平台对
+                    // write()/disconnectFromHost() 相邻调用的调度时机。
+                    connect(socket, &QTcpSocket::bytesWritten, socket, [socket](qint64) {
+                        if (socket->bytesToWrite() == 0)
+                            socket->disconnectFromHost();
+                    });
                     socket->write(
                         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
                         QByteArray::number(payload.size()) + "\r\nConnection: close\r\n\r\n" +
                         payload);
-                    socket->disconnectFromHost();
+                    socket->flush();
                 });
                 connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
             }
@@ -99,8 +105,13 @@ int main(int argc, char** argv) {
     source.close();
 
     FixedModelServer server;
-    if (!server.listen(QHostAddress::LocalHost, 0))
+    // 请求端显式使用 127.0.0.1；测试服务器也固定绑定 IPv4，避免不同系统对
+    // localhost 的 IPv4/IPv6 解析差异影响本地 mock。
+    if (!server.listen(QHostAddress::AnyIPv4, 0)) {
+        std::fprintf(stderr, "model mock cannot listen on IPv4: %s\n",
+                     qPrintable(server.errorString()));
         return 3;
+    }
     QNetworkAccessManager manager;
 
     // 规则路径与模型路径共享 Workflow 对外契约，但不会启动 HTTP 请求或创建
@@ -120,8 +131,14 @@ int main(int argc, char** argv) {
                      [&] { ruleFinished = true; });
     ruleWorkflow.startRuleBased({rulePath});
     if (!ruleFinished || ruleReady.questions.size() != 1 ||
-        !ruleReady.needsReviewQuestions.isEmpty() || !server.requestBodies.isEmpty())
+        !ruleReady.needsReviewQuestions.isEmpty() || !server.requestBodies.isEmpty()) {
+        std::fprintf(stderr,
+                     "rule workflow: finished=%d questions=%lld review=%lld requests=%lld\n",
+                     ruleFinished, static_cast<long long>(ruleReady.questions.size()),
+                     static_cast<long long>(ruleReady.needsReviewQuestions.size()),
+                     static_cast<long long>(server.requestBodies.size()));
         return 10;
+    }
 
     quizpane::studio::GenerationWorkflow workflow(&manager);
     quizpane::studio::GeneratedBankCandidate ready;
@@ -148,25 +165,45 @@ int main(int argc, char** argv) {
     workflow.start({sourcePath}, settings);
     app.exec();
 
-    if (!failure.isEmpty() || !finished || server.requestBodies.size() != 2)
+    if (!failure.isEmpty() || !finished || server.requestBodies.size() != 2) {
+        std::fprintf(stderr, "model workflow: failure=%s finished=%d requests=%lld\n",
+                     qPrintable(failure), finished,
+                     static_cast<long long>(server.requestBodies.size()));
         return 4;
+    }
     const QJsonObject repairRequest = QJsonDocument::fromJson(server.requestBodies.at(1)).object();
     const QString repairContent =
         repairRequest.value("messages").toArray().at(1).toObject().value("content").toString();
     if (!repairContent.contains(QStringLiteral("上一轮完整输出")) ||
         !repairContent.contains(QStringLiteral("missing-material")) ||
-        !repairContent.contains(QStringLiteral("materialId")))
+        !repairContent.contains(QStringLiteral("materialId"))) {
+        std::fprintf(stderr, "repair request is missing required repair context\n");
         return 5;
+    }
     if (ready.materials.size() != 1 || ready.questions.size() != 1 ||
-        !ready.needsReviewQuestions.isEmpty())
+        !ready.needsReviewQuestions.isEmpty()) {
+        std::fprintf(stderr, "generated candidate: materials=%lld questions=%lld review=%lld\n",
+                     static_cast<long long>(ready.materials.size()),
+                     static_cast<long long>(ready.questions.size()),
+                     static_cast<long long>(ready.needsReviewQuestions.size()));
         return 6;
+    }
     const QString materialId = ready.materials.first().toObject().value("id").toString();
     if (materialId.isEmpty() ||
-        ready.questions.first().toObject().value("materialId").toString() != materialId)
+        ready.questions.first().toObject().value("materialId").toString() != materialId) {
+        std::fprintf(stderr, "material linkage: material=%s question-material=%s\n",
+                     qPrintable(materialId),
+                     qPrintable(ready.questions.first().toObject().value("materialId").toString()));
         return 7;
+    }
     const auto& checkpoint = workflow.checkpoint();
     if (checkpoint.completedSourceBlocks.size() != 1 ||
-        checkpoint.materialQuestionIds.value(materialId).toArray().size() != 1)
+        checkpoint.materialQuestionIds.value(materialId).toArray().size() != 1) {
+        std::fprintf(stderr, "checkpoint: completed=%lld material-questions=%lld\n",
+                     static_cast<long long>(checkpoint.completedSourceBlocks.size()),
+                     static_cast<long long>(
+                         checkpoint.materialQuestionIds.value(materialId).toArray().size()));
         return 8;
+    }
     return 0;
 }
