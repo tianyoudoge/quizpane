@@ -191,9 +191,9 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
     if (!hasOnlyKeys(bank, bankKeys))
         errors.append({-1, {}, QStringLiteral("题库包含 Schema 未声明的字段"), {}});
     const QString bankTitle = bank.value("title").toString();
-    if (bank.value("schemaVersion").toInt() != 1 || !bank.value("title").isString() ||
+    if (bank.value("schemaVersion").toInt() != 2 || !bank.value("title").isString() ||
         bankTitle.trimmed().isEmpty() || bankTitle.size() > 120) {
-        errors.append({-1, {}, QStringLiteral("题库必须包含 schemaVersion=1 和非空 title"), {}});
+        errors.append({-1, {}, QStringLiteral("题库必须包含 schemaVersion=2 和非空 title"), {}});
     }
     if (bank.contains("description") && (!bank.value("description").isString() ||
         bank.value("description").toString().size() > 2000))

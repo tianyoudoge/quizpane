@@ -6,7 +6,7 @@
   "kind": "declarative",
   "runtime": {
     "format": "quizpane.bank+json",
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "entry": "content/bank.json"
   },
   "permissions": { "network": false }

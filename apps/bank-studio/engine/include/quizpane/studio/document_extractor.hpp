@@ -11,12 +11,17 @@ struct ExtractedDocument {
     QString sourcePath;
     QString plainText;
     QString error;
+    // 文本由 PDF/OCR 按页提取时，使用换页符分隔。规则解析器据此生成 source.page，
+    // TXT/DOCX 没有稳定页码时保持 false，避免伪造来源位置。
+    bool hasPageBoundaries = false;
+    // 扫描页经过本地 OCR 时置 true，仅用于提示识别来源，不改变后续解析路径。
+    bool usedOcr = false;
 };
 
 // 单一文档格式的提取器。supports() 只看扩展名，不打开文件，方便
 // ExtractorRegistry 在选择具体实现前先做一次快速分派。
 class DocumentExtractor {
-public:
+  public:
     virtual ~DocumentExtractor() = default;
     virtual bool supports(const QString& path) const = 0;
     virtual ExtractedDocument extract(const QString& path) const = 0;
@@ -24,22 +29,20 @@ public:
 
 // TXT/Markdown：本地直接读取，自动识别 UTF-8/UTF-8 BOM/GB18030 编码。
 class TxtMarkdownExtractor final : public DocumentExtractor {
-public:
+  public:
     bool supports(const QString& path) const override;
     ExtractedDocument extract(const QString& path) const override;
 };
 
-// DOCX/PDF 提取尚未实现（需要引入 OOXML/PDF 解析依赖后再补上）。
-// 这两个类只占位，保证 ExtractorRegistry 能识别对应扩展名并给出明确的
-// "暂不支持"提示，而不是静默失败或被误判成未知格式。
+// DOCX 直接读取 OOXML ZIP 中的 document.xml，不依赖 Office 或脚本运行时。
 class DocxExtractor final : public DocumentExtractor {
-public:
+  public:
     bool supports(const QString& path) const override;
     ExtractedDocument extract(const QString& path) const override;
 };
 
 class PdfExtractor final : public DocumentExtractor {
-public:
+  public:
     bool supports(const QString& path) const override;
     ExtractedDocument extract(const QString& path) const override;
 };
@@ -48,14 +51,14 @@ public:
 // 找不到匹配格式时返回的 error 会提示具体扩展名，方便用户理解为什么某个
 // 文件被跳过。
 class ExtractorRegistry final {
-public:
+  public:
     ExtractorRegistry();
     ExtractedDocument extract(const QString& path) const;
 
-private:
+  private:
     TxtMarkdownExtractor txtMarkdown_;
     DocxExtractor docx_;
     PdfExtractor pdf_;
 };
 
-}  // namespace quizpane::studio
+} // namespace quizpane::studio

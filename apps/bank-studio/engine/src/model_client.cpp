@@ -1,5 +1,7 @@
 #include "quizpane/studio/model_client.hpp"
+#include "quizpane/diagnostic_logger.hpp"
 
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkAccessManager>
@@ -81,20 +83,37 @@ void ModelClient::generate(const ModelSettings& settings, const GenerationReques
     QString error;
     const QNetworkRequest networkRequest = buildChatCompletionsRequest(settings, &error);
     if (!error.isEmpty()) {
+        diagnostic::event(QStringLiteral("model"), QStringLiteral("request-invalid"),
+            {{QStringLiteral("vendor"), settings.vendorId},
+             {QStringLiteral("error"), error}});
         QMetaObject::invokeMethod(this, [this, error] {
             GenerationResult result; result.error = error; emit finished(result);
         }, Qt::QueuedConnection);
         return;
     }
+    diagnostic::event(QStringLiteral("model"), QStringLiteral("request-start"),
+        {{QStringLiteral("vendor"), settings.vendorId},
+         {QStringLiteral("model"), requestValue.modelName},
+         {QStringLiteral("host"), networkRequest.url().host()},
+         {QStringLiteral("inputChars"), requestValue.userContent.size()}});
+    QElapsedTimer elapsed;
+    elapsed.start();
     reply_ = manager_->post(networkRequest,
         QJsonDocument(buildChatCompletionsBody(requestValue)).toJson(QJsonDocument::Compact));
     QNetworkReply* current = reply_;
-    connect(current, &QNetworkReply::finished, this, [this, current] {
+    connect(current, &QNetworkReply::finished, this, [this, current, elapsed] {
         if (reply_ == current) reply_ = nullptr;
         const int status = current->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QString networkError = current->error() == QNetworkReply::NoError
             ? QString() : current->errorString();
         const auto result = parseChatCompletionsResponse(current->readAll(), status, networkError);
+        diagnostic::event(QStringLiteral("model"), QStringLiteral("request-finished"),
+            {{QStringLiteral("http"), status},
+             {QStringLiteral("ok"), result.ok},
+             {QStringLiteral("elapsedMs"), elapsed.elapsed()},
+             {QStringLiteral("promptTokens"), result.promptTokens},
+             {QStringLiteral("completionTokens"), result.completionTokens},
+             {QStringLiteral("error"), result.error}});
         current->deleteLater();
         emit finished(result);
     });
@@ -102,6 +121,7 @@ void ModelClient::generate(const ModelSettings& settings, const GenerationReques
 
 void ModelClient::cancel() {
     if (!reply_) return;
+    diagnostic::event(QStringLiteral("model"), QStringLiteral("request-cancelled"));
     disconnect(reply_, nullptr, this, nullptr);
     reply_->abort();
     reply_->deleteLater();

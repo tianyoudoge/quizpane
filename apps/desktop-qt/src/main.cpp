@@ -7,9 +7,11 @@
 #include <QSet>
 
 #include <functional>
+#include <exception>
 #include <utility>
 
 #include "platform/file_association.hpp"
+#include "quizpane/diagnostic_logger.hpp"
 #include "ui/main_window.hpp"
 
 namespace {
@@ -25,6 +27,26 @@ public:
     }
 
 protected:
+    bool notify(QObject* receiver, QEvent* event) override {
+        try {
+            return QApplication::notify(receiver, event);
+        } catch (const std::exception& error) {
+            quizpane::diagnostic::event(QStringLiteral("qt"),
+                QStringLiteral("unhandled-event-exception"),
+                {{QStringLiteral("receiver"), receiver ? receiver->metaObject()->className() : "null"},
+                 {QStringLiteral("eventType"), event ? static_cast<int>(event->type()) : -1},
+                 {QStringLiteral("error"), QString::fromLocal8Bit(error.what())}});
+            throw;
+        } catch (...) {
+            quizpane::diagnostic::event(QStringLiteral("qt"),
+                QStringLiteral("unhandled-event-exception"),
+                {{QStringLiteral("receiver"), receiver ? receiver->metaObject()->className() : "null"},
+                 {QStringLiteral("eventType"), event ? static_cast<int>(event->type()) : -1},
+                 {QStringLiteral("error"), QStringLiteral("unknown")}});
+            throw;
+        }
+    }
+
     bool event(QEvent* event) override {
         if (event->type() == QEvent::FileOpen) {
             const QString path = static_cast<QFileOpenEvent*>(event)->file();
@@ -54,6 +76,9 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationName("QuizPane Project");
     QApplication::setDesktopFileName(QStringLiteral("org.quizpane.app"));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/app-icon.png")));
+    quizpane::diagnostic::initialize(QStringLiteral("quizpane"));
+    quizpane::diagnostic::event(QStringLiteral("app"), QStringLiteral("initialized"),
+        {{QStringLiteral("arguments"), argc}});
     // Host 显式初始化 QtNetwork：一方面让 Provider 继承系统代理设置，另一方面
     // 保证 macdeployqt/windeployqt 在没有内置在线题库时也会打包网络运行库。
     QNetworkProxyFactory::setUseSystemConfiguration(true);
@@ -77,8 +102,15 @@ int main(int argc, char* argv[]) {
     QSet<QString> openedPackages;
     const auto openPackage = [&window, &openedPackages](const QString& path) {
         const QString normalized = QFileInfo(path).absoluteFilePath();
-        if (openedPackages.contains(normalized)) return;
+        if (openedPackages.contains(normalized)) {
+            quizpane::diagnostic::event(QStringLiteral("package"),
+                QStringLiteral("duplicate-open-ignored"),
+                {{QStringLiteral("file"), QFileInfo(normalized).fileName()}});
+            return;
+        }
         openedPackages.insert(normalized);
+        quizpane::diagnostic::event(QStringLiteral("package"), QStringLiteral("open"),
+            {{QStringLiteral("file"), QFileInfo(normalized).fileName()}});
         window.show();
         window.raise();
         window.activateWindow();
@@ -86,12 +118,22 @@ int main(int argc, char* argv[]) {
     };
     app.setFileOpenHandler(openPackage);
     window.show();
-    if (parser.isSet(providerOption))
+    if (parser.isSet(providerOption)) {
+        quizpane::diagnostic::event(QStringLiteral("startup"),
+            QStringLiteral("explicit-provider"),
+            {{QStringLiteral("file"), QFileInfo(parser.value(providerOption)).fileName()}});
         window.loadProvider(parser.value(providerOption));
-    else if (!parser.positionalArguments().isEmpty())
+    } else if (!parser.positionalArguments().isEmpty()) {
         openPackage(parser.positionalArguments().first());
-    else
+    } else {
+        quizpane::diagnostic::event(QStringLiteral("startup"),
+                                    QStringLiteral("load-last-provider"));
         window.loadLastProvider();
+    }
     // exec() 进入 UI 事件循环，直到托盘菜单选择“退出程序”才返回。
-    return app.exec();
+    const int exitCode = app.exec();
+    quizpane::diagnostic::event(QStringLiteral("app"), QStringLiteral("event-loop-returned"),
+        {{QStringLiteral("code"), exitCode}});
+    quizpane::diagnostic::shutdown();
+    return exitCode;
 }

@@ -1,4 +1,5 @@
 #include "quizpane/provider_loader.hpp"
+#include "quizpane/diagnostic_logger.hpp"
 
 #include <QJsonDocument>
 #include <QMetaObject>
@@ -64,11 +65,21 @@ bool ProviderLoader::load(const QString& libraryPath, QString* error) {
     // QLibrary 对应 Java 的 System.loadLibrary，但这里还会逐个 resolve 导出函数，
     // 并校验 ABI/descriptor，防止把任意 DLL 当作题库执行。
     unload();
+    diagnostic::event(QStringLiteral("provider"), QStringLiteral("load-start"),
+        {{QStringLiteral("file"), QFileInfo(libraryPath).fileName()}});
     if (QFileInfo(libraryPath).suffix().compare(QStringLiteral("json"),
                                                 Qt::CaseInsensitive) == 0) {
-        if (!declarative_.load(libraryPath, error)) return false;
+        if (!declarative_.load(libraryPath, error)) {
+            diagnostic::event(QStringLiteral("provider"), QStringLiteral("load-failed"),
+                {{QStringLiteral("kind"), QStringLiteral("declarative")},
+                 {QStringLiteral("error"), error ? *error : QString{}}});
+            return false;
+        }
         descriptor_ = declarative_.descriptor();
         providerId_ = descriptor_.value(QStringLiteral("id")).toString();
+        diagnostic::event(QStringLiteral("provider"), QStringLiteral("load-success"),
+            {{QStringLiteral("kind"), QStringLiteral("declarative")},
+             {QStringLiteral("id"), providerId_}});
         return true;
     }
     library_.setFileName(libraryPath);
@@ -78,6 +89,8 @@ bool ProviderLoader::load(const QString& libraryPath, QString* error) {
     library_.setLoadHints(QLibrary::PreventUnloadHint);
     if (!library_.load()) {
         if (error) *error = library_.errorString();
+        diagnostic::event(QStringLiteral("provider"), QStringLiteral("library-load-failed"),
+            {{QStringLiteral("error"), library_.errorString()}});
         return false;
     }
 
@@ -125,6 +138,10 @@ bool ProviderLoader::load(const QString& libraryPath, QString* error) {
         unload();
         return false;
     }
+    diagnostic::event(QStringLiteral("provider"), QStringLiteral("load-success"),
+        {{QStringLiteral("kind"), QStringLiteral("native")},
+         {QStringLiteral("id"), providerId_},
+         {QStringLiteral("version"), descriptor_.value(QStringLiteral("version")).toString()}});
     return true;
 }
 
@@ -145,6 +162,9 @@ bool ProviderLoader::isLoaded() const { return handle_ != nullptr || declarative
 QJsonObject ProviderLoader::descriptor() const { return descriptor_; }
 
 bool ProviderLoader::request(const QJsonObject& request, QString* error) {
+    diagnostic::event(QStringLiteral("provider"), QStringLiteral("request"),
+        {{QStringLiteral("id"), request.value(QStringLiteral("id")).toString()},
+         {QStringLiteral("method"), request.value(QStringLiteral("method")).toString()}});
     if (declarative_.isLoaded()) {
         const QJsonObject response = declarative_.request(request);
         QTimer::singleShot(0, this, [this, response] { emit responseReceived(response); });
@@ -161,6 +181,9 @@ bool ProviderLoader::request(const QJsonObject& request, QString* error) {
     if (result != 0 && error) {
         *error = QStringLiteral("题库请求失败，错误码 %1").arg(result);
     }
+    if (result != 0)
+        diagnostic::event(QStringLiteral("provider"), QStringLiteral("request-rejected"),
+            {{QStringLiteral("code"), result}});
     return result == 0;
 }
 
@@ -406,12 +429,20 @@ void ProviderLoader::acceptResponse(const QByteArray& json) {
     QJsonParseError parseError;
     const auto document = QJsonDocument::fromJson(json, &parseError);
     if (!document.isObject()) {
+        diagnostic::event(QStringLiteral("provider"), QStringLiteral("response-invalid-json"),
+            {{QStringLiteral("bytes"), json.size()},
+             {QStringLiteral("error"), parseError.errorString()}});
         emit providerLog(QP_LOG_ERROR,
                          QStringLiteral("题库返回的数据无法读取：%1")
                              .arg(parseError.errorString()));
         return;
     }
-    emit responseReceived(document.object());
+    const QJsonObject response = document.object();
+    diagnostic::event(QStringLiteral("provider"), QStringLiteral("response"),
+        {{QStringLiteral("id"), response.value(QStringLiteral("id")).toString()},
+         {QStringLiteral("error"), response.contains(QStringLiteral("error"))},
+         {QStringLiteral("bytes"), json.size()}});
+    emit responseReceived(response);
 }
 
 }  // namespace quizpane

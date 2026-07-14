@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
         {"name", "Local Test"}, {"version", "1.0.0"},
         {"kind", "declarative"},
         {"runtime", QJsonObject{{"format", "quizpane.bank+json"},
-            {"schemaVersion", 1}, {"entry", "content/bank.json"}}},
+            {"schemaVersion", 2}, {"entry", "content/bank.json"}}},
         {"permissions", QJsonObject{{"network", false}}}}).toJson();
     {
         if (!quizpane::writeZipArchive(declarativePath, {
@@ -94,6 +94,18 @@ int main(int argc, char** argv) {
         declarativeInfo.kind != QStringLiteral("declarative") ||
         !installer.install(declarativeInfo, &declarativeResult, &error) ||
         !QFileInfo(declarativeResult.entryPath).isFile()) return 11;
+
+    // v1 声明式包直接拒绝，不保留兼容安装路径。
+    const QString legacyDeclarativePath = QDir(temp.path()).filePath(
+        QStringLiteral("legacy-v1.quizpane-provider"));
+    QJsonObject legacyManifestObject = QJsonDocument::fromJson(declarativeManifest).object();
+    QJsonObject legacyRuntime = legacyManifestObject.value("runtime").toObject();
+    legacyRuntime.insert("schemaVersion", 1);
+    legacyManifestObject.insert("runtime", legacyRuntime);
+    if (!quizpane::writeZipArchive(legacyDeclarativePath, {
+            {QStringLiteral("manifest.json"), QJsonDocument(legacyManifestObject).toJson()},
+            {QStringLiteral("content/bank.json"), QByteArrayLiteral("{}")}})) return 15;
+    if (installer.inspect(legacyDeclarativePath, &declarativeInfo, &error)) return 16;
 
     const QString unsafePath = QDir(temp.path()).filePath(
         QStringLiteral("unsafe.quizpane-provider"));

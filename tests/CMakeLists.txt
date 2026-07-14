@@ -57,6 +57,14 @@ target_compile_definitions(declarative_provider_materials_test PRIVATE
 )
 add_test(NAME declarative_provider_materials_test COMMAND declarative_provider_materials_test)
 
+add_executable(material_package_e2e_test material_package_e2e_test.cpp)
+target_link_libraries(material_package_e2e_test PRIVATE
+    quizpane_provider_host quizpane_core Qt6::Core)
+target_compile_definitions(material_package_e2e_test PRIVATE
+    DECLARATIVE_MATERIALS_BANK_PATH="${PROJECT_SOURCE_DIR}/schemas/examples/declarative-materials/content/bank.json"
+)
+add_test(NAME material_package_e2e_test COMMAND material_package_e2e_test)
+
 add_executable(bank_validator_test bank_validator_test.cpp)
 target_link_libraries(bank_validator_test PRIVATE quizpane_core Qt6::Core)
 target_compile_definitions(bank_validator_test PRIVATE
@@ -75,8 +83,17 @@ add_test(NAME material_card_test COMMAND material_card_test)
 
 if(TARGET question_maker_engine)
     add_executable(document_extractor_test document_extractor_test.cpp)
-    target_link_libraries(document_extractor_test PRIVATE question_maker_engine Qt6::Core)
+    target_link_libraries(document_extractor_test PRIVATE
+        question_maker_engine quizpane_provider_host Qt6::Core Qt6::Gui)
+    target_compile_definitions(document_extractor_test PRIVATE
+        DOCUMENT_EXTRACTOR_OCR_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ocr-scan-fixture.pdf"
+    )
     add_test(NAME document_extractor_test COMMAND document_extractor_test)
+
+    add_executable(rule_based_generator_test rule_based_generator_test.cpp)
+    target_link_libraries(rule_based_generator_test PRIVATE
+        question_maker_engine quizpane_provider_host Qt6::Core)
+    add_test(NAME rule_based_generator_test COMMAND rule_based_generator_test)
 
     add_executable(checkpoint_store_test checkpoint_store_test.cpp)
     target_link_libraries(checkpoint_store_test PRIVATE question_maker_engine Qt6::Core)
@@ -89,4 +106,18 @@ if(TARGET question_maker_engine)
     add_executable(chunker_test chunker_test.cpp)
     target_link_libraries(chunker_test PRIVATE question_maker_engine Qt6::Core)
     add_test(NAME chunker_test COMMAND chunker_test)
+
+    add_executable(generation_workflow_test generation_workflow_test.cpp)
+    target_link_libraries(generation_workflow_test PRIVATE
+        question_maker_engine Qt6::Core Qt6::Network)
+add_test(NAME generation_workflow_test COMMAND generation_workflow_test)
+
+if(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING)
+    add_executable(diagnostic_logger_test diagnostic_logger_test.cpp)
+    target_link_libraries(diagnostic_logger_test PRIVATE quizpane_core Qt6::Core)
+    add_test(NAME diagnostic_logger_test COMMAND diagnostic_logger_test)
+    add_executable(diagnostic_crash_test diagnostic_crash_test.cpp)
+    target_link_libraries(diagnostic_crash_test PRIVATE quizpane_core Qt6::Core)
+    add_test(NAME diagnostic_crash_test COMMAND diagnostic_crash_test)
+endif()
 endif()

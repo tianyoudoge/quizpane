@@ -13,12 +13,16 @@ class QListWidget;
 class QProgressBar;
 class QPushButton;
 class QStackedWidget;
-class QTableWidget;
+class QTreeWidget;
 class QTimer;
 class QCloseEvent;
 class QNetworkAccessManager;
 
-namespace quizpane::studio { class GenerationWorkflow; struct WorkflowProgress; }
+namespace quizpane::studio {
+class GenerationWorkflow;
+struct GeneratedBankCandidate;
+struct WorkflowProgress;
+}
 
 namespace quizpane::studio {
 
@@ -50,7 +54,7 @@ private:
     void movePage(int delta);
     void beginPreflight();
     void updateWorkflowProgress(const WorkflowProgress& progress);
-    void populateReview(const QJsonArray& questions, const QJsonArray& needsReview);
+    void populateReview(const GeneratedBankCandidate& candidate);
     void packageProvider();
     void applyStyle();
 
@@ -65,19 +69,21 @@ private:
     QLabel* outputTokens_ = nullptr;
     QLabel* totalTokens_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
-    QTableWidget* reviewTable_ = nullptr;
+    QTreeWidget* reviewTree_ = nullptr;
     QPushButton* allReviewButton_ = nullptr;
     QPushButton* missingAnswerButton_ = nullptr;
     QPushButton* duplicateButton_ = nullptr;
     QLabel* finishPath_ = nullptr;
     QLineEdit* bankName_ = nullptr;
     QComboBox* questionCount_ = nullptr;
+    QComboBox* generationMode_ = nullptr;
     QPushButton* backButton_ = nullptr;
     QPushButton* nextButton_ = nullptr;
     QPushButton* startButton_ = nullptr;
     QNetworkAccessManager* networkManager_ = nullptr;
     GenerationWorkflow* workflow_ = nullptr;
     QStringList sourcePaths_;
+    QJsonArray generatedMaterials_;
     QJsonArray generatedQuestions_;
     QJsonArray reviewQuestions_;
     // 一个 DTO 保存完整模型选择，避免 vendor/model/endpoint 多个平行字段只更新

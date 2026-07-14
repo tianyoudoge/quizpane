@@ -1,8 +1,8 @@
 <div align="center">
   <img src="apps/desktop-qt/resources/app-icon.png" width="128" alt="QuizPane 小窗刷题图标">
   <h1>小窗刷题 · QuizPane</h1>
-  <p><strong>把题目贴在桌面角落，随时做两道，随时一键收起。</strong></p>
-  <p>透明悬浮 · 老板键 · 草稿恢复 · 多题库 · 原生低占用</p>
+  <p><strong>工作空档做两道，题目放在桌角，想收就收。</strong></p>
+  <p>轻巧刷题 · 一键收起 · 接着上次继续做</p>
   <p>
     <a href="https://github.com/tianyoudoge/quizpane/stargazers"><img src="https://img.shields.io/github/stars/tianyoudoge/quizpane?logo=github&label=Stars" alt="GitHub Stars"></a>
     <a href="https://github.com/tianyoudoge/quizpane/forks"><img src="https://img.shields.io/github/forks/tianyoudoge/quizpane?logo=github&label=Forks" alt="GitHub Forks"></a>
@@ -12,214 +12,117 @@
   </p>
   <p>
     <a href="https://github.com/tianyoudoge/quizpane/releases/latest">下载最新版</a> ·
-    <a href="#安装和使用">安装教程</a> ·
-    <a href="#题库怎么安装">题库教程</a> ·
+    <a href="#三分钟开始刷题">开始使用</a> ·
+    <a href="#已实现与正在完善">已实现与计划</a> ·
     <a href="#developer-guide">Developer Guide</a>
   </p>
 </div>
 
 ---
 
-## 这是什么？
+## 把刷题放到空档里
 
-小窗刷题是一款放在桌面右上角的轻量刷题工具。它不像传统题库客户端那样占满整个屏幕，而是尽量保持成一张低存在感的小卡片：工作间隙做一道，窗口不用来回切；有人过来时，按一下老板键立即隐藏。
+工作时总会有几分钟：等消息、等会议、等编译、摸一会儿鱼。小窗刷题不想占掉你的桌面，只把一套题放在角落里。做一题、看一眼解析，然后继续干活；需要收起来时，按一下快捷键就行。
 
-它不绑定某一家题库。你可以安装不同来源的题库文件，在同一个小窗里切换、答题、交卷和看解析。
-
-完整发行版还包含独立“题库制作器”：通过四步图形向导导入自己的 TXT、Word、PDF 或 JSON，查看整理进度和 Token 用量，最终生成跨平台本地题库。云端或本地模型在应用“设置”菜单中统一配置。
-
-> 从 `v0.2.0` 开始，Release 同时提供 Windows 10/11 x64、macOS Apple Silicon、macOS Intel 和 Linux x64 构建，并单独提供“题库制作器”安装包。Linux 包面向统信 UOS、银河麒麟等桌面发行版进行兼容构建；题库市场仍在开发中。
-
-## 界面长什么样？
+它不替你许愿“轻松上岸”，只想帮你把那些零碎时间攒成真正的练习量。
 
 <div align="center">
   <img src="docs/images/quizpane-catalog.png" width="380" alt="小窗刷题选择练习界面">
-  <p><sub>公开 Demo 题库实拍：选择分类和题量，点击即可开始练习。</sub></p>
+  <p><sub>导入题库后，选一个分类和题量，就能开始。</sub></p>
 </div>
 
-整个界面只有三层：
+## 现在就能用什么？
 
-1. **标题栏**：切换题库、调整大小、PIN 置顶和关闭；
-2. **答题区**：显示题目、选项、正确答案和解析，内容过长时单独滚动；
-3. **操作栏**：上一题、下一题和交卷，始终固定在底部。
-
-窗口没有传统标题边框，背景使用深色透明效果。题目图片会尝试去除大面积纯白背景，减少白色图片突然照亮屏幕的情况。
-
-## 为什么适合放在桌面角落？
-
-| 功能 | 使用体验 |
+| 你想做的事 | 小窗刷题现在的表现 |
 |---|---|
-| 透明悬浮窗 | 不遮住整个桌面，拖到任意角落即可使用 |
-| PIN 置顶 | 写文档、看网页时仍保持在其他窗口上方 |
-| 老板键 | 默认 `Ctrl+Shift+H`，一键隐藏，再按一次恢复 |
-| 三档尺寸 | 小、中、大随时切换，兼顾隐蔽性和阅读体验 |
-| 固定操作栏 | 长题只滚动正文，上一题、下一题和交卷不会跑掉 |
-| 自动草稿 | 关闭或崩溃后重新打开，可以继续上次没做完的题 |
-| 多题库 | 题库之间独立保存登录状态和草稿，切换不会互相污染 |
-| 原生客户端 | C++/Qt Widgets 实现，没有浏览器壳，适合低配置电脑 |
+| 利用空档刷几题 | 在桌面角落打开题目；选完答案可自动进入下一题 |
+| 有人来了先收起来 | 默认按 <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd> 隐藏，再按一次回来 |
+| 题目太长看不全 | 直接滚动题目内容，翻题和交卷按钮始终在手边 |
+| 下班前没做完 | 答案会自动保存，下次打开可以继续 |
+| 换一套题或换个方向 | 可以安装、切换、删除多个题库 |
+| 做完想知道哪里错了 | 交卷后逐题看自己的答案、正确答案和解析 |
+| 自己手里有资料 | 可用“题库制作器”把 TXT、Markdown、Word、PDF 整理成可导入题库 |
 
-## 安装和使用
+小窗可以拖到顺手的位置，也可以选小、中、大三种大小。它不会替你抢走整个屏幕。
 
-### 先分清两个程序
+## 三分钟开始刷题
 
-每个平台都提供两个独立下载包，不需要两个都安装：
+### 1. 下载“小窗刷题”
 
-| 你要做什么 | 下载文件前缀 | 解压后的程序 |
-|---|---|---|
-| 在桌面小窗里刷题 | `QuizPane-*` | 小窗刷题 |
-| 把 TXT、Word、PDF、JSON 整理成题库 | `QuizPane-Question-Maker-*` | 题库制作器 |
+到 [最新版 Releases](https://github.com/tianyoudoge/quizpane/releases/latest) 下载与你的电脑对应的文件：
 
-题库制作器的输出是 `.quizpane-provider` 文件。制作完成后，再用“小窗刷题”导入；只想使用别人提供的题库时，无需下载题库制作器。
+| 你的电脑 | 选择的文件 |
+|---|---|
+| Mac（M1/M2/M3/M4） | `QuizPane-macos-arm64.zip` |
+| Intel Mac | `QuizPane-macos-x86_64.zip` |
+| Windows 10/11 64 位 | `QuizPane-windows-x64.zip` |
+| Linux、统信 UOS、银河麒麟 x64 | `QuizPane-linux-x86_64.tar.xz`；老系统也可选 `.tar.gz` |
 
-### 按系统选择下载文件
+Mac 解压后把应用拖进“应用程序”；Windows 解压后直接运行“小窗刷题.exe”；Linux 请完整解压后运行 `QuizPane.AppDir/AppRun`。不要只把压缩包里的单个程序文件拖出来运行。
 
-| 系统 | 小窗刷题 | 题库制作器 |
-|---|---|---|
-| macOS Apple Silicon（M1/M2/M3/M4） | `QuizPane-macos-arm64.zip` | `QuizPane-Question-Maker-macos-arm64.zip` |
-| macOS Intel | `QuizPane-macos-x86_64.zip` | `QuizPane-Question-Maker-macos-x86_64.zip` |
-| Windows 10/11 64 位 | `QuizPane-windows-x64.zip` | `QuizPane-Question-Maker-windows-x64.zip` |
-| Linux/UOS/银河麒麟 64 位 | `QuizPane-linux-x86_64.tar.gz` | `QuizPane-Question-Maker-linux-x86_64.tar.gz` |
+> Windows 7、Linux ARM64、macOS 10.14/10.15 还没有可用版本。统信 UOS、银河麒麟目前是 Linux x64 兼容构建，尚未完成官方认证和真机验收。
 
-所有文件都在 [最新版 Releases](https://github.com/tianyoudoge/quizpane/releases/latest)。Windows 7、Linux ARM64、macOS 10.14/10.15 当前暂不支持，请勿下载名称相近的其他架构包尝试覆盖安装。
+### 2. 装一份题库
 
-### macOS 安装
+题库文件的后缀是 `.quizpane-provider`。拿到文件后任选一种方式：
 
-1. 打开 [Releases](https://github.com/tianyoudoge/quizpane/releases/latest)；
-2. 根据处理器和用途，从上表选择 ARM64 或 x86_64 的主程序/题库制作器；
-3. 解压后，把对应 `.app` 拖入“应用程序”；
-4. 第一次启动时，右键应用并选择“打开”；
-5. 小窗刷题负责安装题库，题库制作器负责制作自己的题库，二者可以独立启动。
+1. 点右上角三横线 → **题库管理** → **添加题库…**；
+2. 直接把题库文件拖到小窗上。
 
-当前自动构建版本使用临时签名，尚未完成 Apple Developer ID 公证。如果 macOS 阻止运行，请先确认文件来自本仓库的正式 Release，并核对同页面提供的 SHA-256；不要关闭整台电脑的 Gatekeeper。
+装好后选题目分类和题量，点击开始。做完交卷，就能看解析。
 
-校验下载文件：
+目前请只导入来源可信、内容有合法授权的题库文件。公开仓库不附带任何未经授权的商业题库或登录协议。
 
-```bash
-shasum -a 256 <下载的文件名>
-```
+### 3. 有自己的资料？再下载“题库制作器”
 
-### Windows 安装
+不想自己写代码，也可以把自己的 TXT、Markdown、Word 或 PDF 资料整理成题库。下载文件名以 `QuizPane-Question-Maker-` 开头的“题库制作器”，按向导选择文件、检查结果、导出题库，再回到小窗刷题导入即可。
 
-下载对应 `.zip` 后解压到普通文件夹：运行“小窗刷题.exe”开始刷题，或运行“题库制作器.exe”制作题库。两个压缩包已经分别携带所需 Qt 运行库，不要只复制其中的 `.exe` 到别处。
+题库制作器和小窗刷题是两个独立程序：只刷别人提供的题库，只装小窗刷题就够了。
 
-### Linux、统信 UOS、银河麒麟安装
+## 用起来顺手的小细节
 
-下载对应 `.tar.gz` 并完整解压。主程序运行 `QuizPane.AppDir/AppRun`，题库制作器运行 `QuizPane-Question-Maker.AppDir/AppRun`。不要把 `usr/bin` 中的单个文件拿出来运行；Qt 插件和运行库位于同一个 AppDir 中。当前属于 Linux x64 兼容构建，并非统信或麒麟官方认证版本。
+- 做完一道单选题会自动进入下一题；要改答案时，手动回到上一题即可。
+- 题目和解析用不同的颜色显示，交卷后更容易扫到重点。
+- 点标题栏的图钉，可以让题目一直留在最上面；不需要时再点一下关闭。
+- 老板键可以在“三横线 → 老板键设置…”里改掉。默认是 `Ctrl + Shift + H`。
+- 关闭软件不等于丢进度；草稿会保留。需要登录的题库也会分别保留自己的登录状态。
 
-## 题库怎么安装？
+## 已实现与正在完善
 
-小窗刷题使用扩展名为 `.quizpane-provider` 的题库文件。可以把它理解成播放器的“内容源组件”。
+### 已经可以使用
 
-### 方法一：从菜单添加
+- 小窗答题：选题、做题、交卷、逐题看解析；
+- 自动保存草稿，支持恢复未完成练习；
+- 题库的添加、切换、删除和拖入安装；
+- 一键隐藏、系统托盘、Mac 菜单、三档大小和固定在屏幕前面；
+- 本地示例题库，以及从文本、Word、PDF 整理题库的制作器；
+- Windows 10/11 x64、Apple Silicon Mac、Intel Mac、Linux x64 的构建产物。
 
-1. 点击右上角“三横线”；
-2. 选择“题库管理”；
-3. 点击“添加题库…”；
-4. 选择 `.quizpane-provider` 文件；
-5. 检查题库名称、版本和权限，确认后安装。
+### 正在完善，暂不承诺可用
 
-### 方法二：直接拖入
-
-把 `.quizpane-provider` 文件拖到小窗上，确认信息后即可安装。
-
-### 切换或删除题库
-
-```text
-三横线
-└── 题库管理
-    ├── 添加题库…
-    ├── 制作自己的题库…
-    ├── 切换题库
-    └── 删除题库
-```
-
-删除题库组件时，默认保留它的登录状态和未完成草稿。以后重新安装同一个题库，可以继续使用；退出账号或彻底删除数据的能力会在后续题库管理版本补齐。
-
-> 联网原生 Provider 可能包含本机代码，安装它相当于运行第三方软件。只安装来源可信、签名有效、具有合法内容授权的原生题库。由题库制作器产生的声明式本地题库只包含 JSON 和图片，不执行第三方代码。
-
-## 从选题到看解析
-
-### 1. 选择练习
-
-打开题库后，选择分类和题量。远程题库可能先要求使用对应手机 App 扫描二维码，本地题库通常可以直接进入分类。
-
-### 2. 做题
-
-点击选项完成选择。顶部显示当前题号，底部左右三角切换上一题和下一题。题目太长时，用鼠标滚轮滚动中间答题区。
-
-### 3. 自动保存
-
-选择答案后会增量保存。关闭小窗或电脑重启后，再次进入同一个题库会提示恢复草稿。
-
-### 4. 交卷
-
-点击底部文稿形状的交卷图标，确认后提交。交卷完成会显示题目数量、作答数和正确数。
-
-### 5. 查看解析
-
-交卷后逐题显示：
-
-- 你的选择；
-- 正确答案；
-- 题目解析；
-- 上一题、下一题。
-
-题干和解析使用不同的低饱和颜色，避免内容混在一起。
-
-## 悬浮、尺寸和老板键
-
-### PIN 置顶
-
-点击标题栏图钉。高亮时窗口保持在其他应用上方；再次点击取消置顶。
-
-### 调整尺寸
-
-点击标题栏的缩放图标，选择小、中、大。上下调整窗口时主要改变答题区域高度，标题栏和操作栏保持稳定。
-
-### 设置老板键
-
-打开“三横线 → 老板键设置…”，按下新的组合键并保存。快捷键必须包含 Ctrl、Shift、Alt、Cmd/Win 中至少一个修饰键。
-
-默认老板键：
-
-```text
-Ctrl + Shift + H
-```
-
-老板键在系统全局生效，小窗不在焦点时也可以隐藏或恢复。如果组合键已被其他软件占用，程序会提示并保留原设置。
-
-## 当前版本已经有什么？
-
-- [x] 透明无边框悬浮窗、拖动、PIN 和三档尺寸
-- [x] 老板键、系统托盘和 macOS 顶部菜单
-- [x] 添加、切换和删除多个题库
-- [x] 二维码登录界面和系统安全凭据存储
-- [x] 分类、组卷、答题、草稿、交卷和逐题解析
-- [x] 长题滚动、固定操作栏和低干扰线条图标
-- [x] 题图近白背景透明化与内容区域裁剪
-- [x] 完全离线 Demo Provider 和自动测试
-- [x] 声明式跨平台题库运行时与题库制作器四步 UI
-- [ ] 官方题库市场
-- [ ] 题库制作器模型调用、文档提取与任务恢复
-- [x] Windows、Intel Mac、Linux x64 自动构建与 Release
+- 题库市场和一键找题库；
+- 首批经授权的在线题库及扫码登录接入；
+- 更多资料格式：CSV、JSON、QTI；
+- 统信 UOS、银河麒麟的真机验收，Linux ARM64、Windows 7、旧版 macOS 支持；
+- 题库签名、来源审核、投诉和下架机制。
 
 ## 常见问题
 
-### 为什么安装后没有题目？
+### 为什么打开后没有题？
 
-QuizPane 是通用刷题 Host，题目来自单独安装的题库组件。当前题库市场仍在开发，需要自行导入可信的 `.quizpane-provider`。
+小窗刷题不自带商业题库。先安装一份可信的题库文件，或用题库制作器做自己的题库。
 
-### 关闭软件会退出登录吗？
+### 关闭以后，答案和登录会丢吗？
 
-不会。登录凭据由 macOS Keychain、Windows Credential Manager 或 Linux Secret Service 保存，并按题库隔离。
+不会。未完成的练习会保存；不同题库的登录信息也会分开保存。删除题库时默认仍保留这些数据，彻底清除数据的入口还在完善。
 
-### 为什么不内置某个商业平台的题目？
+### Mac 提示无法打开怎么办？
 
-公开仓库不分发未经授权的第三方协议和题库内容。官方索引将只接收可以证明接口与内容授权的 Provider。
+请先确认文件来自本仓库 Release，并核对同页面的 SHA-256。当前 Mac 包尚未完成 Apple Developer ID 公证，第一次可右键应用选择“打开”；不要为了运行一个应用而关闭整台电脑的安全保护。
 
-### 这是开源软件吗？
+### 这是完全免费的开源软件吗？
 
-源码公开可读，但许可证是 PolyForm Noncommercial 1.0.0：个人和符合定义的非商业使用免费，商业使用需要单独授权。严格意义上属于 **source-available（源码可用）**，不是 OSI 定义的开源许可证。
+个人和符合许可定义的非商业使用免费。源码公开可读；商业使用需要单独授权，详见 [LICENSE](LICENSE)。
 
 ---
 
@@ -248,20 +151,69 @@ quizpane/
 └── docs/                  # 架构与构建文档
 ```
 
-需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets 与 Network。
+需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets、Network、Core5Compat 与 Pdf。
 二维码和 ZIP 依赖由 CMake FetchContent 自动拉取，不需要手工复制第三方源码。
 
 ## macOS 开发构建
 
 ```bash
-brew install cmake ninja qtbase
+brew install cmake ninja qt tesseract tesseract-lang
 git clone git@github.com:tianyoudoge/quizpane.git
 cd quizpane
-export CMAKE_PREFIX_PATH="$(brew --prefix qtbase)"
+export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
 ```
+
+默认构建和官方发行包均启用 Tesseract C++ OCR；发行包同时携带 `chi_sim`、
+`eng` 语言数据，不依赖 Python、外部脚本或用户另行安装运行库。自行构建时需先
+安装 Tesseract 开发库和这两份语言数据；只有明确需要精简体积时才配置
+`-DQUIZPANE_ENABLE_TESSERACT_OCR=OFF`。
+
+## 本地诊断包与日志
+
+官方 Release 默认不启用文件诊断日志，也不携带调试符号。本地需要排查崩溃或
+非预期行为时，使用 DEBUG 打包开关；产物文件名会附加 `-debug`：
+
+```bash
+# macOS
+DEBUG_BUILD=1 ./scripts/build-macos.sh
+
+# Linux / UOS / 银河麒麟
+DEBUG_BUILD=1 ./scripts/build-uos.sh
+```
+
+```powershell
+# Windows
+.\scripts\build-windows.ps1 -QtRoot C:\Qt\6.8.0\msvc2022_64 -DebugBuild
+```
+
+也可直接给 CMake 配置 `-DQUIZPANE_ENABLE_DIAGNOSTIC_LOGGING=ON`。DEBUG 包使用
+`RelWithDebInfo`，保留符号并写入最多三份日志（当前文件及 `.1`、`.2`，每份
+5 MiB）。默认只记录文件名、Provider/任务 ID、阶段、数量、耗时、HTTP 状态、
+错误和崩溃栈，日常通常只有几十到几百 KiB。
+
+只有需要排查解析或模型输出时才开启详细载荷：macOS/Linux 使用
+`DEBUG_BUILD=1 VERBOSE_LOGS=1`，Windows 追加 `-DebugBuild -VerboseLogs`。
+此时每份提取文本和模型响应最多记录 64 KiB、最终候选题库最多 128 KiB。
+API Key、Authorization 和 Token 始终自动脱敏。
+
+| 平台 | 日志目录 |
+|---|---|
+| macOS | `~/Library/Application Support/QuizPane/logs/` |
+| Windows | `%LOCALAPPDATA%\QuizPane\logs\` |
+| Linux/UOS/麒麟 | `${XDG_DATA_HOME:-~/.local/share}/QuizPane/logs/` |
+
+主程序日志名为 `quizpane-debug.log`，题库制作器为
+`question-maker-debug.log`。正常退出时最后一行包含 `session end exit=clean`；
+缺少该标记通常意味着进程崩溃、被强制结束或被系统杀掉。
+
+DEBUG 菜单中会出现“查看调试日志…”。macOS/Linux 的致命信号堆栈分别写到
+`quizpane-crash.log`、`question-maker-crash.log`，最多记录 128 帧；Windows
+对应生成 `quizpane-crash.dmp`、`question-maker-crash.dmp`，可用 DEBUG 包内
+的 PDB 在 Visual Studio 或 WinDbg 中查看完整线程和调用栈。Release 不安装这些
+处理器，也不生成上述文件。
 
 运行公开 Demo Provider：
 

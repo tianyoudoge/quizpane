@@ -1,0 +1,153 @@
+name: Build and test QuizPane
+
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+    branches:
+      - dev
+      - master
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: "6.5.3"
+
+jobs:
+  macos:
+    name: macOS Apple-Silicon
+    runs-on: macos-14
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: brew install cmake ninja tesseract tesseract-lang
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: clang_64
+          modules: qt5compat qtpdf qtwebengine
+          cache: true
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}"
+          -DQUIZPANE_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build/ci --parallel
+
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
+
+  windows:
+    name: Windows 10 and 11 x64
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Configure MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Prepare vcpkg binary cache
+        id: vcpkg_cache
+        shell: pwsh
+        run: |
+          $Revision = (& git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD).Trim()
+          "revision=$Revision" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/vcpkg-binary-cache" | Out-Null
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg_cache.outputs.revision }}-x64-windows-static-md-tesseract-v1
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install build dependencies
+        shell: pwsh
+        env:
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-binary-cache
+        run: |
+          choco install cmake ninja -y --no-progress
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install tesseract:x64-windows-static-md
+
+      - name: Download OCR language data
+        shell: pwsh
+        run: |
+          $Tessdata = Join-Path $env:RUNNER_TEMP "tessdata"
+          New-Item -ItemType Directory -Force $Tessdata | Out-Null
+          Invoke-WebRequest https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/chi_sim.traineddata -OutFile (Join-Path $Tessdata "chi_sim.traineddata")
+          Invoke-WebRequest https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata -OutFile (Join-Path $Tessdata "eng.traineddata")
+          "TESSDATA_DIR=$Tessdata" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2019_64
+          modules: qt5compat qtpdf qtwebengine
+          cache: true
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build/ci -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            -DQUIZPANE_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build/ci --parallel
+
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgl1 libegl1 libx11-dev \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0 libtesseract-dev \
+            tesseract-ocr-chi-sim tesseract-ocr-eng
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: gcc_64
+          modules: qt5compat qtpdf qtwebengine
+          cache: true
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}"
+          -DQUIZPANE_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build/ci --parallel
+
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure

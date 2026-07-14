@@ -34,13 +34,16 @@ jobs:
         run: test "$(uname -m)" = "${{ matrix.arch }}"
 
       - name: Install build tools
-        run: brew install cmake ninja
+        run: brew install cmake ninja dylibbundler tesseract tesseract-lang
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: clang_64
+          # Qt5Compat provides QTextCodec/GB18030 fallback; QtPdf is used by
+          # the document extractor; QtWebEngine renders supported web content.
+          modules: qt5compat qtpdf qtwebengine
           cache: true
 
       - name: Build, test and package both applications
@@ -78,20 +81,53 @@ jobs:
         with:
           arch: x64
 
+      - name: Prepare vcpkg binary cache
+        id: vcpkg_cache
+        shell: pwsh
+        run: |
+          $Revision = (& git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD).Trim()
+          "revision=$Revision" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/vcpkg-binary-cache" | Out-Null
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg_cache.outputs.revision }}-x64-windows-static-md-tesseract-v1
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install build tools
         shell: pwsh
-        run: choco install cmake ninja -y --no-progress
+        env:
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-binary-cache
+        run: |
+          choco install cmake ninja -y --no-progress
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install tesseract:x64-windows-static-md
+
+      - name: Download OCR language data
+        shell: pwsh
+        run: |
+          $Tessdata = Join-Path $env:RUNNER_TEMP "tessdata"
+          New-Item -ItemType Directory -Force $Tessdata | Out-Null
+          Invoke-WebRequest https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/chi_sim.traineddata -OutFile (Join-Path $Tessdata "chi_sim.traineddata")
+          Invoke-WebRequest https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata -OutFile (Join-Path $Tessdata "eng.traineddata")
+          "TESSDATA_DIR=$Tessdata" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: win64_msvc2019_64
+          modules: qt5compat qtpdf qtwebengine
           cache: true
 
       - name: Build, test and package both applications
         shell: pwsh
-        run: ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR"
+        run: |
+          ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR" `
+            -CMakeToolchainFile "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -VcpkgTargetTriplet "x64-windows-static-md"
 
       - name: Prepare checksums
         shell: pwsh
@@ -123,13 +159,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build imagemagick libgl1 libegl1 libx11-dev \
             libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
-            libxcb-keysyms1 libxcb-render-util0
+            libxcb-keysyms1 libxcb-render-util0 libtesseract-dev \
+            tesseract-ocr-chi-sim tesseract-ocr-eng xz-utils
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: gcc_64
+          modules: qt5compat qtpdf qtwebengine
           cache: true
 
       - name: Install Linux deployment tool
@@ -156,6 +194,8 @@ jobs:
           mkdir -p release-assets
           cp dist/uos/QuizPane-linux-x86_64.tar.gz release-assets/
           cp dist/uos/QuizPane-Question-Maker-linux-x86_64.tar.gz release-assets/
+          cp dist/uos/QuizPane-linux-x86_64.tar.xz release-assets/
+          cp dist/uos/QuizPane-Question-Maker-linux-x86_64.tar.xz release-assets/
           cd release-assets
           sha256sum * > SHA256SUMS-linux-x86_64.txt
 
