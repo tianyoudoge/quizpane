@@ -1,12 +1,14 @@
 #include "quizpane/studio/document_extractor.hpp"
 #include "quizpane/zip_archive.hpp"
 
-#include <QDebug>
 #include <QFile>
+#include <QFont>
 #include <QGuiApplication>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QTemporaryDir>
+
+#include <cstdio>
 
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
@@ -45,9 +47,15 @@ int main(int argc, char** argv) {
     const QString pdfPath = directory.filePath(QStringLiteral("sample.pdf"));
     {
         QPdfWriter writer(pdfPath);
+        // 使用 PDF 点作为绘制单位并放大字体，确保没有文字层、必须走 OCR 的
+        // 平台也能稳定识别；默认 1200 DPI 下用小坐标绘制会得到极小文字。
+        writer.setResolution(72);
         QPainter painter(&writer);
-        painter.drawText(QPointF(100, 200), QStringLiteral("1. PDF question"));
-        painter.drawText(QPointF(100, 260), QStringLiteral("A. first option"));
+        QFont font = painter.font();
+        font.setPointSize(24);
+        painter.setFont(font);
+        painter.drawText(QPointF(72, 144), QStringLiteral("1. PDF question"));
+        painter.drawText(QPointF(72, 216), QStringLiteral("A. first option"));
     }
     const auto pdf = registry.extract(pdfPath);
     // Qt PDF 的文字层提取与 Tesseract 的具体识别文本会随平台和字体栅格化
@@ -57,8 +65,14 @@ int main(int argc, char** argv) {
         !pdf.usedOcr && !pdf.plainText.contains(QStringLiteral("PDF question"));
     if (!pdf.error.isEmpty() || !pdf.hasPageBoundaries || pdf.plainText.trimmed().isEmpty() ||
         missingExpectedText) {
-        qCritical() << "PDF extraction failed" << pdf.error << pdf.hasPageBoundaries
-                    << pdf.usedOcr << pdf.plainText;
+        const QByteArray diagnostic =
+            QStringLiteral("PDF extraction failed: error=%1 boundaries=%2 ocr=%3 text=%4")
+                .arg(pdf.error)
+                .arg(pdf.hasPageBoundaries)
+                .arg(pdf.usedOcr)
+                .arg(pdf.plainText)
+                .toUtf8();
+        std::fprintf(stderr, "%s\n", diagnostic.constData());
         return 7;
     }
 
