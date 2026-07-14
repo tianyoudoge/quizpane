@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build/release-uos}"
 DIST_DIR="${DIST_DIR:-$ROOT/dist/uos}"
 QT_PREFIX="${QT_PREFIX:-}"
-TESSDATA_DIR="${TESSDATA_DIR:-/usr/share/tesseract-ocr/5/tessdata}"
+TESSDATA_DIR="${TESSDATA_DIR:-}"
 DEBUG_BUILD="${DEBUG_BUILD:-0}"
 VERBOSE_LOGS="${VERBOSE_LOGS:-0}"
 # Linux 代码和构建流程在 UOS、银河麒麟之间共用。发行版标签只影响产物名称，
@@ -18,6 +18,25 @@ BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
 PACKAGE_SUFFIX=""
 VERBOSE_DIAGNOSTICS="OFF"
+
+# 不同发行版会把语言数据安装到 4.00、4 或 5 等版本目录。优先尊重调用方
+# 指定的路径，其次读取 Tesseract 的 pkg-config 元数据，最后检查常见目录。
+if [[ -z "$TESSDATA_DIR" ]] && command -v pkg-config >/dev/null 2>&1; then
+  TESSDATA_DIR="$(pkg-config --variable=tessdata_dir tesseract 2>/dev/null || true)"
+fi
+if [[ ! -f "$TESSDATA_DIR/chi_sim.traineddata" || ! -f "$TESSDATA_DIR/eng.traineddata" ]]; then
+  for candidate in \
+    /usr/share/tesseract-ocr/5/tessdata \
+    /usr/share/tesseract-ocr/4.00/tessdata \
+    /usr/share/tesseract-ocr/4/tessdata \
+    /usr/share/tessdata; do
+    if [[ -f "$candidate/chi_sim.traineddata" && -f "$candidate/eng.traineddata" ]]; then
+      TESSDATA_DIR="$candidate"
+      break
+    fi
+  done
+fi
+
 if [[ "$DEBUG_BUILD" == "1" ]]; then
   BUILD_TYPE="RelWithDebInfo"
   DIAGNOSTIC_LOGGING="ON"
