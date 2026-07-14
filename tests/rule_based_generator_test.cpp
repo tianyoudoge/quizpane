@@ -5,7 +5,6 @@
 #include "quizpane/zip_archive.hpp"
 
 #include <QCoreApplication>
-#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -116,49 +115,29 @@ int main(int argc, char** argv) {
     if (compactResult.normalQuestions.size() != 2 || !compactResult.needsReviewQuestions.isEmpty())
         return 20;
 
-    QFile realSample(QStringLiteral(REAL_RULE_SAMPLE));
-    if (!realSample.open(QIODevice::ReadOnly))
-        return 10;
-    ExtractedDocument c3;
-    c3.sourcePath = realSample.fileName();
-    c3.plainText = QString::fromUtf8(realSample.readAll());
-    const auto c3Result = RuleBasedBankGenerator{}.generate({c3});
-    if (c3Result.materials.size() != 8 || c3Result.normalQuestions.size() != 38 ||
-        !c3Result.needsReviewQuestions.isEmpty()) {
-        qCritical() << "C3 rule result" << c3Result.materials.size()
-                    << c3Result.normalQuestions.size() << c3Result.needsReviewQuestions.size()
-                    << c3Result.warnings;
-        for (const auto& value : c3Result.needsReviewQuestions) {
-            const QJsonObject question = value.toObject();
-            qCritical() << question.value("id").toString()
-                        << question.value("review").toObject().value("reason").toString();
-        }
-        return 11;
-    }
-    const QJsonObject c3Bank = bankFor(c3Result);
-    if (!quizpane::validateBank(c3Bank, &validationError))
-        return 12;
-
-    // 规则候选最终仍进入现有声明式 ZIP，不产生本机代码。这里从真实规则结果
-    // 写包、检查 manifest、重新读 ZIP，再交给运行时加载，覆盖完整产物边界。
+    // 规则候选最终仍进入现有声明式 ZIP，不产生本机代码。这里复用上面以内存
+    // 构造的稳定样例写包、检查 manifest、重新读 ZIP，再交给运行时加载。
+    // 测试因此不再依赖开发机 build/ 目录中的临时文件，干净检出也能完整运行。
+    const QJsonObject generatedBank = bankFor(result);
     QTemporaryDir packageDirectory;
     if (!packageDirectory.isValid())
         return 13;
     const QJsonObject manifest{{"manifestVersion", 2},
-                               {"id", "local.rules.c3"},
-                               {"name", "C3 Rules"},
+                               {"id", "local.rules.test"},
+                               {"name", "Rules"},
                                {"version", "1.0.0"},
                                {"kind", "declarative"},
                                {"runtime", QJsonObject{{"format", "quizpane.bank+json"},
                                                        {"schemaVersion", 2},
                                                        {"entry", "content/bank.json"}}},
                                {"permissions", QJsonObject{{"network", false}}}};
-    const QString packagePath = packageDirectory.filePath(QStringLiteral("c3.quizpane-provider"));
+    const QString packagePath =
+        packageDirectory.filePath(QStringLiteral("rules.quizpane-provider"));
     if (!quizpane::writeZipArchive(packagePath,
                                    {{QStringLiteral("manifest.json"),
                                      QJsonDocument(manifest).toJson(QJsonDocument::Compact)},
                                     {QStringLiteral("content/bank.json"),
-                                     QJsonDocument(c3Bank).toJson(QJsonDocument::Compact)}},
+                                     QJsonDocument(generatedBank).toJson(QJsonDocument::Compact)}},
                                    &validationError))
         return 14;
     quizpane::ProviderPackageInfo packageInfo;

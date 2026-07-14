@@ -90,8 +90,6 @@ if(TARGET question_maker_engine)
     add_executable(rule_based_generator_test rule_based_generator_test.cpp)
     target_link_libraries(rule_based_generator_test PRIVATE
         question_maker_engine quizpane_provider_host Qt6::Core)
-    target_compile_definitions(rule_based_generator_test PRIVATE
-        REAL_RULE_SAMPLE="${PROJECT_SOURCE_DIR}/build/test-data/c3-real-reading-comprehension.txt")
     add_test(NAME rule_based_generator_test COMMAND rule_based_generator_test)
 
     add_executable(checkpoint_store_test checkpoint_store_test.cpp)
