@@ -81,8 +81,26 @@ jobs:
         with:
           arch: x64
 
+      - name: Prepare vcpkg binary cache
+        id: vcpkg_cache
+        shell: pwsh
+        run: |
+          $Revision = (& git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD).Trim()
+          "revision=$Revision" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/vcpkg-binary-cache" | Out-Null
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg_cache.outputs.revision }}-x64-windows-static-md-tesseract-v1
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install build tools
         shell: pwsh
+        env:
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-binary-cache
         run: |
           choco install cmake ninja -y --no-progress
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install tesseract:x64-windows-static-md
