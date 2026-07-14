@@ -34,13 +34,14 @@ jobs:
         run: test "$(uname -m)" = "${{ matrix.arch }}"
 
       - name: Install build tools
-        run: brew install cmake ninja
+        run: brew install cmake ninja dylibbundler tesseract tesseract-lang
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: clang_64
+          modules: qtwebengine
           cache: true
 
       - name: Build, test and package both applications
@@ -80,18 +81,33 @@ jobs:
 
       - name: Install build tools
         shell: pwsh
-        run: choco install cmake ninja -y --no-progress
+        run: |
+          choco install cmake ninja -y --no-progress
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install tesseract:x64-windows-static-md
+
+      - name: Download OCR language data
+        shell: pwsh
+        run: |
+          $Tessdata = Join-Path $env:RUNNER_TEMP "tessdata"
+          New-Item -ItemType Directory -Force $Tessdata | Out-Null
+          Invoke-WebRequest https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/chi_sim.traineddata -OutFile (Join-Path $Tessdata "chi_sim.traineddata")
+          Invoke-WebRequest https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata -OutFile (Join-Path $Tessdata "eng.traineddata")
+          "TESSDATA_DIR=$Tessdata" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: win64_msvc2019_64
+          modules: qtwebengine
           cache: true
 
       - name: Build, test and package both applications
         shell: pwsh
-        run: ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR"
+        run: |
+          ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR" `
+            -CMakeToolchainFile "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -VcpkgTargetTriplet "x64-windows-static-md"
 
       - name: Prepare checksums
         shell: pwsh
@@ -123,13 +139,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build imagemagick libgl1 libegl1 libx11-dev \
             libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
-            libxcb-keysyms1 libxcb-render-util0
+            libxcb-keysyms1 libxcb-render-util0 libtesseract-dev \
+            tesseract-ocr-chi-sim tesseract-ocr-eng xz-utils
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: gcc_64
+          modules: qtwebengine
           cache: true
 
       - name: Install Linux deployment tool
@@ -156,6 +174,8 @@ jobs:
           mkdir -p release-assets
           cp dist/uos/QuizPane-linux-x86_64.tar.gz release-assets/
           cp dist/uos/QuizPane-Question-Maker-linux-x86_64.tar.gz release-assets/
+          cp dist/uos/QuizPane-linux-x86_64.tar.xz release-assets/
+          cp dist/uos/QuizPane-Question-Maker-linux-x86_64.tar.xz release-assets/
           cd release-assets
           sha256sum * > SHA256SUMS-linux-x86_64.txt
 

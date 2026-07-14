@@ -102,6 +102,27 @@ int main(int argc, char** argv) {
     if (!server.listen(QHostAddress::LocalHost, 0))
         return 3;
     QNetworkAccessManager manager;
+
+    // 规则路径与模型路径共享 Workflow 对外契约，但不会启动 HTTP 请求或创建
+    // 模型检查点。这里直接验证“文件 -> 提取 -> 规则候选”的集成边界。
+    const QString rulePath = directory.filePath(QStringLiteral("rules.txt"));
+    QFile ruleSource(rulePath);
+    if (!ruleSource.open(QIODevice::WriteOnly))
+        return 9;
+    ruleSource.write("1. Which one is A?\nA. Alpha\nB. Beta\n答案: A\n");
+    ruleSource.close();
+    quizpane::studio::GenerationWorkflow ruleWorkflow(&manager);
+    quizpane::studio::GeneratedBankCandidate ruleReady;
+    bool ruleFinished = false;
+    QObject::connect(&ruleWorkflow, &quizpane::studio::GenerationWorkflow::questionsReady, &app,
+                     [&](const auto& candidate) { ruleReady = candidate; });
+    QObject::connect(&ruleWorkflow, &quizpane::studio::GenerationWorkflow::finished, &app,
+                     [&] { ruleFinished = true; });
+    ruleWorkflow.startRuleBased({rulePath});
+    if (!ruleFinished || ruleReady.questions.size() != 1 ||
+        !ruleReady.needsReviewQuestions.isEmpty() || !server.requestBodies.isEmpty())
+        return 10;
+
     quizpane::studio::GenerationWorkflow workflow(&manager);
     quizpane::studio::GeneratedBankCandidate ready;
     QString failure;

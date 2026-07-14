@@ -14,12 +14,34 @@ option(QUIZPANE_BUILD_TESTS "Build QuizPane tests" ON)
 option(QUIZPANE_BUILD_BANK_GENERATOR
        "Build the experimental local question-bank generator" OFF)
 option(QUIZPANE_BUILD_BANK_STUDIO "Build the QuizPane Question Maker GUI" ON)
+option(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING
+       "Write rotating diagnostic logs for local debug packages" OFF)
+option(QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS
+       "Include bounded source and model payloads in diagnostic logs" OFF)
+if(QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS AND NOT QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING)
+    message(FATAL_ERROR "Verbose diagnostics require QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING=ON")
+endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network)
 if(QUIZPANE_BUILD_BANK_STUDIO)
     # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
     # （QStringConverter 内置编码不含 GB18030），其余模块不需要它。
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Core5Compat)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Core5Compat Pdf)
+endif()
+
+option(QUIZPANE_ENABLE_TESSERACT_OCR
+       "Enable the native Tesseract OCR backend in Question Maker" ON)
+if(QUIZPANE_BUILD_BANK_STUDIO AND QUIZPANE_ENABLE_TESSERACT_OCR)
+    # vcpkg（Windows）提供原生 CMake package；Homebrew 和多数 Linux
+    # 发行版仍主要提供 pkg-config。统一成一个 target 供子目录链接。
+    find_package(Tesseract CONFIG QUIET)
+    if(TARGET Tesseract::libtesseract)
+        set(QUIZPANE_TESSERACT_TARGET Tesseract::libtesseract)
+    else()
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(Tesseract REQUIRED IMPORTED_TARGET tesseract)
+        set(QUIZPANE_TESSERACT_TARGET PkgConfig::Tesseract)
+    endif()
 endif()
 
 FetchContent_Declare(qrcodegen_source

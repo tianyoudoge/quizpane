@@ -83,8 +83,16 @@ add_test(NAME material_card_test COMMAND material_card_test)
 
 if(TARGET question_maker_engine)
     add_executable(document_extractor_test document_extractor_test.cpp)
-    target_link_libraries(document_extractor_test PRIVATE question_maker_engine Qt6::Core)
+    target_link_libraries(document_extractor_test PRIVATE
+        question_maker_engine quizpane_provider_host Qt6::Core Qt6::Gui)
     add_test(NAME document_extractor_test COMMAND document_extractor_test)
+
+    add_executable(rule_based_generator_test rule_based_generator_test.cpp)
+    target_link_libraries(rule_based_generator_test PRIVATE
+        question_maker_engine quizpane_provider_host Qt6::Core)
+    target_compile_definitions(rule_based_generator_test PRIVATE
+        REAL_RULE_SAMPLE="${PROJECT_SOURCE_DIR}/build/test-data/c3-real-reading-comprehension.txt")
+    add_test(NAME rule_based_generator_test COMMAND rule_based_generator_test)
 
     add_executable(checkpoint_store_test checkpoint_store_test.cpp)
     target_link_libraries(checkpoint_store_test PRIVATE question_maker_engine Qt6::Core)
@@ -101,5 +109,14 @@ if(TARGET question_maker_engine)
     add_executable(generation_workflow_test generation_workflow_test.cpp)
     target_link_libraries(generation_workflow_test PRIVATE
         question_maker_engine Qt6::Core Qt6::Network)
-    add_test(NAME generation_workflow_test COMMAND generation_workflow_test)
+add_test(NAME generation_workflow_test COMMAND generation_workflow_test)
+
+if(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING)
+    add_executable(diagnostic_logger_test diagnostic_logger_test.cpp)
+    target_link_libraries(diagnostic_logger_test PRIVATE quizpane_core Qt6::Core)
+    add_test(NAME diagnostic_logger_test COMMAND diagnostic_logger_test)
+    add_executable(diagnostic_crash_test diagnostic_crash_test.cpp)
+    target_link_libraries(diagnostic_crash_test PRIVATE quizpane_core Qt6::Core)
+    add_test(NAME diagnostic_crash_test COMMAND diagnostic_crash_test)
+endif()
 endif()

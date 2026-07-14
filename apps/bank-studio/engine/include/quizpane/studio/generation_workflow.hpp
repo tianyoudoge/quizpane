@@ -60,6 +60,10 @@ class GenerationWorkflow final : public QObject {
     void start(const QStringList& sourcePaths, const ModelSettings& settings,
                const QString& resumeTaskId = {});
 
+    // 完全离线的规则结构化入口：复用同一批提取器和最终候选 DTO，但不创建模型
+    // 请求或模型检查点。相同输入始终产生相同输出，适合规整题库快速导入。
+    void startRuleBased(const QStringList& sourcePaths);
+
     // 取消当前网络请求并原子保存进度，任务可由相同源文件再次恢复。
     void pause();
 

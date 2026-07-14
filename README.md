@@ -26,9 +26,11 @@
 
 它不绑定某一家题库。你可以安装不同来源的题库文件，在同一个小窗里切换、答题、交卷和看解析。
 
-完整发行版还包含独立“题库制作器”：通过四步图形向导导入自己的 TXT、Word、PDF 或 JSON，查看整理进度和 Token 用量，最终生成跨平台本地题库。云端或本地模型在应用“设置”菜单中统一配置。
+完整发行版还包含独立“题库制作器”：通过四步图形向导导入自己的 TXT、Markdown、DOCX 或 PDF，可选择完全离线的规则结构化，也可使用原有模型生成，最终生成跨平台本地题库。
 
 > 从 `v0.2.0` 开始，Release 同时提供 Windows 10/11 x64、macOS Apple Silicon、macOS Intel 和 Linux x64 构建，并单独提供“题库制作器”安装包。Linux 包面向统信 UOS、银河麒麟等桌面发行版进行兼容构建；题库市场仍在开发中。
+
+> Linux Release 同时提供兼容性优先的 `.tar.gz` 和下载体积更小的 `.tar.xz`；弱网环境优先选择 `.tar.xz`。
 
 ## 界面长什么样？
 
@@ -78,7 +80,7 @@
 | macOS Apple Silicon（M1/M2/M3/M4） | `QuizPane-macos-arm64.zip` | `QuizPane-Question-Maker-macos-arm64.zip` |
 | macOS Intel | `QuizPane-macos-x86_64.zip` | `QuizPane-Question-Maker-macos-x86_64.zip` |
 | Windows 10/11 64 位 | `QuizPane-windows-x64.zip` | `QuizPane-Question-Maker-windows-x64.zip` |
-| Linux/UOS/银河麒麟 64 位 | `QuizPane-linux-x86_64.tar.gz` | `QuizPane-Question-Maker-linux-x86_64.tar.gz` |
+| Linux/UOS/银河麒麟 64 位 | `QuizPane-linux-x86_64.tar.xz`（另有 `.tar.gz`） | `QuizPane-Question-Maker-linux-x86_64.tar.xz`（另有 `.tar.gz`） |
 
 所有文件都在 [最新版 Releases](https://github.com/tianyoudoge/quizpane/releases/latest)。Windows 7、Linux ARM64、macOS 10.14/10.15 当前暂不支持，请勿下载名称相近的其他架构包尝试覆盖安装。
 
@@ -104,7 +106,7 @@ shasum -a 256 <下载的文件名>
 
 ### Linux、统信 UOS、银河麒麟安装
 
-下载对应 `.tar.gz` 并完整解压。主程序运行 `QuizPane.AppDir/AppRun`，题库制作器运行 `QuizPane-Question-Maker.AppDir/AppRun`。不要把 `usr/bin` 中的单个文件拿出来运行；Qt 插件和运行库位于同一个 AppDir 中。当前属于 Linux x64 兼容构建，并非统信或麒麟官方认证版本。
+弱网环境下载 `.tar.xz`，老系统无法解压 xz 时再选择 `.tar.gz`，并完整解压。主程序运行 `QuizPane.AppDir/AppRun`，题库制作器运行 `QuizPane-Question-Maker.AppDir/AppRun`。不要把 `usr/bin` 中的单个文件拿出来运行；Qt 插件和运行库位于同一个 AppDir 中。当前属于 Linux x64 兼容构建，并非统信或麒麟官方认证版本。
 
 ## 题库怎么安装？
 
@@ -200,7 +202,7 @@ Ctrl + Shift + H
 - [x] 完全离线 Demo Provider 和自动测试
 - [x] 声明式跨平台题库运行时与题库制作器四步 UI
 - [ ] 官方题库市场
-- [ ] 题库制作器模型调用、文档提取与任务恢复
+- [x] 题库制作器规则结构化、模型调用、DOCX/PDF 提取与任务恢复
 - [x] Windows、Intel Mac、Linux x64 自动构建与 Release
 
 ## 常见问题
@@ -248,20 +250,69 @@ quizpane/
 └── docs/                  # 架构与构建文档
 ```
 
-需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets 与 Network。
+需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets、Network、Core5Compat 与 Pdf。
 二维码和 ZIP 依赖由 CMake FetchContent 自动拉取，不需要手工复制第三方源码。
 
 ## macOS 开发构建
 
 ```bash
-brew install cmake ninja qtbase
+brew install cmake ninja qt tesseract tesseract-lang
 git clone git@github.com:tianyoudoge/quizpane.git
 cd quizpane
-export CMAKE_PREFIX_PATH="$(brew --prefix qtbase)"
+export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
 ```
+
+默认构建和官方发行包均启用 Tesseract C++ OCR；发行包同时携带 `chi_sim`、
+`eng` 语言数据，不依赖 Python、外部脚本或用户另行安装运行库。自行构建时需先
+安装 Tesseract 开发库和这两份语言数据；只有明确需要精简体积时才配置
+`-DQUIZPANE_ENABLE_TESSERACT_OCR=OFF`。
+
+## 本地诊断包与日志
+
+官方 Release 默认不启用文件诊断日志，也不携带调试符号。本地需要排查崩溃或
+非预期行为时，使用 DEBUG 打包开关；产物文件名会附加 `-debug`：
+
+```bash
+# macOS
+DEBUG_BUILD=1 ./scripts/build-macos.sh
+
+# Linux / UOS / 银河麒麟
+DEBUG_BUILD=1 ./scripts/build-uos.sh
+```
+
+```powershell
+# Windows
+.\scripts\build-windows.ps1 -QtRoot C:\Qt\6.8.0\msvc2022_64 -DebugBuild
+```
+
+也可直接给 CMake 配置 `-DQUIZPANE_ENABLE_DIAGNOSTIC_LOGGING=ON`。DEBUG 包使用
+`RelWithDebInfo`，保留符号并写入最多三份日志（当前文件及 `.1`、`.2`，每份
+5 MiB）。默认只记录文件名、Provider/任务 ID、阶段、数量、耗时、HTTP 状态、
+错误和崩溃栈，日常通常只有几十到几百 KiB。
+
+只有需要排查解析或模型输出时才开启详细载荷：macOS/Linux 使用
+`DEBUG_BUILD=1 VERBOSE_LOGS=1`，Windows 追加 `-DebugBuild -VerboseLogs`。
+此时每份提取文本和模型响应最多记录 64 KiB、最终候选题库最多 128 KiB。
+API Key、Authorization 和 Token 始终自动脱敏。
+
+| 平台 | 日志目录 |
+|---|---|
+| macOS | `~/Library/Application Support/QuizPane/logs/` |
+| Windows | `%LOCALAPPDATA%\QuizPane\logs\` |
+| Linux/UOS/麒麟 | `${XDG_DATA_HOME:-~/.local/share}/QuizPane/logs/` |
+
+主程序日志名为 `quizpane-debug.log`，题库制作器为
+`question-maker-debug.log`。正常退出时最后一行包含 `session end exit=clean`；
+缺少该标记通常意味着进程崩溃、被强制结束或被系统杀掉。
+
+DEBUG 菜单中会出现“查看调试日志…”。macOS/Linux 的致命信号堆栈分别写到
+`quizpane-crash.log`、`question-maker-crash.log`，最多记录 128 帧；Windows
+对应生成 `quizpane-crash.dmp`、`question-maker-crash.dmp`，可用 DEBUG 包内
+的 PDB 在 Visual Studio 或 WinDbg 中查看完整线程和调用栈。Release 不安装这些
+处理器，也不生成上述文件。
 
 运行公开 Demo Provider：
 

@@ -177,10 +177,10 @@ catalog.list
 共享文章或统计资料通过唯一 `schemaVersion: 2` 中的 `materials` 与题目 `materialId` 原生表达。运行时不接受 v1，也不包含迁移分支。禁止用“把材料复制进每道题题干”的方式绕过聚合关系。后端实现的详细 Review 路线见 [阶段 4/5 后端处理流程 Code Review](阶段4-5后端处理流程CodeReview.md)。
 
 ```text
-TXT/Markdown
-  -> ExtractorRegistry 提取纯文本
-  -> Chunker 识别 SourceBlock，并装配 TextChunk
-  -> GenerationWorkflow 调用 OpenAI-compatible 模型
+TXT/Markdown/DOCX/PDF
+  -> ExtractorRegistry 提取统一文本（扫描页可选 Tesseract C++ OCR）
+  -> 规则模式：RuleBasedBankGenerator 匹配题号、选项、答案、解析和材料
+  -> 模型模式：Chunker 装配 TextChunk，GenerationWorkflow 调用兼容模型
   -> parseGeneratedBankCandidate 解析 materials/questions DTO
   -> BankValidator 校验材料、题目和跨对象引用
   -> 失败时携带原文、完整候选和结构化错误定向修复
@@ -189,7 +189,7 @@ TXT/Markdown
   -> ProviderInstaller::inspect + DeclarativeProvider::load 自检
 ```
 
-当前闭环已经实现 TXT/Markdown、OpenAI-compatible Chat Completions、材料题组不可拆分、定向修复、v2 磁盘检查点和声明式 Provider 打包。仍未实现 DOCX/PDF/OCR 提取、Anthropic/Gemini 原生协议、多选/填空题型、并发请求和 API Key 安全凭据持久化；Review 和发布说明中应明确这些边界。
+当前闭环已经实现 TXT/Markdown/DOCX/文字 PDF、可选 Tesseract C++ OCR、完全离线的规则结构化、OpenAI-compatible 模型生成、材料题组、定向修复、磁盘检查点和声明式 Provider 打包。仍未实现主程序多选/填空答题、复杂双栏视觉切题、Anthropic/Gemini 原生协议、并发请求和 API Key 安全凭据持久化。规则链路的详细评审见 [规则结构化题库后端处理流程 Code Review](规则结构化题库后端处理流程CodeReview.md)。
 
 ## 5. Provider 的两种实现
 
@@ -288,8 +288,8 @@ clang-format --dry-run --Werror \
 macOS 开发环境：
 
 ```bash
-brew install cmake ninja qtbase
-export CMAKE_PREFIX_PATH="$(brew --prefix qtbase)"
+brew install cmake ninja qt
+export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
 cmake --preset dev
 cmake --build --preset dev --parallel
 ctest --preset dev
@@ -301,7 +301,7 @@ ctest --preset dev
 git diff --check
 ```
 
-如果改 Provider 安装、草稿、答题或声明式题库，应运行完整 7 项 CTest。修改平台窗口/热键代码还必须在对应系统真机验证，因为 macOS AppKit、Windows Win32 与 Linux X11 的行为不能靠一台机器完全覆盖。
+如果改 Provider 安装、草稿、答题或声明式题库，应运行完整 CTest。修改平台窗口/热键代码还必须在对应系统真机验证，因为 macOS AppKit、Windows Win32 与 Linux X11 的行为不能靠一台机器完全覆盖。
 
 ## 10. 提交前检查单
 

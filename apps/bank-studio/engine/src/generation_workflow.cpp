@@ -1,7 +1,9 @@
 #include "quizpane/studio/generation_workflow.hpp"
 
 #include "quizpane/bank_validator.hpp"
+#include "quizpane/diagnostic_logger.hpp"
 #include "quizpane/studio/document_extractor.hpp"
+#include "quizpane/studio/rule_based_generator.hpp"
 
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -91,6 +93,11 @@ void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettin
                                const QString& resumeTaskId) {
     if (active_)
         return;
+    diagnostic::event(QStringLiteral("workflow"), QStringLiteral("start"),
+        {{QStringLiteral("mode"), QStringLiteral("model")},
+         {QStringLiteral("sources"), sourcePaths.size()},
+         {QStringLiteral("vendor"), settings.vendorId},
+         {QStringLiteral("model"), settings.modelName}});
     if (settings.vendorId == QStringLiteral("anthropic")) {
         failWorkflow(QStringLiteral("Anthropic Messages API 生成暂未实现"));
         return;
@@ -143,6 +150,15 @@ void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettin
             failWorkflow(QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error));
             return;
         }
+        diagnostic::event(QStringLiteral("extractor"), QStringLiteral("success"),
+            {{QStringLiteral("file"), QFileInfo(path).fileName()},
+             {QStringLiteral("path"), QFileInfo(path).absoluteFilePath()},
+             {QStringLiteral("characters"), document.plainText.size()},
+             {QStringLiteral("ocr"), document.usedOcr}});
+#ifdef QUIZPANE_VERBOSE_DIAGNOSTICS
+        diagnostic::payload(QStringLiteral("extractor"), QStringLiteral("content"),
+                            QFileInfo(path).fileName(), document.plainText, 64 * 1024);
+#endif
         publish(WorkflowStage::Chunking,
                 QStringLiteral("正在分段：%1").arg(QFileInfo(path).fileName()));
         const auto fileChunks = chunker.split(path, document.plainText, nextIndex);
@@ -160,6 +176,67 @@ void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettin
     }
     checkpoint_.sourceBlockCount = nextIndex;
     processNextChunk();
+}
+
+void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
+    if (active_)
+        return;
+    diagnostic::event(QStringLiteral("workflow"), QStringLiteral("start"),
+        {{QStringLiteral("mode"), QStringLiteral("rules")},
+         {QStringLiteral("sources"), sourcePaths.size()}});
+    checkpoint_ = {};
+    chunks_.clear();
+    currentChunkPosition_ = -1;
+    repairing_ = false;
+    lastRawOutput_.clear();
+    paused_ = false;
+    active_ = true;
+
+    QList<ExtractedDocument> documents;
+    ExtractorRegistry registry;
+    int completed = 0;
+    for (const QString& path : sourcePaths) {
+        publish(WorkflowStage::Extracting,
+                QStringLiteral("正在本地提取：%1").arg(QFileInfo(path).fileName()));
+        ExtractedDocument document = registry.extract(QFileInfo(path).absoluteFilePath());
+        if (!document.error.isEmpty()) {
+            failWorkflow(QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error));
+            return;
+        }
+        diagnostic::event(QStringLiteral("extractor"), QStringLiteral("success"),
+            {{QStringLiteral("file"), QFileInfo(path).fileName()},
+             {QStringLiteral("path"), QFileInfo(path).absoluteFilePath()},
+             {QStringLiteral("characters"), document.plainText.size()},
+             {QStringLiteral("ocr"), document.usedOcr}});
+#ifdef QUIZPANE_VERBOSE_DIAGNOSTICS
+        diagnostic::payload(QStringLiteral("extractor"), QStringLiteral("content"),
+                            QFileInfo(path).fileName(), document.plainText, 64 * 1024);
+#endif
+        documents.append(document);
+        ++completed;
+        checkpoint_.sourceBlockCount = sourcePaths.size();
+        checkpoint_.completedSourceBlocks.append(completed - 1);
+    }
+
+    publish(WorkflowStage::Chunking, QStringLiteral("正在按题号、选项、答案和材料规则解析"));
+    const RuleBasedGenerationResult result = RuleBasedBankGenerator{}.generate(documents);
+    if (result.normalQuestions.isEmpty() && result.needsReviewQuestions.isEmpty()) {
+        active_ = false;
+        const QString detail = result.warnings.isEmpty()
+                                   ? QStringLiteral("规则引擎没有识别到题目")
+                                   : result.warnings.join(QStringLiteral("；"));
+        publish(WorkflowStage::Failed, detail);
+        emit failed(detail);
+        return;
+    }
+
+    active_ = false;
+    const QString detail = QStringLiteral("规则解析完成：%1 道可直接使用，%2 道待复核")
+                               .arg(result.normalQuestions.size())
+                               .arg(result.needsReviewQuestions.size());
+    publish(WorkflowStage::Done, detail);
+    emit questionsReady({result.materials, result.normalQuestions, result.needsReviewQuestions});
+    emit finished();
 }
 
 void GenerationWorkflow::pause() {
@@ -236,6 +313,10 @@ void GenerationWorkflow::handleModelResult(const GenerationResult& result) {
         failWorkflow(QStringLiteral("模型调用失败：%1").arg(result.error));
         return;
     }
+#ifdef QUIZPANE_VERBOSE_DIAGNOSTICS
+    diagnostic::payload(QStringLiteral("model"), QStringLiteral("response"),
+                        QStringLiteral("raw-json"), result.rawText, 64 * 1024);
+#endif
     checkpoint_.inputTokens += result.promptTokens;
     checkpoint_.outputTokens += result.completionTokens;
     lastRawOutput_ = result.rawText;
@@ -367,12 +448,22 @@ void GenerationWorkflow::completeChunk(GeneratedBankCandidate candidate) {
 }
 
 void GenerationWorkflow::publish(WorkflowStage stage, const QString& detail) {
+    diagnostic::event(QStringLiteral("workflow"), QStringLiteral("progress"),
+        {{QStringLiteral("stage"), static_cast<int>(stage)},
+         {QStringLiteral("completed"), checkpoint_.completedSourceBlocks.size()},
+         {QStringLiteral("total"), checkpoint_.sourceBlockCount},
+         {QStringLiteral("inputTokens"), checkpoint_.inputTokens},
+         {QStringLiteral("outputTokens"), checkpoint_.outputTokens},
+         {QStringLiteral("detail"), detail}});
     emit progressChanged({stage, static_cast<int>(checkpoint_.completedSourceBlocks.size()),
                           checkpoint_.sourceBlockCount, checkpoint_.inputTokens,
                           checkpoint_.outputTokens, detail});
 }
 
 void GenerationWorkflow::failWorkflow(const QString& error) {
+    diagnostic::event(QStringLiteral("workflow"), QStringLiteral("failed"),
+        {{QStringLiteral("error"), error},
+         {QStringLiteral("chunk"), currentChunkPosition_}});
     client_.cancel();
     active_ = false;
     QString ignored;

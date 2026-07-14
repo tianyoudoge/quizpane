@@ -2,6 +2,7 @@
 #include "../platform/global_hotkey.hpp"
 #include "../platform/window_pinning.hpp"
 #include "app_dialogs.hpp"
+#include "quizpane/diagnostic_logger.hpp"
 #include "line_icons.hpp"
 #include "material_card.hpp"
 
@@ -455,6 +456,12 @@ void MainWindow::initializeDesktopShell() {
                          &MainWindow::chooseProviderPackage);
     trayMenu_->addAction(QStringLiteral("老板键设置…"), this,
                          &MainWindow::configureBossKey);
+#ifdef QUIZPANE_DIAGNOSTIC_LOGGING
+    QAction* debugLogAction = trayMenu_->addAction(QStringLiteral("查看调试日志…"));
+    connect(debugLogAction, &QAction::triggered, this, [] {
+        diagnostic::openLogFile();
+    });
+#endif
     auto* traySize = trayMenu_->addMenu(QStringLiteral("界面大小"));
     QAction* traySmall = traySize->addAction(QStringLiteral("小"));
     QAction* trayMedium = traySize->addAction(QStringLiteral("中"));
@@ -496,6 +503,9 @@ void MainWindow::initializeDesktopShell() {
                        &MainWindow::chooseProviderPackage);
     appMenu->addAction(QStringLiteral("老板键设置…"), this,
                        &MainWindow::configureBossKey);
+#ifdef QUIZPANE_DIAGNOSTIC_LOGGING
+    appMenu->addAction(debugLogAction);
+#endif
     appMenu->addAction(QStringLiteral("关于小窗刷题"), this,
                        &MainWindow::showAboutDialog);
     appMenu->addSeparator();
@@ -963,6 +973,9 @@ void MainWindow::handleProviderResponse(const QJsonObject& response) {
     // 这是桌面端的“响应路由器”。Provider 回包携带请求 id，我们据此更新对应页面。
     // id 相当于前端 Promise/后端 traceId；同一时刻可并行等待报告和题目解析。
     const QString id = response.value("id").toString();
+    diagnostic::event(QStringLiteral("ui"), QStringLiteral("provider-response-route"),
+        {{QStringLiteral("id"), id},
+         {QStringLiteral("error"), response.contains(QStringLiteral("error"))}});
     if (response.contains("error")) {
         const QString message = userFacingError(
             response.value("error").toObject().value("message").toString());
@@ -1137,9 +1150,13 @@ void MainWindow::chooseProviderPackage() {
 }
 
 void MainWindow::installProviderPackage(const QString& path) {
+    diagnostic::event(QStringLiteral("package"), QStringLiteral("install-start"),
+        {{QStringLiteral("file"), QFileInfo(path).fileName()}});
     ProviderPackageInfo package;
     QString error;
     if (!installer_.inspect(path, &package, &error)) {
+        diagnostic::event(QStringLiteral("package"), QStringLiteral("inspect-failed"),
+            {{QStringLiteral("error"), error}});
         QMessageBox::warning(this, QStringLiteral("无法导入题库"), error);
         return;
     }
@@ -1154,13 +1171,19 @@ void MainWindow::installProviderPackage(const QString& path) {
 
     ProviderInstallResult result;
     if (!installer_.install(package, &result, &error)) {
+        diagnostic::event(QStringLiteral("package"), QStringLiteral("install-failed"),
+            {{QStringLiteral("id"), package.id}, {QStringLiteral("error"), error}});
         QMessageBox::warning(this, QStringLiteral("导入失败"), error);
         return;
     }
+    diagnostic::event(QStringLiteral("package"), QStringLiteral("install-success"),
+        {{QStringLiteral("id"), package.id}, {QStringLiteral("version"), package.version}});
     loadProvider(result.entryPath);
 }
 
 void MainWindow::loadProvider(const QString& path) {
+    diagnostic::event(QStringLiteral("ui"), QStringLiteral("load-provider"),
+        {{QStringLiteral("file"), QFileInfo(path).fileName()}});
     // 切换题库前清理只属于当前页面会话的状态；安全登录态由 ProviderLoader 按
     // providerId 存在系统凭据库中，因此 unload 不等于退出登录。
     loginPollTimer_->stop();
@@ -1177,12 +1200,17 @@ void MainWindow::loadProvider(const QString& path) {
     answers_.clear();
     QString error;
     if (!provider_.load(path, &error)) {
+        diagnostic::event(QStringLiteral("ui"), QStringLiteral("load-provider-failed"),
+            {{QStringLiteral("error"), error}});
         titleLabel_->setText(QStringLiteral("题库加载失败"));
         detailLabel_->setText(error);
         return;
     }
     const auto descriptor = provider_.descriptor();
     providerId_ = descriptor.value("id").toString();
+    diagnostic::event(QStringLiteral("ui"), QStringLiteral("load-provider-success"),
+        {{QStringLiteral("id"), providerId_},
+         {QStringLiteral("version"), descriptor.value("version").toString()}});
     currentProviderPath_ = QFileInfo(path).absoluteFilePath();
     QSettings().setValue(QStringLiteral("provider/lastLibraryPath"),
                          QFileInfo(path).absoluteFilePath());
@@ -1281,6 +1309,11 @@ void MainWindow::showMainMenu() {
     menu.addSeparator();
     menu.addAction(QStringLiteral("老板键设置…"), this,
                    &MainWindow::configureBossKey);
+#ifdef QUIZPANE_DIAGNOSTIC_LOGGING
+    menu.addAction(QStringLiteral("查看调试日志…"), this, [] {
+        diagnostic::openLogFile();
+    });
+#endif
     menu.addSeparator();
     menu.addAction(QStringLiteral("关于小窗刷题"), this,
                    &MainWindow::showAboutDialog);

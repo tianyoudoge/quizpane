@@ -76,6 +76,7 @@ private:
     QLabel* finishPath_ = nullptr;
     QLineEdit* bankName_ = nullptr;
     QComboBox* questionCount_ = nullptr;
+    QComboBox* generationMode_ = nullptr;
     QPushButton* backButton_ = nullptr;
     QPushButton* nextButton_ = nullptr;
     QPushButton* startButton_ = nullptr;

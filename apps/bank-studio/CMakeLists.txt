@@ -4,19 +4,25 @@ add_library(question_maker_engine STATIC
     engine/include/quizpane/studio/document_extractor.hpp
     engine/include/quizpane/studio/generation_workflow.hpp
     engine/include/quizpane/studio/model_client.hpp
+    engine/include/quizpane/studio/rule_based_generator.hpp
     engine/src/checkpoint_store.cpp
     engine/src/chunker.cpp
     engine/src/document_extractor.cpp
     engine/src/generation_workflow.cpp
     engine/src/model_client.cpp
+    engine/src/rule_based_generator.cpp
 )
 target_include_directories(question_maker_engine PUBLIC
     engine/include
     src
 )
 target_link_libraries(question_maker_engine PUBLIC
-    quizpane_core Qt6::Core Qt6::Core5Compat Qt6::Network
+    quizpane_core miniz Qt6::Core Qt6::Core5Compat Qt6::Gui Qt6::Network Qt6::Pdf
 )
+if(QUIZPANE_ENABLE_TESSERACT_OCR)
+    target_link_libraries(question_maker_engine PRIVATE ${QUIZPANE_TESSERACT_TARGET})
+    target_compile_definitions(question_maker_engine PRIVATE QUIZPANE_HAS_TESSERACT_OCR=1)
+endif()
 
 qt_add_executable(quizpane_bank_studio
     src/main.cpp
@@ -32,6 +38,9 @@ endif()
 target_link_libraries(quizpane_bank_studio PRIVATE
     question_maker_engine quizpane_provider_host
     Qt6::Core Qt6::Network Qt6::Widgets
+)
+target_compile_definitions(quizpane_bank_studio PRIVATE
+    QUIZPANE_VERSION="${PROJECT_VERSION}"
 )
 set_target_properties(quizpane_bank_studio PROPERTIES
     AUTORCC TRUE

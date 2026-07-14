@@ -86,9 +86,11 @@ MVP 支持单选和判断题。当前只存在 `schemaVersion: 2`，不接受或
 ### 5.1 文档提取
 
 - TXT/Markdown：检测 UTF-8、GB18030 等编码后直接读取；
-- DOCX（后续）：读取 OOXML 段落、表格和内嵌图片，不依赖安装 Word；
-- PDF/OCR（后续）：先读取文字层；扫描件才进入 OCR，并保留页码和截图用于核对；
+- DOCX：用 miniz + QXmlStreamReader 读取 OOXML 段落和表格文字，不依赖安装 Word；
+- PDF/OCR：Qt PDF 逐页读取文字层；扫描页才进入可选的 Tesseract C++ OCR，并保留页码；
 - 任何原文先在本地提取。除非用户明确同意，不把整份原文上传云端模型。
+
+制作器同时提供完全离线的“规则结构化”路径：直接匹配题号、A-F 选项、行内或文末答案、解析和显式材料范围，输出与模型相同的候选 DTO。规则失败只进入人工复核，不自动调用模型。最终仍统一经过 `BankValidator` 和声明式 Provider 打包。
 
 ### 5.2 分段与模型调用
 
@@ -110,7 +112,7 @@ MVP 支持单选和判断题。当前只存在 `schemaVersion: 2`，不接受或
 ```text
 Qt 向导 UI
   └── Workflow Engine（任务状态机、顺序分块、暂停和恢复）
-      ├── Document Extractor（TXT/Markdown；DOCX/PDF/OCR 后续）
+      ├── Document Extractor（TXT/Markdown/DOCX/Qt PDF/可选原生 OCR）
       ├── Model Adapter（OpenAI/兼容服务/Ollama）
       ├── Validation Harness（Schema、语义、去重）
       ├── Repair Loop（只重试失败题目）
