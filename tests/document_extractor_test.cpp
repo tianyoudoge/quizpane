@@ -2,13 +2,48 @@
 #include "quizpane/zip_archive.hpp"
 
 #include <QFile>
-#include <QFont>
 #include <QGuiApplication>
-#include <QPainter>
-#include <QPdfWriter>
 #include <QTemporaryDir>
 
+#include <array>
 #include <cstdio>
+
+namespace {
+
+// 构造只使用 PDF 内置 Helvetica 字体的最小文字型 PDF。这里不再使用
+// QPdfWriter 和系统默认字体，否则不同平台会生成不同的字体子集及编码，导致
+// 测试在 macOS/Linux 验证文字层、在 Windows 却意外验证 OCR 回退。
+QByteArray minimalTextPdf() {
+    const QByteArray stream = QByteArrayLiteral(
+        "BT\n/F1 24 Tf\n72 700 Td\n(PDF question) Tj\n"
+        "0 -36 Td\n(A. first option) Tj\nET\n");
+    const std::array<QByteArray, 5> objects = {
+        QByteArrayLiteral("<< /Type /Catalog /Pages 2 0 R >>"),
+        QByteArrayLiteral("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+        QByteArrayLiteral(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            "/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"),
+        QByteArrayLiteral("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
+        QByteArrayLiteral("<< /Length ") + QByteArray::number(stream.size()) +
+            QByteArrayLiteral(" >>\nstream\n") + stream + QByteArrayLiteral("endstream")};
+
+    QByteArray pdf = QByteArrayLiteral("%PDF-1.4\n");
+    std::array<qsizetype, 5> offsets{};
+    for (size_t index = 0; index < objects.size(); ++index) {
+        offsets[index] = pdf.size();
+        pdf += QByteArray::number(index + 1) + QByteArrayLiteral(" 0 obj\n") + objects[index] +
+               QByteArrayLiteral("\nendobj\n");
+    }
+    const qsizetype xrefOffset = pdf.size();
+    pdf += QByteArrayLiteral("xref\n0 6\n0000000000 65535 f \n");
+    for (const qsizetype offset : offsets)
+        pdf += QByteArray::number(offset).rightJustified(10, '0') + QByteArrayLiteral(" 00000 n \n");
+    pdf += QByteArrayLiteral("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n") +
+           QByteArray::number(xrefOffset) + QByteArrayLiteral("\n%%EOF\n");
+    return pdf;
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
@@ -46,25 +81,14 @@ int main(int argc, char** argv) {
 
     const QString pdfPath = directory.filePath(QStringLiteral("sample.pdf"));
     {
-        QPdfWriter writer(pdfPath);
-        // 使用 PDF 点作为绘制单位并放大字体，确保没有文字层、必须走 OCR 的
-        // 平台也能稳定识别；默认 1200 DPI 下用小坐标绘制会得到极小文字。
-        writer.setResolution(72);
-        QPainter painter(&writer);
-        QFont font = painter.font();
-        font.setPointSize(24);
-        painter.setFont(font);
-        painter.drawText(QPointF(72, 144), QStringLiteral("1. PDF question"));
-        painter.drawText(QPointF(72, 216), QStringLiteral("A. first option"));
+        QFile file(pdfPath);
+        const QByteArray bytes = minimalTextPdf();
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size())
+            return 7;
     }
     const auto pdf = registry.extract(pdfPath);
-    // Qt PDF 的文字层提取与 Tesseract 的具体识别文本会随平台和字体栅格化
-    // 结果变化。端到端测试只要求成功得到非空分页文本，不把 OCR 字符级精度
-    // 误当成文档提取器的跨平台契约。
-    const bool missingExpectedText =
-        !pdf.usedOcr && !pdf.plainText.contains(QStringLiteral("PDF question"));
-    if (!pdf.error.isEmpty() || !pdf.hasPageBoundaries || pdf.plainText.trimmed().isEmpty() ||
-        missingExpectedText) {
+    if (!pdf.error.isEmpty() || pdf.usedOcr || !pdf.hasPageBoundaries ||
+        !pdf.plainText.contains(QStringLiteral("PDF question"))) {
         const QByteArray diagnostic =
             QStringLiteral("PDF extraction failed: error=%1 boundaries=%2 ocr=%3 text=%4")
                 .arg(pdf.error)
@@ -73,11 +97,11 @@ int main(int argc, char** argv) {
                 .arg(pdf.plainText)
                 .toUtf8();
         std::fprintf(stderr, "%s\n", diagnostic.constData());
-        return 7;
+        return 8;
     }
 
     const auto invalidDocx = registry.extract(directory.filePath(QStringLiteral("missing.docx")));
     if (invalidDocx.error.isEmpty())
-        return 8;
+        return 9;
     return 0;
 }
