@@ -10,6 +10,7 @@
 #include <QComboBox>
 #include <QCloseEvent>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDragEnterEvent>
 #include <QDir>
 #include <QDropEvent>
@@ -146,7 +147,7 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
         if (!modelSummary_) return;
         if (generationMode_->currentData().toString() == QStringLiteral("rules")) {
             modelSummary_->setText(
-                QStringLiteral("当前方式：规则结构化 · 完全离线，不消耗 Token"));
+                QStringLiteral("当前方式：离线整理 · 资料不会离开电脑"));
         } else {
             modelSummary_->setText(
                 QStringLiteral("当前模型：%1 · %2（可在“设置 → 模型设置”中修改）")
@@ -191,19 +192,20 @@ QWidget* StudioWindow::buildSourcePage() {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(16);
     layout->addWidget(pageHeader(
-        QStringLiteral("第一步"), QStringLiteral("选择你的题目资料"),
-        QStringLiteral("支持 TXT、Markdown、DOCX 和 PDF；规整文档可完全离线整理。")));
+        QStringLiteral("第一步"), QStringLiteral("添加题目资料"),
+        QStringLiteral("支持 TXT、Markdown、DOCX 和 PDF。题目和答案分在两个文件里也可以一起整理。")));
     auto* modePanel = new QFrame;
     modePanel->setObjectName(QStringLiteral("panel"));
     auto* modeLayout = new QVBoxLayout(modePanel);
     modeLayout->setContentsMargins(16, 12, 16, 12);
     modeLayout->addWidget(new QLabel(QStringLiteral("整理方式")));
     generationMode_ = new QComboBox;
-    generationMode_->addItem(QStringLiteral("规则结构化（离线、快速）"), QStringLiteral("rules"));
-    generationMode_->addItem(QStringLiteral("模型生成（原有方式）"), QStringLiteral("model"));
+    generationMode_->addItem(QStringLiteral("离线整理（推荐）"), QStringLiteral("rules"));
+    generationMode_->addItem(QStringLiteral("AI 辅助整理"), QStringLiteral("model"));
     modeLayout->addWidget(generationMode_);
     modeLayout->addWidget(mutedLabel(
-        QStringLiteral("规则模式不会上传资料；无法可靠识别的题目会进入复核列表。")));
+        QStringLiteral("离线整理不会上传资料，适合题号、选项和答案比较规范的文档；"
+                       "AI 辅助整理更适合排版复杂的资料，会使用你配置的模型，结果需要复核。")));
     layout->addWidget(modePanel);
     auto* drop = new QFrame;
     drop->setObjectName(QStringLiteral("dropZone"));
@@ -212,12 +214,12 @@ QWidget* StudioWindow::buildSourcePage() {
     auto* dropTitle = new QLabel(QStringLiteral("拖入文件，或从电脑中选择"));
     dropTitle->setObjectName(QStringLiteral("sectionTitle"));
     dropTitle->setAlignment(Qt::AlignCenter);
-    auto* addButton = new QPushButton(QStringLiteral("选择资料"));
+    auto* addButton = new QPushButton(QStringLiteral("添加题目或资料"));
     addButton->setObjectName(QStringLiteral("primaryButton"));
     addButton->setFixedWidth(120);
     dropLayout->addWidget(dropTitle);
     auto* ocrHint = mutedLabel(QStringLiteral(
-        "扫描版 PDF 会使用发行包内置的 Tesseract C++ OCR 组件"));
+        "扫描版 PDF 会在本机识别文字，处理时间可能稍长。"));
     ocrHint->setAlignment(Qt::AlignCenter);
     dropLayout->addWidget(ocrHint);
     dropLayout->addWidget(addButton, 0, Qt::AlignHCenter);
@@ -234,9 +236,12 @@ QWidget* StudioWindow::buildSourcePage() {
     sourceSummary_ = mutedLabel(QStringLiteral("尚未添加文件"));
     auto* remove = new QPushButton(QStringLiteral("移除所选"));
     remove->setObjectName(QStringLiteral("textButton"));
+    auto* addAnswers = new QPushButton(QStringLiteral("添加答案/解析"));
+    addAnswers->setObjectName(QStringLiteral("textButton"));
     listHeader->addWidget(listTitle);
     listHeader->addWidget(sourceSummary_);
     listHeader->addStretch();
+    listHeader->addWidget(addAnswers);
     listHeader->addWidget(remove);
     sourcePanelLayout->addLayout(listHeader);
     sourceList_ = new QListWidget;
@@ -247,6 +252,7 @@ QWidget* StudioWindow::buildSourcePage() {
     layout->addWidget(sourcePanel_);
     layout->addStretch();
     connect(remove, &QPushButton::clicked, this, &StudioWindow::removeSelectedSource);
+    connect(addAnswers, &QPushButton::clicked, this, &StudioWindow::addAnswerFile);
     return page;
 }
 
@@ -256,10 +262,10 @@ QWidget* StudioWindow::buildProgressPage() {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(18);
     layout->addWidget(pageHeader(
-        QStringLiteral("第二步"), QStringLiteral("自动整理题目"),
-        QStringLiteral("可以随时看到处理阶段和 Token 用量；关闭窗口前会先询问是否保存任务。")));
+        QStringLiteral("第二步"), QStringLiteral("整理题目"),
+        QStringLiteral("会先读取资料并检查题目结构；关闭窗口前会询问是否保留未完成任务。")));
     modelSummary_ = mutedLabel(
-        QStringLiteral("当前方式：规则结构化 · 完全离线，不消耗 Token"));
+        QStringLiteral("当前方式：离线整理 · 资料不会离开电脑"));
     modelSummary_->setObjectName(QStringLiteral("notice"));
     layout->addWidget(modelSummary_);
     phaseLabel_ = new QLabel(QStringLiteral("等待开始"));
@@ -274,9 +280,9 @@ QWidget* StudioWindow::buildProgressPage() {
     layout->addWidget(phaseDetail_);
     layout->addWidget(progressBar_);
     auto* metrics = new QHBoxLayout;
-    metrics->addWidget(metricCard(QStringLiteral("输入 Token（模型返回）"), &inputTokens_));
-    metrics->addWidget(metricCard(QStringLiteral("输出 Token"), &outputTokens_));
-    metrics->addWidget(metricCard(QStringLiteral("本次合计"), &totalTokens_));
+    metrics->addWidget(metricCard(QStringLiteral("已读取资料"), &inputTokens_));
+    metrics->addWidget(metricCard(QStringLiteral("已整理题目"), &outputTokens_));
+    metrics->addWidget(metricCard(QStringLiteral("待复核"), &totalTokens_));
     layout->addLayout(metrics);
     auto* stages = new QFrame;
     stages->setObjectName(QStringLiteral("panel"));
@@ -284,8 +290,7 @@ QWidget* StudioWindow::buildProgressPage() {
     stagesLayout->setContentsMargins(18, 16, 18, 16);
     stagesLayout->addWidget(new QLabel(QStringLiteral("处理阶段")));
     stagesLayout->addWidget(mutedLabel(
-        QStringLiteral("读取文件  →  DOCX/PDF/OCR 提取  →  题号切分  →  "
-                       "选项/答案/解析匹配  →  规则校验")));
+        QStringLiteral("读取资料  →  识别题目、选项和答案  →  检查结果")));
     layout->addWidget(stages);
     layout->addStretch();
     return page;
@@ -326,8 +331,8 @@ QWidget* StudioWindow::buildFinishPage() {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(16);
     layout->addWidget(pageHeader(
-        QStringLiteral("第四步"), QStringLiteral("生成并安装题库"),
-        QStringLiteral("确认题库名称和组卷方式，生成后可以直接交给小窗刷题安装。")));
+        QStringLiteral("第四步"), QStringLiteral("生成并添加到小窗刷题"),
+        QStringLiteral("确认题库名称和组卷方式。完成后会自动添加到小窗刷题，无需再手动导入。")));
     auto* panel = new QFrame;
     panel->setObjectName(QStringLiteral("panel"));
     auto* form = new QVBoxLayout(panel);
@@ -341,7 +346,7 @@ QWidget* StudioWindow::buildFinishPage() {
     questionCount_->addItems({QStringLiteral("5 题"), QStringLiteral("10 题"),
                      QStringLiteral("15 题"), QStringLiteral("全部题目")});
     form->addWidget(questionCount_);
-    finishPath_ = mutedLabel(QStringLiteral("输出格式：跨平台 .quizpane-provider"));
+    finishPath_ = mutedLabel(QStringLiteral("完成后会自动保存到小窗刷题的题库目录。"));
     form->addWidget(finishPath_);
     layout->addWidget(panel);
     layout->addStretch();
@@ -351,7 +356,7 @@ QWidget* StudioWindow::buildFinishPage() {
 // ===== 资料列表与模型设置 =====
 
 void StudioWindow::addSourceFiles() {
-    appendSources(QFileDialog::getOpenFileNames(this, QStringLiteral("选择题目资料"), {},
+    appendSources(QFileDialog::getOpenFileNames(this, QStringLiteral("添加题目或资料"), {},
         QStringLiteral("题目资料 (*.txt *.md *.markdown *.docx *.pdf)")));
 }
 
@@ -362,7 +367,7 @@ void StudioWindow::appendSources(const QStringList& paths) {
         if (!acceptedSource(absolute) || sourcePaths_.contains(absolute)) continue;
         sourcePaths_.append(absolute);
         ++added;
-        auto* item = new QListWidgetItem(QStringLiteral("%1\n%2")
+        auto* item = new QListWidgetItem(QStringLiteral("题目 / 资料  ·  %1\n%2")
             .arg(QFileInfo(absolute).fileName(), QDir::toNativeSeparators(absolute)));
         item->setToolTip(absolute);
         sourceList_->addItem(item);
@@ -374,12 +379,37 @@ void StudioWindow::appendSources(const QStringList& paths) {
     sourceSummary_->setText(sourcePaths_.isEmpty() ? QStringLiteral("尚未添加文件")
         : QStringLiteral("%1 个文件").arg(sourcePaths_.size()));
     sourcePanel_->setVisible(!sourcePaths_.isEmpty());
+    // 新导入的题目就是用户接下来最可能要配对答案的对象；同时避免
+    // 空选择让“添加答案/解析”只能弹出一个无助的提示。
+    if (added > 0) sourceList_->setCurrentRow(sourceList_->count() - 1);
     updateNavigation();
+}
+
+void StudioWindow::addAnswerFile() {
+    const int row = sourceList_->currentRow();
+    if (row < 0 || row >= sourcePaths_.size()) {
+        QMessageBox::information(this, QStringLiteral("先选择题目文件"),
+            QStringLiteral("在“已添加资料”中选中一份题目文件后，再添加对应的答案或解析。"));
+        return;
+    }
+    const QString answer = QFileDialog::getOpenFileName(
+        this, QStringLiteral("添加答案或解析"), {},
+        QStringLiteral("答案或解析 (*.txt *.md *.markdown *.docx *.pdf)"));
+    if (answer.isEmpty()) return;
+    const QString absolute = QFileInfo(answer).absoluteFilePath();
+    if (!acceptedSource(absolute)) return;
+    const QString question = sourcePaths_.at(row);
+    answerPathsByQuestion_.insert(question, absolute);
+    QListWidgetItem* item = sourceList_->item(row);
+    item->setText(QStringLiteral("题目  ·  %1\n答案/解析  ·  %2")
+        .arg(QFileInfo(question).fileName(), QFileInfo(absolute).fileName()));
+    item->setToolTip(question + QStringLiteral("\n") + absolute);
 }
 
 void StudioWindow::removeSelectedSource() {
     const int row = sourceList_->currentRow();
     if (row < 0) return;
+    answerPathsByQuestion_.remove(sourcePaths_.at(row));
     sourcePaths_.removeAt(row);
     delete sourceList_->takeItem(row);
     sourceSummary_->setText(sourcePaths_.isEmpty() ? QStringLiteral("尚未添加文件")
@@ -477,23 +507,37 @@ void StudioWindow::beginPreflight() {
         pages_->setCurrentIndex(2);
     });
     progressBar_->setValue(0);
-    inputTokens_->setText(QStringLiteral("0"));
+    inputTokens_->setText(QString::number(sourcePaths_.size()));
     outputTokens_->setText(QStringLiteral("0"));
     totalTokens_->setText(QStringLiteral("0"));
     startButton_->setEnabled(false);
-    if (ruleBased) workflow_->startRuleBased(sourcePaths_);
-    else workflow_->start(sourcePaths_, modelSettings_);
+    if (ruleBased) {
+        QList<SourceMaterialGroup> groups;
+        for (const QString& question : sourcePaths_)
+            groups.append({question, answerPathsByQuestion_.value(question)});
+        workflow_->startRuleBased(groups);
+    }
+    else {
+        QStringList modelSources = sourcePaths_;
+        // AI 路径也把配对的答案/解析一并送入，但仍保留文件名，提示词能够区分
+        // 两份来源；离线路径则使用更严格的按题号合并规则。
+        for (const QString& question : sourcePaths_) {
+            const QString answer = answerPathsByQuestion_.value(question);
+            if (!answer.isEmpty()) modelSources.append(answer);
+        }
+        workflow_->start(modelSources, modelSettings_);
+    }
 }
 
 void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
     int base = 0, span = 0;
     QString phase;
     switch (progress.stage) {
-    case WorkflowStage::Extracting: base = 5; span = 20; phase = QStringLiteral("提取文字"); break;
-    case WorkflowStage::Chunking: base = 25; span = 5; phase = QStringLiteral("文档分段"); break;
-    case WorkflowStage::Generating: base = 30; span = 40; phase = QStringLiteral("模型结构化"); break;
-    case WorkflowStage::Validating: base = 70; span = 15; phase = QStringLiteral("规则校验"); break;
-    case WorkflowStage::Repairing: base = 85; span = 10; phase = QStringLiteral("定向修复"); break;
+    case WorkflowStage::Extracting: base = 5; span = 20; phase = QStringLiteral("读取资料"); break;
+    case WorkflowStage::Chunking: base = 25; span = 5; phase = QStringLiteral("整理内容"); break;
+    case WorkflowStage::Generating: base = 30; span = 40; phase = QStringLiteral("AI 整理"); break;
+    case WorkflowStage::Validating: base = 70; span = 15; phase = QStringLiteral("检查结果"); break;
+    case WorkflowStage::Repairing: base = 85; span = 10; phase = QStringLiteral("调整结果"); break;
     case WorkflowStage::Packaging: base = 95; span = 5; phase = QStringLiteral("打包"); break;
     case WorkflowStage::Done: base = 100; phase = QStringLiteral("整理完成"); break;
     case WorkflowStage::Failed: phase = QStringLiteral("任务中断"); break;
@@ -504,9 +548,7 @@ void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
     progressBar_->setValue(qBound(0, base + within, 100));
     phaseLabel_->setText(phase);
     phaseDetail_->setText(progress.detail);
-    inputTokens_->setText(QString::number(progress.inputTokens));
-    outputTokens_->setText(QString::number(progress.outputTokens));
-    totalTokens_->setText(QString::number(progress.inputTokens + progress.outputTokens));
+    inputTokens_->setText(QString::number(progress.completedSourceBlocks));
 }
 
 void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
@@ -527,6 +569,8 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     generatedMaterials_ = candidate.materials;
     generatedQuestions_ = candidate.questions;
     reviewQuestions_ = candidate.needsReviewQuestions;
+    outputTokens_->setText(QString::number(generatedQuestions_.size()));
+    totalTokens_->setText(QString::number(reviewQuestions_.size()));
     reviewTree_->clear();
     QHash<QString, QTreeWidgetItem*> groups;
     for (const auto& value : generatedMaterials_) {
@@ -639,16 +683,20 @@ void StudioWindow::packageProvider() {
     }
     const QString slug = QString::fromLatin1(QCryptographicHash::hash(
         title.toUtf8(), QCryptographicHash::Sha256).toHex().left(16));
+    const QString version = QStringLiteral("1.0.%1")
+        .arg(QDateTime::currentSecsSinceEpoch());
     const QJsonObject manifest{{"manifestVersion", 2}, {"id", "local.generated." + slug},
-        {"name", title}, {"version", "1.0.0"}, {"kind", "declarative"},
+        {"name", title}, {"version", version}, {"kind", "declarative"},
         {"runtime", QJsonObject{{"format", "quizpane.bank+json"}, {"schemaVersion", 2},
             {"entry", "content/bank.json"}}},
         {"permissions", QJsonObject{{"network", false}}}};
-    QString output = QFileDialog::getSaveFileName(this, QStringLiteral("保存题库安装包"),
-        title + QStringLiteral(".quizpane-provider"), QStringLiteral("QuizPane 题库 (*.quizpane-provider)"));
-    if (output.isEmpty()) return;
-    if (!output.endsWith(QStringLiteral(".quizpane-provider"), Qt::CaseInsensitive))
-        output += QStringLiteral(".quizpane-provider");
+    QTemporaryDir packageDirectory;
+    if (!packageDirectory.isValid()) {
+        QMessageBox::critical(this, QStringLiteral("无法生成题库"),
+                              QStringLiteral("无法创建临时题库目录。"));
+        return;
+    }
+    const QString output = packageDirectory.filePath(QStringLiteral("generated.quizpane-provider"));
     if (!quizpane::writeZipArchive(output, {
             {QStringLiteral("manifest.json"), QJsonDocument(manifest).toJson(QJsonDocument::Indented)},
             {QStringLiteral("content/bank.json"), QJsonDocument(bank).toJson(QJsonDocument::Indented)}}, &error)) {
@@ -694,14 +742,21 @@ void StudioWindow::packageProvider() {
         QMessageBox::critical(this, QStringLiteral("最终验证失败"), error);
         return;
     }
+    quizpane::ProviderInstallResult installed;
+    if (!installer.install(info, &installed, &error)) {
+        QMessageBox::critical(this, QStringLiteral("无法添加题库"), error);
+        return;
+    }
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("package-success"),
         {{QStringLiteral("file"), QFileInfo(output).fileName()},
          {QStringLiteral("questions"), selected.size()},
          {QStringLiteral("materials"), selectedMaterials.size()},
          {QStringLiteral("bytes"), QFileInfo(output).size()}});
-    finishPath_->setText(QStringLiteral("已生成并通过安装/运行自检：%1").arg(QDir::toNativeSeparators(output)));
+    finishPath_->setText(QStringLiteral("已添加到小窗刷题：%1\n%2")
+        .arg(title, QDir::toNativeSeparators(installed.installDirectory)));
     if (workflow_) workflow_->cancel();
-    QMessageBox::information(this, QStringLiteral("生成完成"), finishPath_->text());
+    QMessageBox::information(this, QStringLiteral("题库已添加"),
+                             QStringLiteral("“%1”已添加到小窗刷题，可以直接开始练习。").arg(title));
 }
 
 // ===== 桌面文件拖放与统一样式 =====
@@ -740,30 +795,32 @@ void StudioWindow::closeEvent(QCloseEvent* event) {
 
 void StudioWindow::applyStyle() {
     setStyleSheet(R"(
-      QMainWindow, QWidget#content { background: #171a1f; color: #cbd0d6; }
-      QFrame#sidebar { background: #111419; border: none; }
-      QLabel#brand { font-size: 19px; font-weight: 650; color: #e0e3e7; }
-      QLabel#pageTitle { font-size: 25px; font-weight: 650; color: #e1e4e8; }
-      QLabel#eyebrow { color: #89929c; font-size: 11px; }
-      QLabel#muted, QLabel#privacyFootnote { color: #8f98a3; }
+      QMainWindow, QWidget#content { background: #f8fafc; color: #1f2937; }
+      QFrame#sidebar { background: #18324d; border: none; }
+      QLabel#brand { font-size: 20px; font-weight: 700; color: #ffffff; }
+      QLabel#sidebar QLabel#muted, QFrame#sidebar QLabel#privacyFootnote { color: #c7d8e8; }
+      QLabel#pageTitle { font-size: 25px; font-weight: 700; color: #16283c; }
+      QLabel#eyebrow { color: #4d779d; font-size: 11px; font-weight: 600; }
+      QLabel#muted, QLabel#privacyFootnote { color: #64748b; }
       QLabel#privacyFootnote { font-size: 11px; }
-      QLabel#sideStep { color: #737c86; padding: 9px 10px; border-radius: 6px; }
-      QLabel#sideStep[active="true"] { color: #d5d9de; background: rgba(255,255,255,10); }
-      QLabel#sectionTitle, QLabel#phaseTitle { color: #d6dae0; font-size: 15px; font-weight: 600; }
-      QLabel#metricValue { color: #d9dde2; font-size: 21px; font-weight: 600; }
-      QLabel#notice { background: rgba(255,255,255,7); padding: 12px; border-radius: 7px; }
-      QFrame#dropZone { background: rgba(255,255,255,5); border: 1px dashed #3a414a; border-radius: 10px; }
-      QFrame#panel, QFrame#metricCard { background: rgba(255,255,255,6); border: none; border-radius: 9px; }
-      QPushButton { background: rgba(255,255,255,10); color: #bac1c9; border: none; border-radius: 6px; padding: 8px 13px; }
-      QPushButton:hover { background: rgba(255,255,255,17); }
-      QPushButton#primaryButton { background: #343a42; color: #e2e5e9; }
-      QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #9da5ae; }
-      QPushButton:disabled { color: #626a73; background: rgba(255,255,255,4); }
-      QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget { background: #1d2127; color: #cbd0d6; border: none; border-radius: 6px; padding: 8px; selection-background-color: #353c45; }
-      QListWidget::item { padding: 9px; border-bottom: 1px solid rgba(255,255,255,7); }
-      QHeaderView::section { background: #20242a; color: #929ba5; border: none; padding: 8px; }
-      QProgressBar { background: #242931; border: none; border-radius: 3px; height: 6px; }
-      QProgressBar::chunk { background: #7e8996; border-radius: 3px; }
+      QLabel#sideStep { color: #b7cbde; padding: 9px 10px; border-radius: 6px; }
+      QLabel#sideStep[active="true"] { color: #ffffff; background: rgba(255,255,255,28); }
+      QLabel#sectionTitle, QLabel#phaseTitle { color: #1f3b57; font-size: 15px; font-weight: 650; }
+      QLabel#metricValue { color: #1d4e79; font-size: 21px; font-weight: 700; }
+      QLabel#notice { background: #eef6fc; color: #31536e; padding: 12px; border-radius: 8px; }
+      QFrame#dropZone { background: #f4f9fd; border: 1px dashed #83a8c7; border-radius: 12px; }
+      QFrame#panel, QFrame#metricCard { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; }
+      QPushButton { background: #ffffff; color: #334155; border: 1px solid #d8e1ea; border-radius: 7px; padding: 8px 13px; }
+      QPushButton:hover { background: #eef6fc; border-color: #8fb4d2; }
+      QPushButton#primaryButton { background: #1f6fa8; color: #ffffff; border-color: #1f6fa8; }
+      QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #2f6e9f; border-color: transparent; }
+      QPushButton:disabled { color: #94a3b8; background: #f1f5f9; border-color: #e2e8f0; }
+      QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget { background: #ffffff; color: #334155; border: 1px solid #dbe4ec; border-radius: 7px; padding: 8px; selection-background-color: #dceefb; }
+      QListWidget::item { color: #1f2937; padding: 10px; border-bottom: 1px solid #edf2f7; }
+      QListWidget::item:selected { color: #0f3f63; background: #dceefb; }
+      QHeaderView::section { background: #f1f6fa; color: #587087; border: none; padding: 8px; }
+      QProgressBar { background: #e6eef5; border: none; border-radius: 3px; height: 7px; }
+      QProgressBar::chunk { background: #2e82bb; border-radius: 3px; }
     )");
 }
 

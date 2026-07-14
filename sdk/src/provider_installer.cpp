@@ -10,6 +10,7 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QUuid>
+#include <QDirIterator>
 #include <algorithm>
 
 #include "quizpane/provider_abi.h"
@@ -297,6 +298,36 @@ QList<InstalledProviderInfo> ProviderInstaller::listInstalled(QString* error) co
     }
     if (error) error->clear();
     return result;
+}
+
+bool ProviderInstaller::exportDeclarative(const InstalledProviderInfo& provider,
+                                          const QString& outputPath,
+                                          QString* error) const {
+    if (provider.kind != QStringLiteral("declarative"))
+        return fail(error, QStringLiteral("只有本地声明式题库可以导出"));
+    const QDir root(provider.installDirectory);
+    if (!root.exists()) return fail(error, QStringLiteral("题库安装目录不存在"));
+
+    QList<ZipFile> files;
+    QDirIterator iterator(root.absolutePath(), QDir::Files, QDirIterator::Subdirectories);
+    while (iterator.hasNext()) {
+        const QString absolutePath = iterator.next();
+        const QString relativePath = root.relativeFilePath(absolutePath);
+        if (!safeRelativePath(relativePath))
+            return fail(error, QStringLiteral("题库中包含不安全的文件路径"));
+        QFile file(absolutePath);
+        if (!file.open(QIODevice::ReadOnly))
+            return fail(error, QStringLiteral("无法读取题库文件：%1").arg(relativePath));
+        files.append({relativePath, file.readAll()});
+    }
+    if (files.isEmpty()) return fail(error, QStringLiteral("题库内容为空"));
+    if (!writeZipArchive(outputPath, files, error)) return false;
+    ProviderPackageInfo inspected;
+    if (!inspect(outputPath, &inspected, error)) {
+        QFile::remove(outputPath);
+        return false;
+    }
+    return true;
 }
 
 bool ProviderInstaller::removeInstalled(const QString& providerId,

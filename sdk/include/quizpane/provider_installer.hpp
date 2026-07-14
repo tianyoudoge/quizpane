@@ -50,6 +50,10 @@ public:
                  ProviderInstallResult* result,
                  QString* error = nullptr) const;
     QList<InstalledProviderInfo> listInstalled(QString* error = nullptr) const;
+    // 仅声明式题库可重新打包导出；原生 Provider 是平台相关动态库，不能伪装成
+    // 用户制作的跨平台题库。
+    bool exportDeclarative(const InstalledProviderInfo& provider, const QString& outputPath,
+                           QString* error = nullptr) const;
     bool removeInstalled(const QString& providerId,
                          QString* error = nullptr) const;
 };

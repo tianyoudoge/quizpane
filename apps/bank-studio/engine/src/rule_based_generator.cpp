@@ -129,8 +129,15 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
         R"((?:^|[\s,，;；])(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）-])?\s*(?:【?答案】?\s*[:：]?)?\s*([A-Fa-f]{1,6})(?=$|[\s,，;；]))"));
     static const QRegularExpression range(
         QStringLiteral(R"((\d{1,4})\s*(?:[-—~～]|至|到)\s*(\d{1,4})\s*[:：]?\s*([A-Fa-f]+))"));
+    static const QRegularExpression answerRecord(
+        QStringLiteral(R"(^\s*(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）])\s*)"));
+    static const QRegularExpression narrativeAnswer(
+        QStringLiteral(R"((?:故\s*)?(?:(?:正确|参考|标准)\s*)?答案\s*(?:为|是|[:：])\s*([A-Fa-f\s、，,]{1,12}))"));
+    int currentNumber = 0;
     for (int index = sectionStart + 1; index < lines.size(); ++index) {
         const QString line = lines.at(index).text;
+        const auto record = answerRecord.match(line);
+        if (record.hasMatch()) currentNumber = record.captured(1).toInt();
         const auto rangeMatch = range.match(line);
         if (rangeMatch.hasMatch()) {
             const int first = rangeMatch.captured(1).toInt();
@@ -149,6 +156,13 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             const QString answer = normalizeAnswer(match.captured(2));
             if (number > 0 && !answer.isEmpty() && !answers.contains(number))
                 answers.insert(number, answer);
+        }
+        // 很多真题解析不是“1. A”式答案汇总，而是在题目解析末尾写“故正确
+        // 答案为 C”。用最近一个题号归属这条结论，兼容题目文件与答案文件分离。
+        const auto narrative = narrativeAnswer.match(line);
+        if (currentNumber > 0 && narrative.hasMatch() && !answers.contains(currentNumber)) {
+            const QString answer = normalizeAnswer(narrative.captured(1));
+            if (!answer.isEmpty()) answers.insert(currentNumber, answer);
         }
     }
     return answers;

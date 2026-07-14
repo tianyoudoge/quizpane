@@ -97,6 +97,7 @@ private:
     void showAboutDialog();
     void switchProvider(const InstalledProviderInfo& provider);
     void deleteProvider(const InstalledProviderInfo& provider);
+    void exportDeclarativeProvider(const InstalledProviderInfo& provider);
     void showProviderOnboarding();
     void processPendingProviderDeletions();
 
@@ -129,6 +130,7 @@ private:
     QLabel* detailLabel_ = nullptr;
     QLabel* qrLabel_ = nullptr;
     QPushButton* actionButton_ = nullptr;
+    QPushButton* createBankButton_ = nullptr;
     QTimer* loginPollTimer_ = nullptr;
     QVBoxLayout* catalogListLayout_ = nullptr;
     QLabel* practiceTitleLabel_ = nullptr;

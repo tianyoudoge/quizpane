@@ -6,6 +6,8 @@
 #include <QDebug>
 #include <QTemporaryDir>
 
+#include <algorithm>
+
 #include "quizpane/provider_installer.hpp"
 #include "quizpane/zip_archive.hpp"
 
@@ -94,6 +96,19 @@ int main(int argc, char** argv) {
         declarativeInfo.kind != QStringLiteral("declarative") ||
         !installer.install(declarativeInfo, &declarativeResult, &error) ||
         !QFileInfo(declarativeResult.entryPath).isFile()) return 11;
+    const auto providersBeforeExport = installer.listInstalled(&error);
+    const auto exportedProvider = std::find_if(
+        providersBeforeExport.cbegin(), providersBeforeExport.cend(),
+        [](const quizpane::InstalledProviderInfo& item) {
+            return item.id == QStringLiteral("org.quizpane.local-test");
+        });
+    const QString exportedPath = QDir(temp.path()).filePath(
+        QStringLiteral("exported.quizpane-provider"));
+    quizpane::ProviderPackageInfo exportedInfo;
+    if (exportedProvider == providersBeforeExport.cend() ||
+        !installer.exportDeclarative(*exportedProvider, exportedPath, &error) ||
+        !installer.inspect(exportedPath, &exportedInfo, &error) ||
+        exportedInfo.id != QStringLiteral("org.quizpane.local-test")) return 17;
 
     // v1 声明式包直接拒绝，不保留兼容安装路径。
     const QString legacyDeclarativePath = QDir(temp.path()).filePath(

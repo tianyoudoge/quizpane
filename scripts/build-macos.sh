@@ -5,12 +5,27 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build/release-macos}"
 DIST_DIR="${DIST_DIR:-$ROOT/dist/macos}"
 QT_PREFIX="${QT_PREFIX:-$(brew --prefix qt)}"
+QT5COMPAT_PREFIX="${QT5COMPAT_PREFIX:-}"
 TESSDATA_DIR="${TESSDATA_DIR:-$(brew --prefix)/share/tessdata}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 CLEAN_BUILD="${CLEAN_BUILD:-1}"
 DEBUG_BUILD="${DEBUG_BUILD:-0}"
 VERBOSE_LOGS="${VERBOSE_LOGS:-0}"
 export PKG_CONFIG_PATH="$(brew --prefix tesseract)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
+# Homebrew 将 Qt5Compat 拆成独立 formula；Qt online installer 则把它放在 Qt
+# 根目录。两种开发环境都传给 CMake，但 macdeployqt 仍使用主 Qt 的 bin 目录。
+if [[ -z "$QT5COMPAT_PREFIX" ]]; then
+  if [[ -d "$QT_PREFIX/lib/cmake/Qt6Core5Compat" ]]; then
+    QT5COMPAT_PREFIX="$QT_PREFIX"
+  elif command -v brew >/dev/null 2>&1 && brew list --versions qt5compat >/dev/null 2>&1; then
+    QT5COMPAT_PREFIX="$(brew --prefix qt5compat)"
+  fi
+fi
+CMAKE_PREFIX_PATH="$QT_PREFIX"
+if [[ -n "$QT5COMPAT_PREFIX" ]]; then
+  CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH;$QT5COMPAT_PREFIX"
+fi
 
 BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
@@ -35,7 +50,7 @@ fi
 
 cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-  -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
+  -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
   -DQUIZPANE_ENABLE_TESSERACT_OCR=ON \
   -DQUIZPANE_PORTABLE_CPU_BASELINE=ON \
   -DQUIZPANE_ENABLE_DIAGNOSTIC_LOGGING="$DIAGNOSTIC_LOGGING" \
@@ -96,18 +111,24 @@ if [[ "$DEBUG_BUILD" != "1" ]]; then
 fi
 APP="$STAGE_ROOT/小窗刷题.app"
 mv "$STAGED_APP" "$APP"
-STUDIO="$STAGE_ROOT/题库制作器.app"
+HELPERS="$APP/Contents/Helpers"
+mkdir -p "$HELPERS"
+STUDIO="$HELPERS/题库制作器.app"
 mv "$STAGED_STUDIO" "$STUDIO"
-codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
+# 制作器是主程序的一部分：先签 Helper，再签外层 App，确保 macOS 校验嵌套
+# Bundle 时能够追溯到同一份发行包。
 codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$STUDIO"
+codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
-codesign --verify --deep --strict "$STUDIO"
-ditto -c -k --zlibCompressionLevel 9 --sequesterRsrc --keepParent "$APP" \
-  "$DIST_DIR/小窗刷题-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
-ditto -c -k --zlibCompressionLevel 9 --sequesterRsrc --keepParent "$STUDIO" \
-  "$DIST_DIR/题库制作器-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
 
-echo "已生成：$DIST_DIR/小窗刷题-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
-echo "已生成：$DIST_DIR/题库制作器-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
-du -h "$DIST_DIR/小窗刷题-macos-$(uname -m)$PACKAGE_SUFFIX.zip" \
-  "$DIST_DIR/题库制作器-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
+DMG_STAGE="$BUILD_DIR/dmg-stage"
+rm -rf "$DMG_STAGE"
+mkdir -p "$DMG_STAGE"
+ditto "$APP" "$DMG_STAGE/小窗刷题.app"
+ln -s /Applications "$DMG_STAGE/Applications"
+DMG="$DIST_DIR/QuizPane-macos-$(uname -m)$PACKAGE_SUFFIX.dmg"
+rm -f "$DMG"
+hdiutil create -volname "QuizPane" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG"
+
+echo "已生成：$DMG"
+du -h "$DMG"

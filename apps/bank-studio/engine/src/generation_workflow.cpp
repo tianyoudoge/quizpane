@@ -179,11 +179,18 @@ void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettin
 }
 
 void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
+    QList<SourceMaterialGroup> groups;
+    for (const QString& path : sourcePaths)
+        groups.append({path, {}});
+    startRuleBased(groups);
+}
+
+void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& sources) {
     if (active_)
         return;
     diagnostic::event(QStringLiteral("workflow"), QStringLiteral("start"),
-        {{QStringLiteral("mode"), QStringLiteral("rules")},
-         {QStringLiteral("sources"), sourcePaths.size()}});
+         {{QStringLiteral("mode"), QStringLiteral("rules")},
+         {QStringLiteral("sources"), sources.size()}});
     checkpoint_ = {};
     chunks_.clear();
     currentChunkPosition_ = -1;
@@ -195,13 +202,26 @@ void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
     QList<ExtractedDocument> documents;
     ExtractorRegistry registry;
     int completed = 0;
-    for (const QString& path : sourcePaths) {
+    for (const SourceMaterialGroup& source : sources) {
+        const QString path = source.questionPath;
         publish(WorkflowStage::Extracting,
                 QStringLiteral("正在本地提取：%1").arg(QFileInfo(path).fileName()));
         ExtractedDocument document = registry.extract(QFileInfo(path).absoluteFilePath());
         if (!document.error.isEmpty()) {
             failWorkflow(QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error));
             return;
+        }
+        if (!source.answerPath.isEmpty()) {
+            const ExtractedDocument answers = registry.extract(
+                QFileInfo(source.answerPath).absoluteFilePath());
+            if (!answers.error.isEmpty()) {
+                failWorkflow(QStringLiteral("%1：%2")
+                    .arg(QFileInfo(source.answerPath).fileName(), answers.error));
+                return;
+            }
+            // 规则生成器本来就支持“答案汇总”区。把独立答案文件接入该区，既不会
+            // 伪造题目，也能按题号将答案和解析归回题目文件。
+            document.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
         }
         diagnostic::event(QStringLiteral("extractor"), QStringLiteral("success"),
             {{QStringLiteral("file"), QFileInfo(path).fileName()},
@@ -214,7 +234,7 @@ void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
 #endif
         documents.append(document);
         ++completed;
-        checkpoint_.sourceBlockCount = sourcePaths.size();
+        checkpoint_.sourceBlockCount = sources.size();
         checkpoint_.completedSourceBlocks.append(completed - 1);
     }
 

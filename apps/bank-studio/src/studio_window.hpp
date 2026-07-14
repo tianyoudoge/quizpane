@@ -47,6 +47,7 @@ private:
     QWidget* pageHeader(const QString& eyebrow, const QString& title,
                         const QString& description);
     void addSourceFiles();
+    void addAnswerFile();
     void appendSources(const QStringList& paths);
     void removeSelectedSource();
     void showModelSettings();
@@ -83,6 +84,7 @@ private:
     QNetworkAccessManager* networkManager_ = nullptr;
     GenerationWorkflow* workflow_ = nullptr;
     QStringList sourcePaths_;
+    QHash<QString, QString> answerPathsByQuestion_;
     QJsonArray generatedMaterials_;
     QJsonArray generatedQuestions_;
     QJsonArray reviewQuestions_;

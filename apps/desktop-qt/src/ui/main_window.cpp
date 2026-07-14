@@ -189,14 +189,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     qrLabel_->setVisible(false);
     actionButton_ = new QPushButton(QStringLiteral("导入题库"));
     actionButton_->setFixedHeight(32);
+    createBankButton_ = new QPushButton(QStringLiteral("制作自己的题库"));
+    createBankButton_->setObjectName(QStringLiteral("secondaryButton"));
+    createBankButton_->setFixedHeight(32);
 
     loginLayout->addWidget(titleLabel_);
     loginLayout->addWidget(qrLabel_);
     loginLayout->setAlignment(qrLabel_, Qt::AlignHCenter);
     loginLayout->addWidget(detailLabel_);
     loginLayout->addWidget(actionButton_);
+    loginLayout->addWidget(createBankButton_);
     connect(actionButton_, &QPushButton::clicked, this,
             &MainWindow::runPrimaryAction);
+    connect(createBankButton_, &QPushButton::clicked, this, &MainWindow::openBankStudio);
 
     catalogPage_ = new QWidget;
     auto* catalogPageLayout = new QVBoxLayout(catalogPage_);
@@ -1222,21 +1227,30 @@ void MainWindow::loadProvider(const QString& path) {
 }
 
 bool MainWindow::loadLastProvider() {
-    QString path = QSettings()
-        .value(QStringLiteral("provider/lastLibraryPath")).toString();
+    // 旧版把裸动态库路径写进设置。升级后该文件可能还在，却已经无法与新版 ABI
+    // 或依赖组合加载；“没有题库”绝不能因此呈现为加载失败。
+    const auto installed = installer_.listInstalled();
+    const QString savedPath = QSettings().value(QStringLiteral("provider/lastLibraryPath"))
+                                  .toString();
+    QString path;
+    for (const InstalledProviderInfo& candidate : installed) {
+        if (candidate.entryPath == savedPath) {
+            path = candidate.entryPath;
+            break;
+        }
+    }
+    if (path.isEmpty() && !installed.isEmpty()) path = installed.first().entryPath;
     if (path.isEmpty()) {
-        QSettings legacySettings(QStringLiteral("QuizPane Project"),
-                                 QStringLiteral("QuizPane"));
-        path = legacySettings.value(QStringLiteral("provider/lastLibraryPath"))
-                   .toString();
+        QSettings().remove(QStringLiteral("provider/lastLibraryPath"));
+        return false;
     }
-    if (path.isEmpty() || !QFileInfo(path).isFile()) {
-        const auto installed = installer_.listInstalled();
-        if (!installed.isEmpty()) path = installed.first().entryPath;
-    }
-    if (path.isEmpty() || !QFileInfo(path).isFile()) return false;
     loadProvider(path);
-    return provider_.isLoaded();
+    if (!provider_.isLoaded()) {
+        QSettings().remove(QStringLiteral("provider/lastLibraryPath"));
+        showProviderOnboarding();
+        return false;
+    }
+    return true;
 }
 
 void MainWindow::sendInitialize() {
@@ -1251,7 +1265,7 @@ void MainWindow::sendInitialize() {
     if (!error.isEmpty()) detailLabel_->setText(error);
 }
 
-// ===== 用户菜单与独立题库制作器 =====
+// ===== 用户菜单与内置题库制作器 =====
 
 void MainWindow::showUiSizeMenu() {
     QMenu menu(this);
@@ -1286,12 +1300,16 @@ void MainWindow::showMainMenu() {
         installer_.listInstalled(&listError);
     QMenu* switchMenu = providerMenu->addMenu(QStringLiteral("切换题库"));
     QMenu* deleteMenu = providerMenu->addMenu(QStringLiteral("删除题库"));
+    QMenu* exportMenu = providerMenu->addMenu(QStringLiteral("导出我的题库"));
     if (installed.isEmpty()) {
         QAction* emptySwitch = switchMenu->addAction(QStringLiteral("暂无已添加题库"));
         QAction* emptyDelete = deleteMenu->addAction(QStringLiteral("暂无可删除题库"));
+        QAction* emptyExport = exportMenu->addAction(QStringLiteral("暂无可导出的本地题库"));
         emptySwitch->setEnabled(false);
         emptyDelete->setEnabled(false);
+        emptyExport->setEnabled(false);
     } else {
+        bool hasExportableProvider = false;
         for (const InstalledProviderInfo& item : installed) {
             QAction* switchAction = switchMenu->addAction(
                 QStringLiteral("%1 · %2").arg(item.name, item.version));
@@ -1303,6 +1321,17 @@ void MainWindow::showMainMenu() {
             QAction* deleteAction = deleteMenu->addAction(item.name);
             connect(deleteAction, &QAction::triggered, this,
                     [this, item] { deleteProvider(item); });
+            if (item.kind == QStringLiteral("declarative")) {
+                hasExportableProvider = true;
+                QAction* exportAction = exportMenu->addAction(item.name);
+                connect(exportAction, &QAction::triggered, this,
+                        [this, item] { exportDeclarativeProvider(item); });
+            }
+        }
+        if (!hasExportableProvider) {
+            QAction* emptyExport = exportMenu->addAction(
+                QStringLiteral("暂无可导出的本地题库"));
+            emptyExport->setEnabled(false);
         }
     }
 
@@ -1346,8 +1375,8 @@ void MainWindow::openBankStudio() {
         if (candidate.isEmpty() || !QFileInfo(candidate).isExecutable()) continue;
         if (QProcess::startDetached(candidate, {})) return;
     }
-    QMessageBox::information(this, QStringLiteral("尚未安装题库制作器"),
-        QStringLiteral("题库制作器是独立工具，请安装对应版本后重试。"));
+    QMessageBox::warning(this, QStringLiteral("题库制作器不可用"),
+        QStringLiteral("当前安装不完整，请重新安装小窗刷题。"));
 }
 
 void MainWindow::configureBossKey() {
@@ -1407,6 +1436,24 @@ void MainWindow::deleteProvider(const InstalledProviderInfo& provider) {
         QMessageBox::information(this, QStringLiteral("将在重启后删除"), error);
     }
     if (current) showProviderOnboarding();
+}
+
+void MainWindow::exportDeclarativeProvider(const InstalledProviderInfo& provider) {
+    const QString defaultName = provider.name + QStringLiteral(".quizpane-provider");
+    QString output = QFileDialog::getSaveFileName(
+        this, QStringLiteral("导出题库"), defaultName,
+        QStringLiteral("QuizPane 题库 (*.quizpane-provider)"));
+    if (output.isEmpty()) return;
+    if (!output.endsWith(QStringLiteral(".quizpane-provider"), Qt::CaseInsensitive))
+        output += QStringLiteral(".quizpane-provider");
+    QString error;
+    if (!installer_.exportDeclarative(provider, output, &error)) {
+        QMessageBox::warning(this, QStringLiteral("导出失败"), error);
+        return;
+    }
+    QMessageBox::information(this, QStringLiteral("已导出题库"),
+                             QStringLiteral("已保存到：%1")
+                                 .arg(QDir::toNativeSeparators(output)));
 }
 
 void MainWindow::showProviderOnboarding() {
