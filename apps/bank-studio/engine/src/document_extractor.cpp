@@ -197,11 +197,20 @@ QString recognizePage(const QImage& source, QString* error) {
         *error = QStringLiteral("Tesseract 初始化失败，发行包中的 chi_sim/eng 语言数据不可用");
         return {};
     }
-    api.SetPageSegMode(tesseract::PSM_AUTO);
     api.SetImage(image.constBits(), image.width(), image.height(), 3, image.bytesPerLine());
-    char* utf8 = api.GetUTF8Text();
-    const QString text = utf8 ? QString::fromUtf8(utf8).trimmed() : QString{};
-    delete[] utf8;
+    const auto recognize = [&api](tesseract::PageSegMode mode) {
+        api.SetPageSegMode(mode);
+        api.Recognize(nullptr);
+        char* utf8 = api.GetUTF8Text();
+        const QString text = utf8 ? QString::fromUtf8(utf8).trimmed() : QString{};
+        delete[] utf8;
+        return text;
+    };
+    QString text = recognize(tesseract::PSM_AUTO);
+    // 自动版面分析对只有一两行内容的截图或扫描页偶尔会返回空结果；稀疏
+    // 文字模式更适合这类题干图片，作为空结果兜底不会影响普通整页文档。
+    if (text.isEmpty())
+        text = recognize(tesseract::PSM_SPARSE_TEXT);
     api.End();
     if (text.isEmpty())
         *error = QStringLiteral("本地 OCR 未识别出文字");
