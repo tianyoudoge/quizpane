@@ -65,6 +65,15 @@ jobs:
           choco install cmake ninja -y --no-progress
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install tesseract:x64-windows-static-md
 
+      - name: Download OCR language data
+        shell: pwsh
+        run: |
+          $Tessdata = Join-Path $env:RUNNER_TEMP "tessdata"
+          New-Item -ItemType Directory -Force $Tessdata | Out-Null
+          Invoke-WebRequest https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/chi_sim.traineddata -OutFile (Join-Path $Tessdata "chi_sim.traineddata")
+          Invoke-WebRequest https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata -OutFile (Join-Path $Tessdata "eng.traineddata")
+          "TESSDATA_DIR=$Tessdata" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
