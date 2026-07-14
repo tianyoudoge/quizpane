@@ -18,8 +18,45 @@ option(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING
        "Write rotating diagnostic logs for local debug packages" OFF)
 option(QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS
        "Include bounded source and model payloads in diagnostic logs" OFF)
+option(QUIZPANE_PORTABLE_CPU_BASELINE
+       "Build release binaries for a conservative, portable CPU baseline" ON)
 if(QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS AND NOT QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING)
     message(FATAL_ERROR "Verbose diagnostics require QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING=ON")
+endif()
+
+# 发行包不能继承构建机的 CPU 特性。比如 GitHub runner 上误用
+# -march=native/-mavx2，到较旧的兆芯或海光机器上会直接 SIGILL。
+# CMAKE_<LANG>_FLAGS 包含 CFLAGS/CXXFLAGS 环境变量的初始值，因此在这里
+# 统一拒绝会破坏通用基线的显式参数。
+if(QUIZPANE_PORTABLE_CPU_BASELINE)
+    string(TOLOWER
+        "${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS} ${CMAKE_C_FLAGS_RELEASE} ${CMAKE_CXX_FLAGS_RELEASE}"
+        QUIZPANE_CONFIGURED_CPU_FLAGS)
+    if(QUIZPANE_CONFIGURED_CPU_FLAGS MATCHES
+       "(^|[ ;])(-(march|mcpu)=[^ ;]+|-mtune=native|-m(avx|sse|ssse|fma|f16c|bmi|aes|sha|popcnt)[^ ;]*|/arch:avx[^ ;]*)")
+        message(FATAL_ERROR
+            "QUIZPANE_PORTABLE_CPU_BASELINE=ON forbids native/AVX/SSE-specific compiler flags: "
+            "${QUIZPANE_CONFIGURED_CPU_FLAGS}")
+    endif()
+
+    # Windows x64 的 MSVC 默认基线已是 SSE2，不添加 /arch 才最兼容。
+    # macOS 发行包按 arm64/x86_64 分开构建，交给 Apple toolchain 的
+    # deployment target 管理基线。仅 Linux 需显式覆盖 GNU/Clang 的 CPU 选项。
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+       CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" QUIZPANE_SYSTEM_PROCESSOR)
+        if(QUIZPANE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+            add_compile_options(-march=x86-64 -mtune=generic)
+            message(STATUS "QuizPane portable CPU baseline: x86-64, generic tuning")
+        elseif(QUIZPANE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+            add_compile_options(-march=armv8-a)
+            message(STATUS "QuizPane portable CPU baseline: ARMv8-A")
+        else()
+            message(STATUS
+                "QuizPane portable CPU baseline: no explicit flags for "
+                "${CMAKE_SYSTEM_PROCESSOR}; toolchain defaults apply")
+        endif()
+    endif()
 endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network)
