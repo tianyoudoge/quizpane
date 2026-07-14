@@ -67,7 +67,6 @@ deploy_app() {
 deploy_app "$STAGED_APP"
 STAGED_STUDIO="$STAGE_ROOT/QuizPaneQuestionMaker.app"
 ditto "$SOURCE_STUDIO" "$STAGED_STUDIO"
-deploy_app "$STAGED_STUDIO"
 if [[ ! -f "$TESSDATA_DIR/chi_sim.traineddata" || ! -f "$TESSDATA_DIR/eng.traineddata" ]]; then
   echo "缺少 OCR 语言数据：$TESSDATA_DIR/{chi_sim,eng}.traineddata" >&2
   exit 1
@@ -75,11 +74,13 @@ fi
 mkdir -p "$STAGED_STUDIO/Contents/Resources/tessdata"
 cp "$TESSDATA_DIR/chi_sim.traineddata" "$TESSDATA_DIR/eng.traineddata" \
   "$STAGED_STUDIO/Contents/Resources/tessdata/"
-# macdeployqt 只负责 Qt；继续递归收集 Tesseract/Leptonica 等 Homebrew 动态库。
+# 先递归收集 Tesseract/Leptonica 等 Homebrew 动态库。macdeployqt 会把非 Qt
+# 依赖改写成 App 内路径却不复制源库，因此必须在它处理制作器之前完成收集。
 dylibbundler -od -b \
   -x "$STAGED_STUDIO/Contents/MacOS/题库制作器" \
   -d "$STAGED_STUDIO/Contents/Frameworks" \
   -p @executable_path/../Frameworks
+deploy_app "$STAGED_STUDIO"
 if ! find "$STAGED_STUDIO/Contents/Frameworks" -iname '*tesseract*.dylib' -print -quit | grep -q .; then
   echo "OCR 打包失败：应用包中没有 Tesseract 动态库" >&2
   exit 1
