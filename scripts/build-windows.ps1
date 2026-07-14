@@ -34,8 +34,11 @@ $CMakeArgs = @(
 if ($CMakeToolchainFile) { $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$CMakeToolchainFile" }
 if ($VcpkgTargetTriplet) { $CMakeArgs += "-DVCPKG_TARGET_TRIPLET=$VcpkgTargetTriplet" }
 cmake @CMakeArgs
+if ($LASTEXITCODE -ne 0) { throw "CMake 配置失败，退出码 $LASTEXITCODE" }
 cmake --build $Build --parallel
+if ($LASTEXITCODE -ne 0) { throw "项目编译失败，退出码 $LASTEXITCODE" }
 ctest --test-dir $Build --output-on-failure
+if ($LASTEXITCODE -ne 0) { throw "自动测试失败，退出码 $LASTEXITCODE" }
 
 $Packages = @(
   @{
@@ -62,6 +65,7 @@ foreach ($Package in $Packages) {
   Copy-Item (Join-Path $Root "LICENSE") $Stage -Force
   & (Join-Path $QtRoot "bin/windeployqt.exe") --release --no-translations `
     (Join-Path $Stage $Package.Executable)
+  if ($LASTEXITCODE -ne 0) { throw "Qt 运行库部署失败，退出码 $LASTEXITCODE" }
 
   if ($Package.Name -eq "QuizPane-Question-Maker") {
     if (-not $TessdataDir) { throw "请通过 -TessdataDir 或 TESSDATA_DIR 指定 OCR 语言数据目录" }

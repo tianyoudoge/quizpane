@@ -168,11 +168,17 @@ QImage renderPdfPage(QPdfDocument* document, int page) {
 #ifdef QUIZPANE_HAS_TESSERACT_OCR
 QString bundledTessdataPath() {
     const QDir appDir(QCoreApplication::applicationDirPath());
-    const QStringList candidates = {
-        appDir.filePath(QStringLiteral("tessdata")),
-        appDir.filePath(QStringLiteral("../Resources/tessdata")),
-        appDir.filePath(QStringLiteral("../share/quizpane/tessdata")),
-    };
+    QStringList candidates;
+    // 开发、测试和自动构建环境通常不会先把语言数据复制到应用目录，允许
+    // 调用方显式指定路径；正式发行包则使用后面的应用内相对位置。
+    for (const char* variable : {"TESSDATA_DIR", "TESSDATA_PREFIX"}) {
+        const QString configured = qEnvironmentVariable(variable).trimmed();
+        if (!configured.isEmpty())
+            candidates.append(configured);
+    }
+    candidates.append(appDir.filePath(QStringLiteral("tessdata")));
+    candidates.append(appDir.filePath(QStringLiteral("../Resources/tessdata")));
+    candidates.append(appDir.filePath(QStringLiteral("../share/quizpane/tessdata")));
     for (const QString& candidate : candidates) {
         const QDir directory(QDir::cleanPath(candidate));
         if (directory.exists(QStringLiteral("eng.traineddata")) &&
