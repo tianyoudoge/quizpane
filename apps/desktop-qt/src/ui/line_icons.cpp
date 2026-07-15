@@ -5,12 +5,16 @@
 #include <QPainterPath>
 #include <QPen>
 #include <QPixmap>
+#include <QGuiApplication>
+#include <QScreen>
 
 namespace quizpane::ui {
 
 QIcon makeLineIcon(LineIcon type) {
-    // QPixmap 类似浏览器中的 canvas 位图；QPainter 类似 CanvasRenderingContext2D。
-    QPixmap pixmap(24, 24);
+    const qreal ratio = QGuiApplication::primaryScreen()
+        ? QGuiApplication::primaryScreen()->devicePixelRatio() : 1.0;
+    QPixmap pixmap(qRound(24 * ratio), qRound(24 * ratio));
+    pixmap.setDevicePixelRatio(ratio);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);

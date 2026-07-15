@@ -2,4 +2,7 @@
   <qresource prefix="/icons">
     <file alias="app-icon.png">app-icon.png</file>
   </qresource>
+  <qresource prefix="/styles">
+    <file alias="desktop.qss">desktop.qss</file>
+  </qresource>
 </RCC>

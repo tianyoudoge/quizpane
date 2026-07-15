@@ -4,6 +4,7 @@
 #include "quizpane/studio/checkpoint_store.hpp"
 #include "quizpane/studio/chunker.hpp"
 #include "quizpane/studio/model_client.hpp"
+#include "quizpane/studio/review_result.hpp"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -35,14 +36,7 @@ struct WorkflowProgress {
     QString detail;
 };
 
-struct GeneratedBankCandidate {
-    // 已完成稳定重命名、可直接进入最终 BankValidator 的共享材料。
-    QJsonArray materials;
-    // 规则校验通过且无需人工判断的题目。
-    QJsonArray questions;
-    // 可解析但模型低置信度，或修复后仍有结构问题的题目。
-    QJsonArray needsReviewQuestions;
-};
+using GeneratedBankCandidate = ReviewResult;
 
 // 一组资料可由题目文件和独立答案/解析文件组成。离线路径在本机合并两者，
 // 按题号匹配答案；没有答案文件时 answerPath 为空。

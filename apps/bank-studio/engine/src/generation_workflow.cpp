@@ -150,6 +150,10 @@ void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettin
             failWorkflow(QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error));
             return;
         }
+        if (!document.warnings.isEmpty())
+            publish(WorkflowStage::Extracting,
+                    QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(),
+                                                   document.warnings.join(QStringLiteral("；"))));
         diagnostic::event(QStringLiteral("extractor"), QStringLiteral("success"),
             {{QStringLiteral("file"), QFileInfo(path).fileName()},
              {QStringLiteral("path"), QFileInfo(path).absoluteFilePath()},
@@ -211,6 +215,10 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
             failWorkflow(QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error));
             return;
         }
+        if (!document.warnings.isEmpty())
+            publish(WorkflowStage::Extracting,
+                    QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(),
+                                                   document.warnings.join(QStringLiteral("；"))));
         if (!source.answerPath.isEmpty()) {
             const ExtractedDocument answers = registry.extract(
                 QFileInfo(source.answerPath).absoluteFilePath());
@@ -240,7 +248,7 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
 
     publish(WorkflowStage::Chunking, QStringLiteral("正在按题号、选项、答案和材料规则解析"));
     const RuleBasedGenerationResult result = RuleBasedBankGenerator{}.generate(documents);
-    if (result.normalQuestions.isEmpty() && result.needsReviewQuestions.isEmpty()) {
+    if (result.questions.isEmpty() && result.needsReviewQuestions.isEmpty()) {
         active_ = false;
         const QString detail = result.warnings.isEmpty()
                                    ? QStringLiteral("规则引擎没有识别到题目")
@@ -252,10 +260,11 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
 
     active_ = false;
     const QString detail = QStringLiteral("规则解析完成：%1 道可直接使用，%2 道待复核")
-                               .arg(result.normalQuestions.size())
+                               .arg(result.questions.size())
                                .arg(result.needsReviewQuestions.size());
     publish(WorkflowStage::Done, detail);
-    emit questionsReady({result.materials, result.normalQuestions, result.needsReviewQuestions});
+    emit questionsReady({result.materials, result.questions,
+                         result.needsReviewQuestions, result.warnings});
     emit finished();
 }
 

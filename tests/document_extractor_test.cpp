@@ -45,6 +45,7 @@ int main(int argc, char** argv) {
     // Qt 的 PDF 写入实现变化。该断言只验证 OCR 回退这条真实功能路径。
     const QString pdfPath = QStringLiteral(DOCUMENT_EXTRACTOR_OCR_FIXTURE);
     const auto pdf = registry.extract(pdfPath);
+#ifdef DOCUMENT_EXTRACTOR_HAS_OCR
     if (!pdf.error.isEmpty() || !pdf.usedOcr || !pdf.hasPageBoundaries ||
         pdf.plainText.trimmed().isEmpty()) {
         const QByteArray diagnostic =
@@ -57,6 +58,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "%s\n", diagnostic.constData());
         return 8;
     }
+#else
+    if (pdf.error.isEmpty() || pdf.usedOcr || !pdf.hasPageBoundaries)
+        return 8;
+#endif
 
     const auto invalidDocx = registry.extract(directory.filePath(QStringLiteral("missing.docx")));
     if (invalidDocx.error.isEmpty())

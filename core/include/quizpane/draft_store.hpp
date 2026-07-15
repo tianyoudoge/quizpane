@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QJsonArray>
+#include <QDateTime>
 #include <QString>
 #include <QVector>
 
@@ -18,6 +19,7 @@ struct DraftSnapshot {
     QJsonArray materials;
     QVector<int> answers;
     int currentQuestionIndex = 0;
+    QDateTime updatedAt;
 };
 
 class DraftStore final {
@@ -27,8 +29,14 @@ public:
     bool save(const DraftSnapshot& snapshot, QString* error = nullptr) const;
     bool load(const QString& providerId, DraftSnapshot* snapshot,
               QString* error = nullptr) const;
+    QList<DraftSnapshot> list(const QString& providerId,
+                              QString* error = nullptr) const;
+    bool clearAttempt(const QString& providerId, const QString& attemptId,
+                      QString* error = nullptr) const;
     bool clear(const QString& providerId, QString* error = nullptr) const;
     QString pathForProvider(const QString& providerId) const;
+    QString pathForAttempt(const QString& providerId,
+                           const QString& attemptId) const;
 };
 
 }  // namespace quizpane

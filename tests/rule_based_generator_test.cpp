@@ -19,7 +19,7 @@ QJsonObject bankFor(const quizpane::studio::RuleBasedGenerationResult& result) {
                                                 {"title", "Rules"},
                                                 {"practice", QJsonObject{{"mode", "all"}}}}}},
             {"materials", result.materials},
-            {"questions", result.normalQuestions}};
+            {"questions", result.questions}};
 }
 } // namespace
 
@@ -42,13 +42,13 @@ int main(int argc, char** argv) {
     const auto result = RuleBasedBankGenerator{}.generate({structured});
     if (result.materials.size() != 1)
         return 1;
-    if (result.normalQuestions.size() != 2 || !result.needsReviewQuestions.isEmpty())
+    if (result.questions.size() != 2 || !result.needsReviewQuestions.isEmpty())
         return 2;
     const QString materialId = result.materials.first().toObject().value("id").toString();
-    for (const auto& value : result.normalQuestions)
+    for (const auto& value : result.questions)
         if (value.toObject().value("materialId").toString() != materialId)
             return 3;
-    if (!result.normalQuestions.first()
+    if (!result.questions.first()
              .toObject()
              .value("solution")
              .toString()
@@ -66,9 +66,9 @@ int main(int argc, char** argv) {
                        "【答案】A\n【解析】vector 提供连续存储。\n"
                        "2、这道题故意没有答案\nA、甲\nB、乙\n");
     const auto inlineResult = RuleBasedBankGenerator{}.generate({inlineDocument});
-    if (inlineResult.normalQuestions.size() != 1 || inlineResult.needsReviewQuestions.size() != 1)
+    if (inlineResult.questions.size() != 1 || inlineResult.needsReviewQuestions.size() != 1)
         return 5;
-    const QJsonObject first = inlineResult.normalQuestions.first().toObject();
+    const QJsonObject first = inlineResult.questions.first().toObject();
     if (!first.value("solution").toString().contains(QStringLiteral("连续存储")))
         return 6;
     const QString reason = inlineResult.needsReviewQuestions.first()
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     multiple.plainText =
         QStringLiteral("1. 下列哪些是容器？\nA. vector\nB. map\nC. mutex\nD. thread\n答案：AB\n");
     const auto multipleResult = RuleBasedBankGenerator{}.generate({multiple});
-    if (!multipleResult.normalQuestions.isEmpty() ||
+    if (!multipleResult.questions.isEmpty() ||
         multipleResult.needsReviewQuestions.size() != 1)
         return 8;
 
@@ -93,10 +93,10 @@ int main(int argc, char** argv) {
     trueFalse.sourcePath = QStringLiteral("boolean.txt");
     trueFalse.plainText = QStringLiteral("1. C++ 是编译型语言。\nA. 错误\nB. 正确\n答案：正确\n");
     const auto trueFalseResult = RuleBasedBankGenerator{}.generate({trueFalse});
-    if (trueFalseResult.normalQuestions.size() != 1 ||
-        trueFalseResult.normalQuestions.first().toObject().value("type").toString() !=
+    if (trueFalseResult.questions.size() != 1 ||
+        trueFalseResult.questions.first().toObject().value("type").toString() !=
             QStringLiteral("true_false") ||
-        trueFalseResult.normalQuestions.first()
+        trueFalseResult.questions.first()
                 .toObject()
                 .value("answer")
                 .toObject()
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
                                               "2. 第二题\nA. 丙\nB. 丁\n"
                                               "答案\n1-2 AB\n");
     const auto compactResult = RuleBasedBankGenerator{}.generate({compactAnswers});
-    if (compactResult.normalQuestions.size() != 2 || !compactResult.needsReviewQuestions.isEmpty())
+    if (compactResult.questions.size() != 2 || !compactResult.needsReviewQuestions.isEmpty())
         return 20;
 
     // 场景 3：阶段分组——阶段一题目 + 阶段一答案 + 阶段二题目 + 阶段二答案。
@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
                                       "4. 阶段二第二题\nA. 庚\nB. 辛\n"
                                       "参考答案\n3.A\n4.B\n");
     const auto stagedResult = RuleBasedBankGenerator{}.generate({staged});
-    if (stagedResult.normalQuestions.size() != 4 || !stagedResult.needsReviewQuestions.isEmpty())
+    if (stagedResult.questions.size() != 4 || !stagedResult.needsReviewQuestions.isEmpty())
         return 21;
     {
         const auto ids = [](const QJsonObject& q) {
@@ -138,7 +138,7 @@ int main(int argc, char** argv) {
             return out.join(u'.');
         };
         const auto findQ = [&](int number) -> QJsonObject {
-            for (const auto& v : stagedResult.normalQuestions)
+            for (const auto& v : stagedResult.questions)
                 if (v.toObject().value("id").toString().contains(
                         QStringLiteral("q%1-").arg(number)))
                     return v.toObject();
@@ -157,11 +157,11 @@ int main(int argc, char** argv) {
     inlineOptions.plainText = QStringLiteral(
         "1. 下列哪个是顺序容器 A. vector B. mutex C. thread D. filesystem\n答案：A\n");
     const auto inlineOptionsResult = RuleBasedBankGenerator{}.generate({inlineOptions});
-    if (inlineOptionsResult.normalQuestions.size() != 1 ||
+    if (inlineOptionsResult.questions.size() != 1 ||
         !inlineOptionsResult.needsReviewQuestions.isEmpty())
         return 24;
     {
-        const QJsonObject q = inlineOptionsResult.normalQuestions.first().toObject();
+        const QJsonObject q = inlineOptionsResult.questions.first().toObject();
         if (q.value("options").toArray().size() != 4)
             return 25;
         if (q.value("answer").toObject().value("optionIds").toArray().first().toString() !=
@@ -177,10 +177,10 @@ int main(int argc, char** argv) {
     trailing.plainText =
         QStringLiteral("1. C++ 是编译型语言吗 A. 是 B. 否 答案：A\n");
     const auto trailingResult = RuleBasedBankGenerator{}.generate({trailing});
-    if (trailingResult.normalQuestions.size() != 1 ||
+    if (trailingResult.questions.size() != 1 ||
         !trailingResult.needsReviewQuestions.isEmpty())
         return 28;
-    if (trailingResult.normalQuestions.first()
+    if (trailingResult.questions.first()
             .toObject()
             .value("answer")
             .toObject()
@@ -195,10 +195,10 @@ int main(int argc, char** argv) {
     circled.sourcePath = QStringLiteral("circled.txt");
     circled.plainText = QStringLiteral("1. 下列哪一个是蓝色\n① 蓝色\n② 红色\n③ 黄色\n④ 黑色\n答案：①\n");
     const auto circledResult = RuleBasedBankGenerator{}.generate({circled});
-    if (circledResult.normalQuestions.size() != 1 || !circledResult.needsReviewQuestions.isEmpty())
+    if (circledResult.questions.size() != 1 || !circledResult.needsReviewQuestions.isEmpty())
         return 30;
     {
-        const QJsonObject q = circledResult.normalQuestions.first().toObject();
+        const QJsonObject q = circledResult.questions.first().toObject();
         if (q.value("options").toArray().size() != 4)
             return 31;
         if (q.value("answer").toObject().value("optionIds").toArray().first().toString() !=
@@ -212,9 +212,9 @@ int main(int argc, char** argv) {
     parenNumeric.plainText = QStringLiteral(
         "1. 选出正确的项\n(1) 甲\n(2) 乙\n(3) 丙\n(4) 丁\n答案：(1)\n");
     const auto parenResult = RuleBasedBankGenerator{}.generate({parenNumeric});
-    if (parenResult.normalQuestions.size() != 1 || !parenResult.needsReviewQuestions.isEmpty())
+    if (parenResult.questions.size() != 1 || !parenResult.needsReviewQuestions.isEmpty())
         return 33;
-    if (parenResult.normalQuestions.first()
+    if (parenResult.questions.first()
             .toObject()
             .value("answer")
             .toObject()
@@ -230,9 +230,9 @@ int main(int argc, char** argv) {
     bracketAnswer.plainText = QStringLiteral(
         "1. 下列哪个是顺序容器（A）\nA. vector\nB. mutex\nC. thread\nD. filesystem\n");
     const auto bracketResult = RuleBasedBankGenerator{}.generate({bracketAnswer});
-    if (bracketResult.normalQuestions.size() != 1 || !bracketResult.needsReviewQuestions.isEmpty())
+    if (bracketResult.questions.size() != 1 || !bracketResult.needsReviewQuestions.isEmpty())
         return 35;
-    if (bracketResult.normalQuestions.first()
+    if (bracketResult.questions.first()
             .toObject()
             .value("answer")
             .toObject()
@@ -241,7 +241,7 @@ int main(int argc, char** argv) {
             .first()
             .toString() != QStringLiteral("a"))
         return 36;
-    if (!bracketResult.normalQuestions.first()
+    if (!bracketResult.questions.first()
              .toObject()
              .value("stem")
              .toString()
@@ -257,11 +257,11 @@ int main(int argc, char** argv) {
                                            "题号 | 1 | 2\n"
                                            "答案 | A | B\n");
     const auto tableResult = RuleBasedBankGenerator{}.generate({tableAnswer});
-    if (tableResult.normalQuestions.size() != 2 || !tableResult.needsReviewQuestions.isEmpty())
+    if (tableResult.questions.size() != 2 || !tableResult.needsReviewQuestions.isEmpty())
         return 38;
     {
         const auto findQ = [&](int number) -> QJsonObject {
-            for (const auto& v : tableResult.normalQuestions)
+            for (const auto& v : tableResult.questions)
                 if (v.toObject().value("id").toString().contains(
                         QStringLiteral("q%1-").arg(number)))
                     return v.toObject();
@@ -284,10 +284,10 @@ int main(int argc, char** argv) {
         "题干第三行（空行之后续写）\n"
         "A. 甲\nB. 乙\n答案：A\n");
     const auto multilineResult = RuleBasedBankGenerator{}.generate({multilineStem});
-    if (multilineResult.normalQuestions.size() != 1 || !multilineResult.needsReviewQuestions.isEmpty())
+    if (multilineResult.questions.size() != 1 || !multilineResult.needsReviewQuestions.isEmpty())
         return 40;
     {
-        const QString stem = multilineResult.normalQuestions.first()
+        const QString stem = multilineResult.questions.first()
                                  .toObject()
                                  .value("stem")
                                  .toString();
@@ -305,12 +305,12 @@ int main(int argc, char** argv) {
         "2. 下列哪一个是红色\n① 蓝色\n② 红色\n③ 黄色\n④ 黑色\n"
         "参考答案\n1.①\n2.②\n");
     const auto circledSectionResult = RuleBasedBankGenerator{}.generate({circledSection});
-    if (circledSectionResult.normalQuestions.size() != 2 ||
+    if (circledSectionResult.questions.size() != 2 ||
         !circledSectionResult.needsReviewQuestions.isEmpty())
         return 42;
     {
         const auto findQ = [&](int number) -> QJsonObject {
-            for (const auto& v : circledSectionResult.normalQuestions)
+            for (const auto& v : circledSectionResult.questions)
                 if (v.toObject().value("id").toString().contains(
                         QStringLiteral("q%1-").arg(number)))
                     return v.toObject();

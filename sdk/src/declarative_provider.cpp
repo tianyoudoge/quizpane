@@ -1,6 +1,7 @@
 #include "quizpane/declarative_provider.hpp"
 
 #include "quizpane/bank_validator.hpp"
+#include "quizpane/io_utils.hpp"
 
 #include <QDir>
 #include <QFile>
@@ -13,12 +14,8 @@
 
 namespace quizpane {
 namespace {
-bool fail(QString* out, const QString& text) { if (out) *out = text; return false; }
 QJsonObject readObject(const QString& path) {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly) || file.size() > 128 * 1024 * 1024) return {};
-    const auto document = QJsonDocument::fromJson(file.readAll());
-    return document.isObject() ? document.object() : QJsonObject{};
+    return readJsonObjectFile(path, 128 * 1024 * 1024);
 }
 QJsonObject findManifest(const QString& entry) {
     QDir directory = QFileInfo(entry).absoluteDir();
@@ -33,6 +30,23 @@ QString paragraph(const QString& text) {
     QString escaped = text.toHtmlEscaped();
     escaped.replace('\n', QStringLiteral("<br>"));
     return QStringLiteral("<p>%1</p>").arg(escaped);
+}
+enum class Method {
+    Initialize, Capabilities, CatalogList, AttemptCreate, AttemptQuestions,
+    SaveAnswers, Submit, Report, Solutions, Unknown
+};
+Method methodForName(const QString& name) {
+    static const QHash<QString, Method> methods{
+        {QStringLiteral("provider.initialize"), Method::Initialize},
+        {QStringLiteral("provider.capabilities"), Method::Capabilities},
+        {QStringLiteral("catalog.list"), Method::CatalogList},
+        {QStringLiteral("attempt.create"), Method::AttemptCreate},
+        {QStringLiteral("attempt.questions"), Method::AttemptQuestions},
+        {QStringLiteral("attempt.saveAnswers"), Method::SaveAnswers},
+        {QStringLiteral("attempt.submit"), Method::Submit},
+        {QStringLiteral("attempt.report"), Method::Report},
+        {QStringLiteral("attempt.solutions"), Method::Solutions}};
+    return methods.value(name, Method::Unknown);
 }
 }  // namespace
 
@@ -113,9 +127,7 @@ QVector<QJsonArray> DeclarativeProvider::buildUnits(const QString& catalogId) co
             unitIndexByMaterial.insert(materialId, static_cast<int>(units.size()));
             units.append(QJsonArray{question});
         } else {
-            QJsonArray unit = units[it.value()];
-            unit.append(question);
-            units[it.value()] = unit;
+            units[it.value()].append(question);
         }
     }
     return units;
@@ -168,11 +180,12 @@ QJsonArray DeclarativeProvider::hostMaterials() const {
 QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
     const QJsonValue id = requestValue.value("id");
     const QString method = requestValue.value("method").toString();
+    const Method dispatch = methodForName(method);
     const QJsonObject params = requestValue.value("params").toObject();
-    if (method == "provider.initialize") return {{"id", id}, {"result", QJsonObject{
+    if (dispatch == Method::Initialize) return {{"id", id}, {"result", QJsonObject{
         {"providerId", providerId_}, {"providerVersion", providerVersion_}, {"requiresLogin", false}, {"sessionRestored", true}}}};
-    if (method == "provider.capabilities") return {{"id", id}, {"result", QJsonObject{{"loginMethods", QJsonArray{"none"}}}}};
-    if (method == "catalog.list") {
+    if (dispatch == Method::Capabilities) return {{"id", id}, {"result", QJsonObject{{"loginMethods", QJsonArray{"none"}}}}};
+    if (dispatch == Method::CatalogList) {
         QJsonArray nodes;
         for (const auto& value : catalogs_) {
             const QJsonObject catalog = value.toObject(); const QString catalogId = catalog.value("id").toString();
@@ -187,7 +200,7 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
         }
         return {{"id", id}, {"result", QJsonObject{{"nodes", nodes}}}};
     }
-    if (method == "attempt.create") {
+    if (dispatch == Method::AttemptCreate) {
         const QJsonObject catalog = findCatalog(params.value("categoryId").toString());
         if (catalog.isEmpty()) return error(id, QStringLiteral("练习分类不存在"));
         QVector<QJsonArray> units = buildUnits(catalog.value("id").toString());
@@ -208,20 +221,20 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
         return {{"id", id}, {"result", QJsonObject{{"attemptId", QUuid::createUuid().toString(QUuid::WithoutBraces)},
             {"title", activeCatalogTitle_}, {"status", "active"}, {"questionCount", selected.size()}}}};
     }
-    if (method == "attempt.questions") return {{"id", id}, {"result", QJsonObject{
+    if (dispatch == Method::AttemptQuestions) return {{"id", id}, {"result", QJsonObject{
         {"materials", hostMaterials()}, {"questions", hostQuestions(false)}}}};
-    if (method == "attempt.saveAnswers") {
+    if (dispatch == Method::SaveAnswers) {
         for (const auto& value : params.value("answers").toArray()) { const auto answer = value.toObject(); bool ok = false;
             const int choice = answer.value("answer").toObject().value("choice").toString().toInt(&ok);
             if (ok) answers_.insert(answer.value("questionIndex").toInt(), choice); }
         return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
     }
-    if (method == "attempt.submit") return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
-    if (method == "attempt.report") { int correct = 0; const auto solutions = hostQuestions(true);
+    if (dispatch == Method::Submit) return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
+    if (dispatch == Method::Report) { int correct = 0; const auto solutions = hostQuestions(true);
         for (qsizetype i = 0; i < solutions.size(); ++i) correct += answers_.value(static_cast<int>(i), -1) == solutions.at(i).toObject().value("correctChoice").toInt(-2);
         return {{"id", id}, {"result", QJsonObject{{"questionCount", activeQuestions_.size()}, {"answerCount", answers_.size()}, {"correctCount", correct}}}};
     }
-    if (method == "attempt.solutions") return {{"id", id}, {"result", QJsonObject{
+    if (dispatch == Method::Solutions) return {{"id", id}, {"result", QJsonObject{
         {"materials", hostMaterials()}, {"solutions", hostQuestions(true)}}}};
     return error(id, QStringLiteral("声明式题库不支持此操作：%1").arg(method));
 }

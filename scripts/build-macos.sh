@@ -82,7 +82,7 @@ if [[ "$CLEAN_BUILD" == "1" ]]; then
   rm -rf "$BUILD_DIR"
 fi
 
-cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
+cmake --preset release -S "$ROOT" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
   -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
   -DQUIZPANE_ENABLE_TESSERACT_OCR=ON \

@@ -88,7 +88,8 @@ QByteArray readDocxDocumentXml(const QString& path, QString* error) {
     constexpr mz_uint64 kMaximumXmlBytes = 32 * 1024 * 1024;
     if (!mz_zip_reader_file_stat(&archive, static_cast<mz_uint>(index), &stat) ||
         stat.m_uncomp_size > kMaximumXmlBytes ||
-        stat.m_uncomp_size > static_cast<mz_uint64>(std::numeric_limits<qsizetype>::max())) {
+        stat.m_uncomp_size >
+            static_cast<mz_uint64>((std::numeric_limits<qsizetype>::max)())) {
         mz_zip_reader_end(&archive);
         *error = QStringLiteral("DOCX 正文 XML 过大或无法读取");
         return {};
@@ -297,15 +298,17 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
                 QString ocrError;
                 text = recognizePage(image, &ocrError);
                 if (!ocrError.isEmpty()) {
-                    result.error = QStringLiteral("PDF 第 %1 页：%2").arg(page + 1).arg(ocrError);
-                    return result;
+                    result.warnings.append(
+                        QStringLiteral("第 %1 页 OCR 失败：%2").arg(page + 1).arg(ocrError));
+                    pages.append(QString{});
+                    continue;
                 }
                 result.usedOcr = true;
 #else
-                result.error =
-                    QStringLiteral("PDF 第 %1 页是扫描内容；当前构建未启用 Tesseract C++ OCR 后端")
-                        .arg(page + 1);
-                return result;
+                result.warnings.append(QStringLiteral(
+                    "第 %1 页是扫描内容，当前构建未启用 OCR，已跳过").arg(page + 1));
+                pages.append(QString{});
+                continue;
 #endif
             }
         }
@@ -313,8 +316,11 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
     }
     result.plainText = pages.join(QChar('\f'));
     result.hasPageBoundaries = true;
-    if (result.plainText.trimmed().isEmpty())
-        result.error = QStringLiteral("PDF 没有可提取的文字内容");
+    if (result.plainText.trimmed().isEmpty()) {
+        result.error = result.warnings.isEmpty()
+            ? QStringLiteral("PDF 没有可提取的文字内容")
+            : QStringLiteral("PDF 所有页面均无法提取：%1").arg(result.warnings.join(QStringLiteral("；")));
+    }
     return result;
 }
 

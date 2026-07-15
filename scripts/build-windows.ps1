@@ -22,7 +22,7 @@ if ($VerboseLogs -and -not $DebugBuild) {
 }
 $VerboseDiagnostics = if ($VerboseLogs) { "ON" } else { "OFF" }
 $CMakeArgs = @(
-  "-S", $Root, "-B", $Build, "-G", "Ninja",
+  "--preset", "release", "-S", $Root, "-B", $Build,
   "-DCMAKE_BUILD_TYPE=$BuildType",
   "-DCMAKE_PREFIX_PATH=$QtRoot",
   "-DQUIZPANE_ENABLE_TESSERACT_OCR=ON",

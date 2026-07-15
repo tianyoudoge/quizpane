@@ -15,6 +15,8 @@
 #include <QDateTime>
 #include <QDragEnterEvent>
 #include <QDir>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFile>
@@ -67,6 +69,44 @@ QFrame* metricCard(const QString& name, QLabel** value) {
     (*value)->setObjectName(QStringLiteral("metricValue"));
     layout->addWidget(*value);
     return card;
+}
+
+bool confirmAction(QWidget* parent, const QString& title, const QString& text,
+                   const QString& acceptText) {
+    QDialog dialog(parent);
+    dialog.setWindowTitle(title);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* label = new QLabel(text);
+    label->setWordWrap(true);
+    auto* buttons = new QDialogButtonBox;
+    auto* cancel = buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
+    auto* accept = buttons->addButton(acceptText, QDialogButtonBox::AcceptRole);
+    QObject::connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+    QObject::connect(accept, &QPushButton::clicked, &dialog, &QDialog::accept);
+    layout->addWidget(label); layout->addWidget(buttons);
+    dialog.setMinimumWidth(360);
+    return dialog.exec() == QDialog::Accepted;
+}
+
+enum class TaskCloseChoice { Keep, Delete, Cancel };
+TaskCloseChoice chooseTaskCloseAction(QWidget* parent) {
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("保留生成任务？"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* label = new QLabel(QStringLiteral(
+        "任务尚未完成。保留后，下次添加同一批文件可继续；删除会移除本次检查点。"));
+    label->setWordWrap(true);
+    auto* buttons = new QDialogButtonBox;
+    auto* cancel = buttons->addButton(QStringLiteral("取消关闭"), QDialogButtonBox::RejectRole);
+    auto* remove = buttons->addButton(QStringLiteral("删除任务"), QDialogButtonBox::DestructiveRole);
+    auto* keep = buttons->addButton(QStringLiteral("保留并关闭"), QDialogButtonBox::AcceptRole);
+    TaskCloseChoice result = TaskCloseChoice::Cancel;
+    QObject::connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+    QObject::connect(remove, &QPushButton::clicked, &dialog, [&] { result = TaskCloseChoice::Delete; dialog.accept(); });
+    QObject::connect(keep, &QPushButton::clicked, &dialog, [&] { result = TaskCloseChoice::Keep; dialog.accept(); });
+    layout->addWidget(label); layout->addWidget(buttons);
+    dialog.exec();
+    return result;
 }
 
 }  // namespace
@@ -487,10 +527,9 @@ void StudioWindow::beginPreflight() {
     connect(workflow_, &GenerationWorkflow::failed, this, [this](const QString& error) {
         startButton_->setEnabled(true);
         if (error.contains(QStringLiteral("重新开始"))) {
-            const auto answer = QMessageBox::question(this, QStringLiteral("重新开始生成任务？"),
-                error + QStringLiteral("\n\n是否删除旧检查点并重新开始？"),
-                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-            if (answer == QMessageBox::Yes) {
+            if (confirmAction(this, QStringLiteral("重新开始生成任务？"),
+                              error + QStringLiteral("\n\n是否删除旧检查点并重新开始？"),
+                              QStringLiteral("删除并重新开始"))) {
                 CheckpointStore store;
                 QString clearError;
                 if (!store.clear(store.taskIdForSources(sourcePaths_), &clearError)) {
@@ -789,91 +828,20 @@ void StudioWindow::closeEvent(QCloseEvent* event) {
         event->accept();
         return;
     }
-    const auto answer = QMessageBox::question(this, QStringLiteral("保留生成任务？"),
-        QStringLiteral("任务尚未完成。选择“是”会保留检查点，下次添加同一批文件可继续；"
-                       "选择“否”会删除检查点。"), QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
-        QMessageBox::Yes);
-    if (answer == QMessageBox::Cancel) { event->ignore(); return; }
-    if (answer == QMessageBox::Yes) workflow_->pause();
+    const TaskCloseChoice answer = chooseTaskCloseAction(this);
+    if (answer == TaskCloseChoice::Cancel) { event->ignore(); return; }
+    if (answer == TaskCloseChoice::Keep) workflow_->pause();
     else workflow_->cancel();
     event->accept();
 }
 
 void StudioWindow::applyStyle() {
-    setStyleSheet(R"(
-      QMainWindow, QWidget#content {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #14182a, stop:1 #0a0c16);
-        color: #eef1f8;
-      }
-      QFrame#sidebar { background: rgba(255,255,255,46); border: none; border-right: 1px solid rgba(255,255,255,60); }
-      QLabel#brand { font-size: 20px; font-weight: 700; color: #ffffff; }
-      QLabel#sidebar QLabel#muted, QFrame#sidebar QLabel#privacyFootnote { color: rgba(238,241,248,190); }
-      QLabel#pageTitle { font-size: 25px; font-weight: 700; color: #ffffff; }
-      QLabel#eyebrow { color: #8fb4ff; font-size: 11px; font-weight: 600; }
-      QLabel#muted, QLabel#privacyFootnote { color: rgba(238,241,248,200); }
-      QLabel#privacyFootnote { font-size: 11px; }
-      QLabel#sideStep { color: rgba(238,241,248,210); padding: 9px 10px; border-radius: 6px; }
-      QLabel#sideStep[active="true"] { color: #ffffff; background: rgba(255,255,255,72); }
-      QLabel#sectionTitle, QLabel#phaseTitle { color: #ffffff; font-size: 15px; font-weight: 650; }
-      QLabel#metricValue { color: #9cc4ff; font-size: 21px; font-weight: 700; }
-      QLabel#notice { background: rgba(79,143,255,70); color: #d3e5ff; padding: 12px; border-radius: 8px; border: 1px solid rgba(143,192,255,110); }
-      QFrame#dropZone {
-        background: rgba(255,255,255,50);
-        border: 1px dashed rgba(160,200,255,190);
-        border-radius: 12px;
-      }
-      QFrame#panel, QFrame#metricCard {
-        background: rgba(255,255,255,48);
-        border: 1px solid rgba(255,255,255,76);
-        border-radius: 10px;
-      }
-      QPushButton {
-        background: rgba(255,255,255,50);
-        color: #eef1f8;
-        border: 1px solid rgba(255,255,255,78);
-        border-radius: 7px;
-        padding: 8px 13px;
-      }
-      QPushButton:hover { background: rgba(255,255,255,72); border-color: rgba(160,200,255,190); }
-      QPushButton#primaryButton { background: #4c86e6; color: #ffffff; border-color: #4c86e6; }
-      QPushButton#primaryButton:hover { background: #689aec; border-color: #689aec; }
-      QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #9cc4ff; border-color: transparent; }
-      QPushButton:disabled { color: rgba(238,241,248,90); background: rgba(255,255,255,58); border-color: rgba(255,255,255,80); }
-      QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget {
-        background: rgba(255,255,255,46);
-        color: #eef1f8;
-        border: 1px solid rgba(255,255,255,72);
-        border-radius: 7px;
-        padding: 8px;
-        selection-background-color: rgba(79,143,255,150);
-      }
-      QListWidget::item { color: #eef1f8; padding: 10px; border-bottom: 1px solid rgba(255,255,255,46); }
-      QListWidget::item:selected { color: #ffffff; background: rgba(79,143,255,130); }
-      QFrame#sourceRow {
-        background: rgba(255,255,255,48);
-        border: 1px solid rgba(255,255,255,76);
-        border-radius: 10px;
-      }
-      QLabel#sourceRowTitle { color: #ffffff; font-size: 14px; font-weight: 650; }
-      QLabel#pairedAnswerBadge { color: #9cc4ff; font-weight: 600; }
-      QWidget#styledDropdown {
-        background: rgba(10,12,20,110);
-        color: #eef1f8;
-        border: 1px solid rgba(255,255,255,60);
-        border-radius: 7px;
-        padding: 8px;
-      }
-      QWidget#styledDropdown:hover { border-color: rgba(160,200,255,190); background: rgba(10,12,20,140); }
-      QLabel#styledDropdownArrow { color: rgba(238,241,248,210); }
-      QFrame#styledDropdownPopup { background: #1b1f30; border: 1px solid rgba(255,255,255,80); border-radius: 8px; }
-      QFrame#styledDropdownPopup QListWidget { background: transparent; border: none; padding: 0px; }
-      QFrame#styledDropdownPopup QListWidget::item { padding: 8px 10px; border-bottom: none; }
-      QFrame#styledDropdownPopup QListWidget::item:hover { background: rgba(255,255,255,50); }
-      QFrame#styledDropdownPopup QListWidget::item:selected { background: rgba(79,143,255,150); color: #ffffff; }
-      QHeaderView::section { background: rgba(255,255,255,80); color: rgba(238,241,248,210); border: none; padding: 8px; }
-      QProgressBar { background: rgba(255,255,255,48); border: none; border-radius: 3px; height: 7px; }
-      QProgressBar::chunk { background: #4c86e6; border-radius: 3px; }
-    )");
+    QFile style(QStringLiteral(":/styles/studio.qss"));
+    if (!style.open(QIODevice::ReadOnly)) {
+        qWarning("Unable to load embedded studio stylesheet");
+        return;
+    }
+    setStyleSheet(QString::fromUtf8(style.readAll()));
 }
 
 }  // namespace quizpane::studio

@@ -151,6 +151,13 @@ quizpane/
 
 需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets、Network、Core5Compat 与 Pdf。
 二维码和 ZIP 依赖由 CMake FetchContent 自动拉取，不需要手工复制第三方源码。
+依赖已锁定到不可变 commit。离线构建时可提前准备两份源码，并在配置时传入
+`-DFETCHCONTENT_SOURCE_DIR_QRCODEGEN_SOURCE=/path/to/QR-Code-generator`
+和 `-DFETCHCONTENT_SOURCE_DIR_MINIZ_SOURCE=/path/to/miniz`，配置阶段不会联网。
+默认启用 PCH，并自动使用已安装的 `sccache`/`ccache`；需要加速干净构建时可用
+`cmake --preset fast && cmake --build --preset fast` 启用 Unity Build。
+Pull Request CI 使用 `ci` preset（Release + Unity + 全量测试）；正式平台打包脚本
+使用 `release` preset（Release + OCR + 可移植 CPU 基线 + 全量测试，关闭 Unity）。
 
 ## macOS 开发构建
 

@@ -1,5 +1,8 @@
 qt_add_executable(quizpane
     src/main.cpp
+    src/app_settings.cpp
+    src/app_settings.hpp
+    src/app_services.hpp
     src/platform/file_association.cpp
     src/platform/file_association.hpp
     src/platform/global_hotkey.cpp
@@ -15,6 +18,14 @@ qt_add_executable(quizpane
     src/ui/app_dialogs.hpp
     resources/resources.qrc
 )
+# Windows SDK 和 Xlib 会定义 max、small、Unsorted 等通用宏。Unity 构建
+# 会把它们泄漏到后续 Qt 源文件，因此平台实现必须保持独立编译。
+set_source_files_properties(
+    src/platform/file_association.cpp
+    src/platform/global_hotkey.cpp
+    src/platform/window_pinning.cpp
+    PROPERTIES
+    SKIP_UNITY_BUILD_INCLUSION ON)
 if(APPLE)
     enable_language(OBJCXX)
     target_sources(quizpane PRIVATE
@@ -54,6 +65,7 @@ target_link_libraries(quizpane PRIVATE
     Qt6::Network
     Qt6::Widgets
 )
+quizpane_optimize_target(quizpane)
 target_compile_definitions(quizpane PRIVATE
     QUIZPANE_VERSION="${PROJECT_VERSION}"
 )

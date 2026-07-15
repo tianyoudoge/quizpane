@@ -242,21 +242,33 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
         static const QSet<QString> answerKeys{"optionIds"};
         const auto answers = question.value("answer").toObject().value("optionIds").toArray();
 
-        if (!hasOnlyKeys(question, questionKeys) || !validId(id) || questionIds.contains(id) ||
-            !catalogIds.contains(question.value("catalogId").toString()) ||
-            !questionTypes().contains(type) ||
-            !question.value("stem").isString() || stem.trimmed().isEmpty() || stem.size() > 20000 ||
-            !question.value("options").isArray() || options.size() < 2 || options.size() > 20 ||
-            !question.value("answer").isObject() ||
-            !hasOnlyKeys(question.value("answer").toObject(), answerKeys) ||
-            !question.value("answer").toObject().value("optionIds").isArray() ||
-            answers.size() != 1 || !question.contains("solution") || !question.value("solution").isString() ||
-            question.value("solution").toString().size() > 20000 ||
-            (question.contains("stemImage") && !validAsset(question.value("stemImage")))) {
+        const auto reject = [&](const QString& reason) {
             errors.append({int(index), id,
-                QStringLiteral("第 %1 题的标识、分类、类型、题干、选项或答案无效").arg(index + 1), {}});
-            continue;
-        }
+                QStringLiteral("第 %1 题：%2").arg(index + 1).arg(reason), {}});
+        };
+        bool invalid = false;
+        const auto require = [&](bool condition, const QString& reason) {
+            if (!condition && !invalid) { reject(reason); invalid = true; }
+        };
+        require(hasOnlyKeys(question, questionKeys), QStringLiteral("包含 Schema 未声明的字段"));
+        require(validId(id), QStringLiteral("题目标识不符合规范"));
+        require(!questionIds.contains(id), QStringLiteral("题目标识重复"));
+        require(catalogIds.contains(question.value("catalogId").toString()), QStringLiteral("引用了不存在的分类"));
+        require(questionTypes().contains(type), QStringLiteral("题型不受支持"));
+        require(question.value("stem").isString() && !stem.trimmed().isEmpty() && stem.size() <= 20000,
+                QStringLiteral("题干为空、格式错误或超过 20000 字"));
+        require(question.value("options").isArray() && options.size() >= 2 && options.size() <= 20,
+                QStringLiteral("选项必须为 2–20 项的数组"));
+        require(question.value("answer").isObject() &&
+                hasOnlyKeys(question.value("answer").toObject(), answerKeys) &&
+                question.value("answer").toObject().value("optionIds").isArray() && answers.size() == 1,
+                QStringLiteral("单选答案必须且只能包含一个 optionId"));
+        require(question.contains("solution") && question.value("solution").isString() &&
+                question.value("solution").toString().size() <= 20000,
+                QStringLiteral("解析缺失、格式错误或超过 20000 字"));
+        require(!question.contains("stemImage") || validAsset(question.value("stemImage")),
+                QStringLiteral("题干图片资源无效"));
+        if (invalid) continue;
         questionIds.insert(id);
 
         if (question.contains("materialId")) {

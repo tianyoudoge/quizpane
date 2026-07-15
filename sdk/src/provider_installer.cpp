@@ -14,6 +14,7 @@
 #include <algorithm>
 
 #include "quizpane/provider_abi.h"
+#include "quizpane/io_utils.hpp"
 #include "quizpane/zip_archive.hpp"
 
 namespace quizpane {
@@ -23,17 +24,12 @@ constexpr qsizetype kMaxEntries = 256;
 constexpr qint64 kMaxExpandedBytes = 128 * 1024 * 1024;
 constexpr qint64 kMaxManifestBytes = 1024 * 1024;
 
-bool fail(QString* error, const QString& message) {
-    if (error) *error = message;
-    return false;
-}
-
 bool safeRelativePath(const QString& path) {
     if (path.isEmpty() || QDir::isAbsolutePath(path) || path.contains('\\'))
         return false;
     const QString clean = QDir::cleanPath(path);
     return clean != QStringLiteral("..") && !clean.startsWith(QStringLiteral("../")) &&
-           clean == path && !QFileInfo(path).isAbsolute();
+           !QFileInfo(clean).isAbsolute();
 }
 
 bool writeJson(const QString& path, const QJsonObject& value, QString* error) {
@@ -55,11 +51,7 @@ QByteArray sha256File(const QString& path) {
 }
 
 QJsonObject readJson(const QString& path) {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly) || file.size() > kMaxManifestBytes)
-        return {};
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
-    return document.isObject() ? document.object() : QJsonObject{};
+    return readJsonObjectFile(path, kMaxManifestBytes);
 }
 
 bool validProviderId(const QString& id) {

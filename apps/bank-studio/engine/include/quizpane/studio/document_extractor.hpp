@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 
 namespace quizpane::studio {
 
@@ -11,6 +12,9 @@ struct ExtractedDocument {
     QString sourcePath;
     QString plainText;
     QString error;
+    // 可恢复的逐页问题，例如某一页 OCR 失败。调用方应提示用户，但仍可继续
+    // 使用其余成功页面；error 只表示整份文档无法使用。
+    QStringList warnings;
     // 文本由 PDF/OCR 按页提取时，使用换页符分隔。规则解析器据此生成 source.page，
     // TXT/DOCX 没有稳定页码时保持 false，避免伪造来源位置。
     bool hasPageBoundaries = false;

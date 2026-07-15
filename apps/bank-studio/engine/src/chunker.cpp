@@ -1,4 +1,5 @@
 #include "quizpane/studio/chunker.hpp"
+#include "quizpane/studio/option_label.hpp"
 
 #include <QRegularExpression>
 
@@ -45,8 +46,7 @@ bool isBoundaryHeading(const QString& paragraph) {
 
 bool isQuestionWithOptions(const QString& paragraph) {
     static const QRegularExpression numbered(QStringLiteral(R"(^\s*\d+[.、．]\s*\S)"));
-    static const QRegularExpression options(QStringLiteral(R"((?:^|\n)\s*[A-DＡ-Ｄ][.、．]\s*\S)"));
-    return numbered.match(paragraph).hasMatch() && options.match(paragraph).hasMatch();
+    return numbered.match(paragraph).hasMatch() && optionLinePattern().match(paragraph).hasMatch();
 }
 
 QStringList paragraphsOf(const QString& text) {

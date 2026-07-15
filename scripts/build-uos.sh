@@ -50,7 +50,7 @@ if [[ "$VERBOSE_LOGS" == "1" ]]; then
   VERBOSE_DIAGNOSTICS="ON"
 fi
 
-cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
+cmake --preset release -S "$ROOT" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
   -DQUIZPANE_ENABLE_TESSERACT_OCR=ON \
   -DQUIZPANE_PORTABLE_CPU_BASELINE=ON \

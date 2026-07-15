@@ -4,6 +4,7 @@
 
 #include <QHash>
 #include <QMainWindow>
+#include "quizpane/studio/review_result.hpp"
 #include <QJsonArray>
 #include <QStringList>
 
@@ -23,7 +24,7 @@ namespace quizpane::studio {
 class GenerationWorkflow;
 class SourceRowWidget;
 class StyledDropdown;
-struct GeneratedBankCandidate;
+using GeneratedBankCandidate = ReviewResult;
 struct WorkflowProgress;
 }
 

@@ -7,9 +7,7 @@
 #include <QKeySequence>
 #include <QVector>
 
-#include "quizpane/provider_installer.hpp"
-#include "quizpane/provider_loader.hpp"
-#include "quizpane/draft_store.hpp"
+#include "../app_services.hpp"
 
 class QLabel;
 class QLayout;
@@ -30,9 +28,8 @@ namespace quizpane {
 
 class GlobalHotkey;
 
-// MainWindow 相当于传统 jQuery 单页应用中的页面控制器：创建控件、绑定事件，
-// 再把题库请求交给 ProviderLoader。Qt 父子对象树会自动释放 QObject 子对象，
-// 所以成员中的裸指针是“非拥有引用”，不是需要手工 delete 的 Java 式资源。
+// MainWindow 负责装配页面并把题库请求交给应用服务。成员中的控件指针均为
+// Qt 父子对象树持有的非拥有引用。
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 
@@ -103,9 +100,10 @@ private:
     void processPendingProviderDeletions();
 
     // ---- 应用服务：值成员由 MainWindow 直接拥有，析构顺序与声明顺序相反 ----
-    ProviderLoader provider_;
-    ProviderInstaller installer_;
-    DraftStore draftStore_;
+    AppServices services_;
+    ProviderLoader& provider_ = services_.provider();
+    ProviderInstaller& installer_ = services_.installer();
+    DraftStore& draftStore_ = services_.drafts();
 
     // ---- 桌面外壳：全局热键、托盘和菜单 ----
     GlobalHotkey* globalHotkey_ = nullptr;
@@ -154,6 +152,9 @@ private:
     QLabel* solutionProgressLabel_ = nullptr;
     QLabel* solutionQuestionLabel_ = nullptr;
     QLabel* solutionAnswerLabel_ = nullptr;
+    QLabel* selectedAnswerLabel_ = nullptr;
+    QLabel* correctAnswerLabel_ = nullptr;
+    QLabel* answerStatusLabel_ = nullptr;
     QLabel* solutionExplanationLabel_ = nullptr;
     QPushButton* previousSolutionButton_ = nullptr;
     QPushButton* nextSolutionButton_ = nullptr;

@@ -57,7 +57,7 @@ QList<ZipEntry> ZipArchiveReader::entries() const {
         const bool symlink = ((stat.m_external_attr >> 16U) & 0170000U) == 0120000U;
         result.append(ZipEntry{
             QString::fromUtf8(stat.m_filename),
-            stat.m_uncomp_size > static_cast<mz_uint64>(std::numeric_limits<qint64>::max())
+            stat.m_uncomp_size > static_cast<mz_uint64>((std::numeric_limits<qint64>::max)())
                 ? -1 : static_cast<qint64>(stat.m_uncomp_size),
             !directory && !symlink,
             directory,
@@ -77,7 +77,7 @@ QByteArray ZipArchiveReader::fileData(const QString& path) const {
     void* data = mz_zip_reader_extract_to_heap(
         &impl_->archive, static_cast<mz_uint>(index), &size, 0);
     if (!data && size != 0) return {};
-    if (size > static_cast<size_t>(std::numeric_limits<qsizetype>::max())) {
+    if (size > static_cast<size_t>((std::numeric_limits<qsizetype>::max)())) {
         mz_free(data);
         return {};
     }

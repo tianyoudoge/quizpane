@@ -1,4 +1,5 @@
 #include "quizpane/studio/rule_based_generator.hpp"
+#include "quizpane/studio/option_label.hpp"
 
 #include <QFileInfo>
 #include <QHash>
@@ -63,40 +64,16 @@ bool isMaterialHeader(const QString& text) {
 // 与各种书写习惯：（ ( [ { 「 『 … ） ) ] } 」 』。
 // 注意：用 NFC 而非 NFKC，NFKC 会把圈码 ① 分解成裸 1 而丢失选项标记。
 QString normalizeOptionLabel(const QString& raw) {
-    const QString s = raw.normalized(QString::NormalizationForm_C).trimmed();
-    if (s.isEmpty())
-        return {};
-    if (s.size() == 1) {
-        const QChar ch = s.at(0);
-        const ushort code = ch.unicode();
-        // 半角字母 A-I / a-i。
-        if ((code >= 'A' && code <= 'I') || (code >= 'a' && code <= 'i'))
-            return ch.toLower();
-        // 全角字母 Ａ(U+FF21)-Ｉ / ａ(U+FF41)-ｉ。
-        if (code >= 0xFF21 && code <= 0xFF29)
-            return QChar(code - 0xFF21 + u'a');
-        if (code >= 0xFF41 && code <= 0xFF49)
-            return QChar(code - 0xFF41 + u'a');
-        // 圈码 ①=U+2460 … 共 20 个；带点数字 ⒈=U+2488 … 取前 9 个。
-        if (code >= 0x2460 && code <= 0x2473)
-            return QChar(u'a' + (code - 0x2460));
-        if (code >= 0x2488 && code <= 0x2490)
-            return QChar(u'a' + (code - 0x2488));
-    }
-    // 括号/尾括号数字：(1) 1) 「1」 〔1〕 → a..（仅 1-9）。
-    static const QRegularExpression numeric(
-        QStringLiteral(R"(^[（(\[{「『]?\s*([1-9])\s*[)）\]}」』]?$)"));
-    const auto m = numeric.match(s);
-    if (m.hasMatch())
-        return QChar(u'a' + m.captured(1).toInt() - 1);
-    return {};
+    return canonicalOptionLabel(raw);
 }
 
 // 把答案文本归一化成大写字母串（如 "AC"）。支持字母、圈码、带点数字、
 // 括号数字等多种写法。无法识别返回空。
 QString normalizeAnswer(QString answer) {
     answer = answer.normalized(QString::NormalizationForm_C).trimmed();
-    answer.remove(QRegularExpression(QStringLiteral("[\\s,，、;；/|+]+")));
+    static const QRegularExpression separators(QStringLiteral("[\\s,，、;；/|+]+"));
+    static const QRegularExpression closingBracket(QStringLiteral("[)）\\]}」』]"));
+    answer.remove(separators);
     if (answer.isEmpty())
         return {};
     // 逐标记归一化：单字符（字母/圈码/带点数字）或括号数字片段 “(1)”。
@@ -105,8 +82,7 @@ QString normalizeAnswer(QString answer) {
         const QChar ch = answer.at(k);
         if (ch == u'(' || ch == u'（' || ch == u'[' || ch == u'{' ||
             ch == u'「' || ch == u'『') {
-            int close = answer.indexOf(
-                QRegularExpression(QStringLiteral("[)）\\]}」』]")), k + 1);
+            int close = answer.indexOf(closingBracket, k + 1);
             if (close > k) {
                 const QString label = normalizeOptionLabel(answer.mid(k, close - k + 1));
                 if (!label.isEmpty() && !normalized.contains(label.toUpper()))
@@ -125,7 +101,8 @@ QString normalizeAnswer(QString answer) {
 
 QString comparableText(QString value) {
     value = value.normalized(QString::NormalizationForm_KC).toLower().trimmed();
-    value.remove(QRegularExpression(QStringLiteral("[\\s\\p{P}\\p{S}]+")));
+    static const QRegularExpression noise(QStringLiteral("[\\s\\p{P}\\p{S}]+"));
+    value.remove(noise);
     return value;
 }
 
@@ -764,7 +741,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
             QJsonObject question = parseQuestion(document, lines, anchor, blockEnd, id, materialId,
                                                  answers, solutions, &reviewReason);
             if (reviewReason.isEmpty())
-                result.normalQuestions.append(question);
+                result.questions.append(question);
             else
                 result.needsReviewQuestions.append(question);
         }
@@ -772,7 +749,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
 
     // 删除没有任何题目引用的材料，保证正常候选进入统一校验器时不会因孤立材料失败。
     QSet<QString> referenced;
-    for (const QJsonArray questions : {result.normalQuestions, result.needsReviewQuestions})
+    for (const QJsonArray questions : {result.questions, result.needsReviewQuestions})
         for (const auto& value : questions) {
             const QString id = value.toObject().value("materialId").toString();
             if (!id.isEmpty())
