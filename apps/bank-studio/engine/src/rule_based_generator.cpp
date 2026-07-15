@@ -205,11 +205,16 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
     //   答案 | A | B | C
     // 或 markdown | 1 | 2 | 3 | 与 | A | B | C |。按列对齐配对。
     static const QRegularExpression cell(QStringLiteral("[^|｜\\s,，]+"));
+    // 下面四个临时正则原本写在循环里逐行构造，每行都重新编译一次模式。提到
+    // static const 后只编译一次，整份资料扫描的热路径显著变快。
+    static const QRegularExpression pipeMarker(QStringLiteral("[|｜]"));
+    static const QRegularExpression numberHeader(QStringLiteral("题号|题"));
+    static const QRegularExpression answerHeader(QStringLiteral("答案|答"));
     for (int index = sectionStart + 1; index < limit && index < lines.size(); ++index) {
         const QString a = lines.at(index).text.trimmed();
-        if (a.isEmpty() || !a.contains(QRegularExpression(QStringLiteral("[|｜]"))))
+        if (a.isEmpty() || !a.contains(pipeMarker))
             continue;
-        if (!a.contains(QRegularExpression(QStringLiteral("题号|题"))))
+        if (!a.contains(numberHeader))
             continue;
         // 下一非空行作为答案行。
         int answerLine = index + 1;
@@ -219,8 +224,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
         if (answerLine >= lines.size())
             break;
         const QString b = lines.at(answerLine).text.trimmed();
-        if (!b.contains(QRegularExpression(QStringLiteral("[|｜]"))) ||
-            !b.contains(QRegularExpression(QStringLiteral("答案|答"))))
+        if (!b.contains(pipeMarker) || !b.contains(answerHeader))
             continue;
         // 抽取两行的非分隔单元格，按列配对（题号行第一格“题号”是表头，跳过）。
         auto cells = [](const QString& row) {

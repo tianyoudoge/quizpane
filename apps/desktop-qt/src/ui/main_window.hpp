@@ -49,6 +49,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void showEvent(QShowEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
 private:
     // ActionMode 是登录/引导页主按钮的有限状态机，避免用多组 bool 拼状态。

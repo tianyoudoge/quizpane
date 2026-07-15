@@ -65,6 +65,7 @@ bool ProviderLoader::load(const QString& libraryPath, QString* error) {
     // QLibrary 对应 Java 的 System.loadLibrary，但这里还会逐个 resolve 导出函数，
     // 并校验 ABI/descriptor，防止把任意 DLL 当作题库执行。
     unload();
+    ++generation_;  // 让任何仍在排队的旧响应在 acceptResponse 里被判为陈旧。
     diagnostic::event(QStringLiteral("provider"), QStringLiteral("load-start"),
         {{QStringLiteral("file"), QFileInfo(libraryPath).fileName()}});
     if (QFileInfo(libraryPath).suffix().compare(QStringLiteral("json"),
@@ -154,7 +155,10 @@ void ProviderLoader::unload() {
     descriptor_ = {};
     providerId_.clear();
     declarative_.unload();
-    if (library_.isLoaded()) library_.unload();
+    // PreventUnloadHint 告诉 Qt 在卸载原生题库后不要真正把动态库从进程地址空间
+    // 移除：基于 Qt 的题库可能注册了 metatype 或进程级回调，卸载镜像会让那些
+    // 指针悬空。因此这里只销毁题库实例，绝不调用 library_.unload()，与 load 时
+    // 设置的 hint 保持一致的语义。
 }
 
 bool ProviderLoader::isLoaded() const { return handle_ != nullptr || declarative_.isLoaded(); }
@@ -167,7 +171,13 @@ bool ProviderLoader::request(const QJsonObject& request, QString* error) {
          {QStringLiteral("method"), request.value(QStringLiteral("method")).toString()}});
     if (declarative_.isLoaded()) {
         const QJsonObject response = declarative_.request(request);
-        QTimer::singleShot(0, this, [this, response] { emit responseReceived(response); });
+        const quint64 generation = generation_;
+        QTimer::singleShot(0, this, [this, generation, response] {
+            // 0ms 投递窗口内用户可能已切换/卸载题库；代号不匹配说明这是上一份
+            // 题库的回包，直接丢弃，避免把旧响应错路由到当前页面。
+            if (generation_ != generation) return;
+            emit responseReceived(response);
+        });
         return true;
     }
     if (!handle_ || !requestFn_) {
@@ -208,10 +218,13 @@ void ProviderLoader::responseThunk(void* userData, const char* json, size_t size
     if (!userData || !json) return;
     auto* self = static_cast<ProviderLoader*>(userData);
     const QByteArray copy(json, static_cast<qsizetype>(size));
+    const quint64 generation = self->generation_;
     // Provider 的网络回调可能来自任意线程。QueuedConnection 把处理任务投递回
     // self 所在线程（桌面端通常是 UI 主线程），类似把结果 dispatch 到前端主线程。
-    QMetaObject::invokeMethod(self, [self, copy] { self->acceptResponse(copy); },
-                              Qt::QueuedConnection);
+    // 代号在主线程真正执行 lambda 前再核对一次，覆盖“投递后用户又切了题库”的情形。
+    QMetaObject::invokeMethod(self, [self, copy, generation] {
+        self->acceptResponse(copy, generation);
+    }, Qt::QueuedConnection);
 }
 
 void ProviderLoader::logThunk(void* hostContext, qp_log_level level,
@@ -425,7 +438,13 @@ int ProviderLoader::secureDeleteThunk(void* hostContext, const char* key,
 #endif
 }
 
-void ProviderLoader::acceptResponse(const QByteArray& json) {
+void ProviderLoader::acceptResponse(const QByteArray& json, quint64 generation) {
+    if (generation != generation_) {
+        // 回包属于已被卸载或替换掉的旧题库，丢弃以免错路由。
+        diagnostic::event(QStringLiteral("provider"), QStringLiteral("response-stale"),
+            {{QStringLiteral("bytes"), json.size()}});
+        return;
+    }
     QJsonParseError parseError;
     const auto document = QJsonDocument::fromJson(json, &parseError);
     if (!document.isObject()) {

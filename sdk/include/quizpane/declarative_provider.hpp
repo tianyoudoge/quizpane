@@ -29,6 +29,9 @@ private:
     QString providerId_, providerName_, providerVersion_, bankTitle_, activeCatalogTitle_;
     QJsonArray catalogs_, questions_, materials_, activeQuestions_;
     QHash<QString, QJsonObject> materialsById_;
+    // catalogId -> 该分类下题目数。load 时预算一次，catalog.list 不必再对每个
+    // 分类线性遍历全部题目（题库大、分类多时 O(题×分类) 会卡目录加载）。
+    QHash<QString, int> questionCountByCatalog_;
     QHash<int, int> answers_;
 };
 

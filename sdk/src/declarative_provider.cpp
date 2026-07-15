@@ -69,6 +69,10 @@ bool DeclarativeProvider::load(const QString& bankPath, QString* errorOutput) {
     }
     for (const auto& value : materials_)
         materialsById_.insert(value.toObject().value("id").toString(), value.toObject());
+    // 预算 catalogId -> 题目数索引，catalog.list 直接查表，避免每分类遍历全量题。
+    questionCountByCatalog_.reserve(qMax(int(questions_.size()), 1));
+    for (const auto& value : questions_)
+        ++questionCountByCatalog_[value.toObject().value("catalogId").toString()];
     return true;
 }
 
@@ -76,7 +80,7 @@ void DeclarativeProvider::unload() {
     providerId_.clear(); providerName_.clear(); providerVersion_.clear(); bankTitle_.clear();
     activeCatalogTitle_.clear();
     catalogs_ = {}; questions_ = {}; materials_ = {}; activeQuestions_ = {};
-    materialsById_.clear(); answers_.clear();
+    materialsById_.clear(); questionCountByCatalog_.clear(); answers_.clear();
 }
 
 QJsonObject DeclarativeProvider::descriptor() const {
@@ -171,8 +175,8 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
     if (method == "catalog.list") {
         QJsonArray nodes;
         for (const auto& value : catalogs_) {
-            const QJsonObject catalog = value.toObject(); const QString catalogId = catalog.value("id").toString(); int count = 0;
-            for (const auto& question : questions_) count += question.toObject().value("catalogId").toString() == catalogId;
+            const QJsonObject catalog = value.toObject(); const QString catalogId = catalog.value("id").toString();
+            const int count = questionCountByCatalog_.value(catalogId, 0);
             const QJsonObject practice = catalog.value("practice").toObject();
             int suggested = practice.value("mode").toString() == QStringLiteral("all")
                 ? count : practice.value("questionCount").toInt(qMin(15, count));

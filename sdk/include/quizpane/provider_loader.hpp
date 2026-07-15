@@ -43,7 +43,7 @@ private:
     static int secureWriteThunk(void* hostContext, const char* key, size_t keySize,
                                 const uint8_t* value, size_t valueSize);
     static int secureDeleteThunk(void* hostContext, const char* key, size_t keySize);
-    void acceptResponse(const QByteArray& json);
+    void acceptResponse(const QByteArray& json, quint64 generation);
 
     QLibrary library_;
     DeclarativeProvider declarative_;
@@ -54,6 +54,10 @@ private:
     qp_provider_cancel_fn cancelFn_ = nullptr;
     qp_provider_destroy_fn destroyFn_ = nullptr;
     qp_host_api_v1 hostApi_{};
+    // 每次 load 递增的代。Provider 的响应回调可能跨线程异步到达，
+    // 当用户在 0ms 投递窗口内切换/卸载题库时，排队中的回包会携带旧代号，
+    // acceptResponse 据此丢弃属于已卸载题库的陈旧响应，避免错路由。
+    quint64 generation_ = 0;
 };
 
 }  // namespace quizpane

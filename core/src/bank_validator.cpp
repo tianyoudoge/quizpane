@@ -56,18 +56,30 @@ QSet<QString> validateCatalogs(const QJsonArray& catalogs, QList<BankValidationE
         const QJsonObject practice = catalog.value("practice").toObject();
         const QString mode = practice.value("mode").toString();
         const int count = practice.value("questionCount").toInt();
-        if (!hasOnlyKeys(catalog, catalogKeys) || !hasOnlyKeys(practice, practiceKeys) ||
-            !validId(id) || catalogIds.contains(id) || !catalog.value("title").isString() ||
-            title.trimmed().isEmpty() || title.size() > 80 || !catalog.value("practice").isObject() ||
-            (practice.contains("questionCount") && (!practice.value("questionCount").isDouble() ||
-                practice.value("questionCount").toDouble() != count || count < 1 || count > 200)) ||
-            (practice.contains("preferMistakes") && !practice.value("preferMistakes").isBool()) ||
-            (catalog.contains("description") && (!catalog.value("description").isString() ||
-                catalog.value("description").toString().size() > 500)) ||
-            !practiceModes().contains(mode)) {
-            errors->append({-1, {}, QStringLiteral("分类标识重复，或分类标题/组卷模式无效：%1").arg(id), {}});
-            continue;
+        // 把原先一条超长 OR 拆成多条细校验：每种失败给不同 message，便于题库
+        // 制作器在"检查问题"页定位到底是 id 重复、标题空、模式非法还是题量越界。
+        const auto reject = [&](const QString& reason) {
+            errors->append({-1, {}, QStringLiteral("分类 %1：%2").arg(id.isEmpty() ? QStringLiteral("（无标识）") : id, reason), {}});
+        };
+        if (!hasOnlyKeys(catalog, catalogKeys)) { reject(QStringLiteral("包含 Schema 未声明的字段")); continue; }
+        if (!hasOnlyKeys(practice, practiceKeys)) { reject(QStringLiteral("组卷配置包含未声明字段")); continue; }
+        if (!validId(id)) { reject(QStringLiteral("标识不符合规范")); continue; }
+        if (catalogIds.contains(id)) { reject(QStringLiteral("标识重复")); continue; }
+        if (!catalog.value("title").isString() || title.trimmed().isEmpty()) { reject(QStringLiteral("标题为空")); continue; }
+        if (title.size() > 80) { reject(QStringLiteral("标题超过 80 字")); continue; }
+        if (!catalog.value("practice").isObject()) { reject(QStringLiteral("缺少组卷配置")); continue; }
+        if (practice.contains("questionCount") && (!practice.value("questionCount").isDouble() ||
+            practice.value("questionCount").toDouble() != count || count < 1 || count > 200)) {
+            reject(QStringLiteral("每套题数量需为 1–200")); continue;
         }
+        if (practice.contains("preferMistakes") && !practice.value("preferMistakes").isBool()) {
+            reject(QStringLiteral("preferMistakes 必须是布尔值")); continue;
+        }
+        if (catalog.contains("description") && (!catalog.value("description").isString() ||
+            catalog.value("description").toString().size() > 500)) {
+            reject(QStringLiteral("描述超过 500 字")); continue;
+        }
+        if (!practiceModes().contains(mode)) { reject(QStringLiteral("组卷模式 %1 不支持").arg(mode)); continue; }
         catalogIds.insert(id);
     }
     return catalogIds;

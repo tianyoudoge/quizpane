@@ -95,13 +95,19 @@ QByteArray readDocxDocumentXml(const QString& path, QString* error) {
     }
     size_t size = 0;
     void* bytes = mz_zip_reader_extract_to_heap(&archive, static_cast<mz_uint>(index), &size, 0);
-    QByteArray result;
-    if (bytes || size == 0)
-        result = QByteArray(static_cast<const char*>(bytes), static_cast<qsizetype>(size));
+    // extract_to_heap 在成功时返回非空指针；失败时返回空指针（此时 size 仍可能
+    // 非零，是把"需要多大"写回给调用方的信号）。必须把"有 size 无指针"当作
+    // 解压失败，而不是构造一个空的 QByteArray 当成功。
+    if (!bytes) {
+        mz_zip_reader_end(&archive);
+        *error = QStringLiteral("DOCX 正文 XML 解压失败");
+        return {};
+    }
+    QByteArray result(static_cast<const char*>(bytes), static_cast<qsizetype>(size));
     mz_free(bytes);
     mz_zip_reader_end(&archive);
     if (result.isEmpty())
-        *error = QStringLiteral("DOCX 正文 XML 为空或解压失败");
+        *error = QStringLiteral("DOCX 正文 XML 为空");
     return result;
 }
 

@@ -18,6 +18,7 @@
 #include <QImage>
 #include <QIcon>
 #include <QJsonDocument>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
 #include <QMenu>
@@ -804,17 +805,21 @@ void MainWindow::chooseAnswer(int choice) {
          {"params", QJsonObject{{"attemptId", attemptId_}, {"answers", payload}}}},
         &error);
     saveDraft();
-    // 留出极短的选中反馈，再自动进入下一题。若用户已经手动切题，index 校验
-    // 会阻止旧定时器把新页面再次向前推进。
+    // 留出选中反馈再自动进入下一题。原值 120ms 几乎是“一眨眼”，在职备考用户
+    // 常想先点一个答案、再核对是否改主意，根本来不及回退；默认放宽到 700ms
+    // 并允许在设置里调整（practice/autoAdvanceMs），设为 0 即关闭自动跳题。
+    // 若用户已手动切题，index 校验会阻止旧定时器把新页面再次向前推进。
+    const int advanceMs = QSettings().value(QStringLiteral("practice/autoAdvanceMs"), 700).toInt();
     const int answeredIndex = currentQuestionIndex_;
+    if (advanceMs <= 0) return;
     if (answeredIndex + 1 < questions_.size()) {
-        QTimer::singleShot(120, this, [this, answeredIndex] {
+        QTimer::singleShot(advanceMs, this, [this, answeredIndex] {
             if (currentQuestionIndex_ == answeredIndex)
                 showQuestion(answeredIndex + 1);
         });
     } else {
         // 最后一题没有“下一题”可跳，短暂停留显示选中反馈后直接询问是否交卷。
-        QTimer::singleShot(120, this, [this, answeredIndex] {
+        QTimer::singleShot(advanceMs, this, [this, answeredIndex] {
             if (currentQuestionIndex_ == answeredIndex)
                 submitAttempt();
         });
@@ -1620,6 +1625,35 @@ void MainWindow::showEvent(QShowEvent* event) {
         platform::applyNativeWindowPin(this, pinned_);
         if (pinned_) raise();
     });
+}
+
+void MainWindow::keyPressEvent(QKeyEvent* event) {
+    // 小窗场景下双手不离键盘做几题更顺手：数字键直接选选项，方向键翻题，
+    // Enter/Return 交卷。只对答题页和解析页生效，避免影响对话框默认行为。
+    if (event->isAutoRepeat()) { QMainWindow::keyPressEvent(event); return; }
+    QWidget* page = pages_ ? pages_->currentWidget() : nullptr;
+    if (page == practicePage_) {
+        const int key = event->key();
+        if (key == Qt::Key_Left || key == Qt::Key_Up) {
+            showQuestion(currentQuestionIndex_ - 1); return;
+        }
+        if (key == Qt::Key_Right || key == Qt::Key_Down) {
+            showQuestion(currentQuestionIndex_ + 1); return;
+        }
+        // 数字键 1-9 / 小键盘 1-9：直接选对应序号的选项。
+        const int digit = key - Qt::Key_1;
+        if (digit >= 0 && digit < 9 && digit < questions_.size() &&
+            currentQuestionIndex_ >= 0 && currentQuestionIndex_ < questions_.size()) {
+            const QJsonObject question = questions_.at(currentQuestionIndex_).toObject();
+            if (digit < question.value("options").toArray().size()) { chooseAnswer(digit); return; }
+        }
+        if (key == Qt::Key_Enter || key == Qt::Key_Return) { submitAttempt(); return; }
+    } else if (page == solutionPage_) {
+        const int key = event->key();
+        if (key == Qt::Key_Left || key == Qt::Key_Up) { showSolution(currentSolutionIndex_ - 1); return; }
+        if (key == Qt::Key_Right || key == Qt::Key_Down) { showSolution(currentSolutionIndex_ + 1); return; }
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::applyCardStyle() {
