@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.24)
 
 project(QuizPane VERSION 0.2.4 LANGUAGES C CXX)
 
+if(WIN32)
+    # 禁止 Windows SDK 注入 min/max 宏，避免破坏 std::min/std::max 和
+    # std::numeric_limits<T>::max() 等现代 C++ API。对子目录所有目标生效。
+    add_compile_definitions(NOMINMAX)
+endif()
+
 include(FetchContent)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -20,6 +26,31 @@ option(QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS
        "Include bounded source and model payloads in diagnostic logs" OFF)
 option(QUIZPANE_PORTABLE_CPU_BASELINE
        "Build release binaries for a conservative, portable CPU baseline" ON)
+option(QUIZPANE_ENABLE_PCH "Use a shared precompiled header for C++ targets" ON)
+option(QUIZPANE_ENABLE_UNITY_BUILD
+       "Batch translation units for faster clean builds (best used in the fast preset)" OFF)
+option(QUIZPANE_ENABLE_COMPILER_CACHE "Use ccache or sccache when available" ON)
+
+if(QUIZPANE_ENABLE_COMPILER_CACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    find_program(QUIZPANE_COMPILER_CACHE NAMES sccache ccache)
+    if(QUIZPANE_COMPILER_CACHE)
+        set(CMAKE_C_COMPILER_LAUNCHER "${QUIZPANE_COMPILER_CACHE}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${QUIZPANE_COMPILER_CACHE}")
+        message(STATUS "QuizPane compiler cache: ${QUIZPANE_COMPILER_CACHE}")
+    endif()
+endif()
+
+function(quizpane_optimize_target target)
+    if(QUIZPANE_ENABLE_PCH)
+        target_precompile_headers(${target} PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:${PROJECT_SOURCE_DIR}/cmake/quizpane_pch.hxx>")
+    endif()
+    if(QUIZPANE_ENABLE_UNITY_BUILD)
+        set_target_properties(${target} PROPERTIES
+            UNITY_BUILD ON
+            UNITY_BUILD_BATCH_SIZE 6)
+    endif()
+endfunction()
 if(QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS AND NOT QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING)
     message(FATAL_ERROR "Verbose diagnostics require QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING=ON")
 endif()
@@ -83,8 +114,8 @@ endif()
 
 FetchContent_Declare(qrcodegen_source
     GIT_REPOSITORY https://github.com/nayuki/QR-Code-generator.git
-    GIT_TAG v1.8.0
-    GIT_SHALLOW TRUE
+    # v1.8.0 peeled commit；锁定不可变提交，避免 tag 被移动导致产物漂移。
+    GIT_TAG 720f62bddb7226106071d4728c292cb1df519ceb
 )
 FetchContent_MakeAvailable(qrcodegen_source)
 add_library(qrcodegen STATIC
@@ -105,8 +136,7 @@ set(INSTALL_PROJECT OFF CACHE BOOL "" FORCE)
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_Declare(miniz_source
     GIT_REPOSITORY https://github.com/richgel999/miniz.git
-    GIT_TAG 3.0.2
-    GIT_SHALLOW TRUE
+    GIT_TAG 293d4db1b7d0ffee9756d035b9ac6f7431ef8492
 )
 FetchContent_MakeAvailable(miniz_source)
 

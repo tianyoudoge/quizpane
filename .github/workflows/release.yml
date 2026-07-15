@@ -46,7 +46,7 @@ jobs:
           modules: qt5compat qtpdf qtwebengine
           cache: true
 
-      - name: Build, test and package both applications
+      - name: Build, test and package QuizPane
         env:
           QT_PREFIX: ${{ env.QT_ROOT_DIR }}
           SIGN_IDENTITY: "-"
@@ -55,10 +55,8 @@ jobs:
       - name: Prepare portable release assets
         run: |
           mkdir -p release-assets
-          cp "dist/macos/小窗刷题-macos-${{ matrix.arch }}.zip" \
-            "release-assets/QuizPane-macos-${{ matrix.arch }}.zip"
-          cp "dist/macos/题库制作器-macos-${{ matrix.arch }}.zip" \
-            "release-assets/QuizPane-Question-Maker-macos-${{ matrix.arch }}.zip"
+          cp "dist/macos/QuizPane-macos-${{ matrix.arch }}.dmg" \
+            "release-assets/QuizPane-macos-${{ matrix.arch }}.dmg"
           cd release-assets
           shasum -a 256 * > "SHA256SUMS-macos-${{ matrix.arch }}.txt"
 
@@ -102,7 +100,7 @@ jobs:
         env:
           VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-binary-cache
         run: |
-          choco install cmake ninja -y --no-progress
+          choco install cmake ninja innosetup -y --no-progress
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install tesseract:x64-windows-static-md
 
       - name: Download OCR language data
@@ -122,7 +120,7 @@ jobs:
           modules: qt5compat qtpdf qtwebengine
           cache: true
 
-      - name: Build, test and package both applications
+      - name: Build, test and package QuizPane
         shell: pwsh
         run: |
           ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR" `
@@ -133,9 +131,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release-assets | Out-Null
-          Copy-Item "dist/windows/QuizPane-windows-x64.zip" release-assets/
-          Copy-Item "dist/windows/QuizPane-Question-Maker-windows-x64.zip" release-assets/
-          Get-ChildItem release-assets/*.zip | ForEach-Object {
+          Copy-Item "dist/windows/QuizPane-windows-x64.exe" release-assets/
+          Get-ChildItem release-assets/*.exe | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$hash  $($_.Name)" | Add-Content release-assets/SHA256SUMS-windows-x64.txt
           }
@@ -182,7 +179,7 @@ jobs:
           chmod +x "$RUNNER_TEMP/linuxdeploy/"*
           echo "$RUNNER_TEMP/linuxdeploy" >> "$GITHUB_PATH"
 
-      - name: Build, test and package both applications
+      - name: Build, test and package QuizPane
         env:
           QT_PREFIX: ${{ env.QT_ROOT_DIR }}
           DISTRO_ID: linux
@@ -193,9 +190,8 @@ jobs:
         run: |
           mkdir -p release-assets
           cp dist/uos/QuizPane-linux-x86_64.tar.gz release-assets/
-          cp dist/uos/QuizPane-Question-Maker-linux-x86_64.tar.gz release-assets/
           cp dist/uos/QuizPane-linux-x86_64.tar.xz release-assets/
-          cp dist/uos/QuizPane-Question-Maker-linux-x86_64.tar.xz release-assets/
+          cp dist/uos/QuizPane-linux-x86_64.deb release-assets/
           cd release-assets
           sha256sum * > SHA256SUMS-linux-x86_64.txt
 

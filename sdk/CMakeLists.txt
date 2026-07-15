@@ -8,16 +8,22 @@ add_library(quizpane_provider_host STATIC
     include/quizpane/declarative_provider.hpp
     include/quizpane/provider_installer.hpp
     include/quizpane/provider_loader.hpp
+    include/quizpane/secret_store.hpp
     src/declarative_provider.cpp
     src/provider_installer.cpp
     src/provider_loader.cpp
+    src/secret_store.cpp
     src/zip_archive.cpp
 )
+# 系统凭据实现会包含 Windows SDK/libsecret 头，避免其宏污染其他 Unity 源。
+set_source_files_properties(src/secret_store.cpp PROPERTIES
+    SKIP_UNITY_BUILD_INCLUSION ON)
 target_include_directories(quizpane_provider_host PUBLIC include)
 target_link_libraries(quizpane_provider_host
     PUBLIC quizpane_provider_sdk Qt6::Core
     PRIVATE quizpane_core miniz
 )
+quizpane_optimize_target(quizpane_provider_host)
 if(APPLE)
     target_link_libraries(quizpane_provider_host PUBLIC
         "-framework Security" "-framework CoreFoundation")

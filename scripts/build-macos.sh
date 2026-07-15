@@ -5,12 +5,61 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build/release-macos}"
 DIST_DIR="${DIST_DIR:-$ROOT/dist/macos}"
 QT_PREFIX="${QT_PREFIX:-$(brew --prefix qt)}"
-TESSDATA_DIR="${TESSDATA_DIR:-$(brew --prefix)/share/tessdata}"
+QT5COMPAT_PREFIX="${QT5COMPAT_PREFIX:-}"
+TESSDATA_DIR="${TESSDATA_DIR:-$(brew --prefix tesseract)/share/tessdata}"
+TESSDATA_LANG_DIR="${TESSDATA_LANG_DIR:-$(brew --prefix tesseract-lang)/share/tessdata}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 CLEAN_BUILD="${CLEAN_BUILD:-1}"
 DEBUG_BUILD="${DEBUG_BUILD:-0}"
 VERBOSE_LOGS="${VERBOSE_LOGS:-0}"
 export PKG_CONFIG_PATH="$(brew --prefix tesseract)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
+# Homebrew 将 Qt5Compat 拆成独立 formula；Qt online installer 则把它放在 Qt
+# 根目录。两种开发环境都传给 CMake，但 macdeployqt 仍使用主 Qt 的 bin 目录。
+if [[ -z "$QT5COMPAT_PREFIX" ]]; then
+  if [[ -d "$QT_PREFIX/lib/cmake/Qt6Core5Compat" ]]; then
+    QT5COMPAT_PREFIX="$QT_PREFIX"
+  elif command -v brew >/dev/null 2>&1 && brew list --versions qt5compat >/dev/null 2>&1; then
+    QT5COMPAT_PREFIX="$(brew --prefix qt5compat)"
+  fi
+fi
+CMAKE_PREFIX_PATH="$QT_PREFIX"
+if [[ -n "$QT5COMPAT_PREFIX" ]]; then
+  CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH;$QT5COMPAT_PREFIX"
+fi
+
+# Homebrew 的聚合 qt formula 可能不再直接提供 macdeployqt，而是由 qtbase
+# formula 提供；优先尊重显式配置，再依次兼容两种 Homebrew 布局。
+MACDEPLOYQT="${MACDEPLOYQT:-}"
+if [[ -z "$MACDEPLOYQT" && -x "$QT_PREFIX/bin/macdeployqt" ]]; then
+  MACDEPLOYQT="$QT_PREFIX/bin/macdeployqt"
+elif [[ -z "$MACDEPLOYQT" ]] && command -v macdeployqt >/dev/null 2>&1; then
+  MACDEPLOYQT="$(command -v macdeployqt)"
+fi
+if [[ -z "$MACDEPLOYQT" || ! -x "$MACDEPLOYQT" ]]; then
+  echo "未找到 macdeployqt；请安装 qtbase 或设置 MACDEPLOYQT" >&2
+  exit 1
+fi
+
+# Qt 的 Homebrew 拆包会把 QtSvg、QtPdf 等 Framework 放在各自 formula
+# 的 lib 目录。macdeployqt 默认只搜索 qtbase，因而需要把已安装模块显式
+# 加进查找路径，才能收集制作器与主程序的全部 Qt Framework。
+QT_DEPLOY_LIB_PATHS=()
+if [[ -d "$QT_PREFIX/lib" ]]; then
+  QT_DEPLOY_LIB_PATHS+=("$QT_PREFIX/lib")
+fi
+for qt_module in qtbase qtsvg qtwebengine; do
+  if brew list --versions "$qt_module" >/dev/null 2>&1; then
+    qt_module_lib="$(brew --prefix "$qt_module")/lib"
+    if [[ -d "$qt_module_lib" ]]; then
+      QT_DEPLOY_LIB_PATHS+=("$qt_module_lib")
+    fi
+  fi
+done
+if [[ ${#QT_DEPLOY_LIB_PATHS[@]} -eq 0 ]]; then
+  echo "未找到 Qt Framework 搜索目录" >&2
+  exit 1
+fi
 
 BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
@@ -33,9 +82,9 @@ if [[ "$CLEAN_BUILD" == "1" ]]; then
   rm -rf "$BUILD_DIR"
 fi
 
-cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
+cmake --preset release -S "$ROOT" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-  -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
+  -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
   -DQUIZPANE_ENABLE_TESSERACT_OCR=ON \
   -DQUIZPANE_PORTABLE_CPU_BASELINE=ON \
   -DQUIZPANE_ENABLE_DIAGNOSTIC_LOGGING="$DIAGNOSTIC_LOGGING" \
@@ -56,23 +105,47 @@ STAGED_APP="$STAGE_ROOT/QuizPane.app"
 ditto "$SOURCE_APP" "$STAGED_APP"
 deploy_app() {
   local app_path="$1"
+  local deploy_args=("$MACDEPLOYQT" "$app_path" -always-overwrite)
+  local lib_path
+  for lib_path in "${QT_DEPLOY_LIB_PATHS[@]}"; do
+    deploy_args+=("-libpath=$lib_path")
+  done
   # macOS 自带的 Bash 3.2 在 set -u 下展开空数组会报 unbound variable，
-  # 因此这里显式区分是否保留调试符号，不拼接可选参数数组。
+  # QT_DEPLOY_LIB_PATHS 在初始化时至少有一个元素，因此展开不会触发该问题。
   if [[ "$DEBUG_BUILD" == "1" ]]; then
-    "$QT_PREFIX/bin/macdeployqt" "$app_path" -always-overwrite -no-strip
+    deploy_args+=(-no-strip)
   else
-    "$QT_PREFIX/bin/macdeployqt" "$app_path" -always-overwrite
+    :
   fi
+  "${deploy_args[@]}"
+}
+
+# Homebrew 的 macdeployqt 在 Qt 模块拆分安装时不会始终解析 QtSvg/QtPdf 的
+# rpath；这两个 Framework 是当前 UI 和 PDF 提取的直接依赖，因此明确复制，
+# 后续仍由外层 codesign 统一签名。
+copy_qt_framework() {
+  local app_path="$1"
+  local framework_path="$2"
+  if [[ ! -d "$framework_path" ]]; then
+    echo "缺少 Qt Framework：$framework_path" >&2
+    exit 1
+  fi
+  mkdir -p "$app_path/Contents/Frameworks"
+  local destination="$app_path/Contents/Frameworks/$(basename "$framework_path")"
+  ditto "$framework_path" "$destination"
+  chmod -R u+w "$destination"
 }
 deploy_app "$STAGED_APP"
+copy_qt_framework "$STAGED_APP" "$(brew --prefix qtsvg)/lib/QtSvg.framework"
+copy_qt_framework "$STAGED_APP" "$(brew --prefix qtwebengine)/lib/QtPdf.framework"
 STAGED_STUDIO="$STAGE_ROOT/QuizPaneQuestionMaker.app"
 ditto "$SOURCE_STUDIO" "$STAGED_STUDIO"
-if [[ ! -f "$TESSDATA_DIR/chi_sim.traineddata" || ! -f "$TESSDATA_DIR/eng.traineddata" ]]; then
-  echo "缺少 OCR 语言数据：$TESSDATA_DIR/{chi_sim,eng}.traineddata" >&2
+if [[ ! -f "$TESSDATA_DIR/eng.traineddata" || ! -f "$TESSDATA_LANG_DIR/chi_sim.traineddata" ]]; then
+  echo "缺少 OCR 语言数据：$TESSDATA_DIR/eng.traineddata 或 $TESSDATA_LANG_DIR/chi_sim.traineddata" >&2
   exit 1
 fi
 mkdir -p "$STAGED_STUDIO/Contents/Resources/tessdata"
-cp "$TESSDATA_DIR/chi_sim.traineddata" "$TESSDATA_DIR/eng.traineddata" \
+cp "$TESSDATA_LANG_DIR/chi_sim.traineddata" "$TESSDATA_DIR/eng.traineddata" \
   "$STAGED_STUDIO/Contents/Resources/tessdata/"
 # 先递归收集 Tesseract/Leptonica 等 Homebrew 动态库。macdeployqt 会把非 Qt
 # 依赖改写成 App 内路径却不复制源库，因此必须在它处理制作器之前完成收集。
@@ -81,6 +154,8 @@ dylibbundler -od -b \
   -d "$STAGED_STUDIO/Contents/Frameworks" \
   -p @executable_path/../Frameworks
 deploy_app "$STAGED_STUDIO"
+copy_qt_framework "$STAGED_STUDIO" "$(brew --prefix qtsvg)/lib/QtSvg.framework"
+copy_qt_framework "$STAGED_STUDIO" "$(brew --prefix qtwebengine)/lib/QtPdf.framework"
 if ! find "$STAGED_STUDIO/Contents/Frameworks" -iname '*tesseract*.dylib' -print -quit | grep -q .; then
   echo "OCR 打包失败：应用包中没有 Tesseract 动态库" >&2
   exit 1
@@ -96,18 +171,24 @@ if [[ "$DEBUG_BUILD" != "1" ]]; then
 fi
 APP="$STAGE_ROOT/小窗刷题.app"
 mv "$STAGED_APP" "$APP"
-STUDIO="$STAGE_ROOT/题库制作器.app"
+HELPERS="$APP/Contents/Helpers"
+mkdir -p "$HELPERS"
+STUDIO="$HELPERS/题库制作器.app"
 mv "$STAGED_STUDIO" "$STUDIO"
-codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
+# 制作器是主程序的一部分：先签 Helper，再签外层 App，确保 macOS 校验嵌套
+# Bundle 时能够追溯到同一份发行包。
 codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$STUDIO"
+codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
-codesign --verify --deep --strict "$STUDIO"
-ditto -c -k --zlibCompressionLevel 9 --sequesterRsrc --keepParent "$APP" \
-  "$DIST_DIR/小窗刷题-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
-ditto -c -k --zlibCompressionLevel 9 --sequesterRsrc --keepParent "$STUDIO" \
-  "$DIST_DIR/题库制作器-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
 
-echo "已生成：$DIST_DIR/小窗刷题-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
-echo "已生成：$DIST_DIR/题库制作器-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
-du -h "$DIST_DIR/小窗刷题-macos-$(uname -m)$PACKAGE_SUFFIX.zip" \
-  "$DIST_DIR/题库制作器-macos-$(uname -m)$PACKAGE_SUFFIX.zip"
+DMG_STAGE="$BUILD_DIR/dmg-stage"
+rm -rf "$DMG_STAGE"
+mkdir -p "$DMG_STAGE"
+ditto "$APP" "$DMG_STAGE/小窗刷题.app"
+ln -s /Applications "$DMG_STAGE/Applications"
+DMG="$DIST_DIR/QuizPane-macos-$(uname -m)$PACKAGE_SUFFIX.dmg"
+rm -f "$DMG"
+hdiutil create -volname "QuizPane" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG"
+
+echo "已生成：$DMG"
+du -h "$DMG"

@@ -4,8 +4,8 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QSettings>
-#include <shellapi.h>
 #include <windows.h>
+#include <shlobj.h>
 #endif
 
 namespace quizpane::platform {

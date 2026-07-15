@@ -50,7 +50,7 @@ if [[ "$VERBOSE_LOGS" == "1" ]]; then
   VERBOSE_DIAGNOSTICS="ON"
 fi
 
-cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
+cmake --preset release -S "$ROOT" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
   -DQUIZPANE_ENABLE_TESSERACT_OCR=ON \
   -DQUIZPANE_PORTABLE_CPU_BASELINE=ON \
@@ -129,7 +129,6 @@ package_app "QuizPane" "小窗刷题" \
 mkdir -p "$DIST_DIR/QuizPane.AppDir/usr/share/mime/packages"
 cp "$ROOT/packaging/linux/org.quizpane.provider.xml" \
   "$DIST_DIR/QuizPane.AppDir/usr/share/mime/packages/"
-create_archives "QuizPane" "QuizPane.AppDir"
 
 package_app "QuizPane-Question-Maker" "题库制作器" \
   "$BUILD_DIR/apps/bank-studio/题库制作器" \
@@ -148,4 +147,31 @@ if [[ ! -f "$TESSDATA_DIR/chi_sim.traineddata" || ! -f "$TESSDATA_DIR/eng.traine
 fi
 mkdir -p "$STUDIO_TESSDATA"
 cp "$TESSDATA_DIR/chi_sim.traineddata" "$TESSDATA_DIR/eng.traineddata" "$STUDIO_TESSDATA/"
-create_archives "QuizPane-Question-Maker" "QuizPane-Question-Maker.AppDir"
+
+# 发布物只保留一个应用目录：题库制作器作为小窗刷题随附的 Helper，可由主程序
+# 直接启动。两个程序共用同一套 Qt 运行库，复制时覆盖同版本文件是安全的。
+cp -R "$DIST_DIR/QuizPane-Question-Maker.AppDir/usr/." "$DIST_DIR/QuizPane.AppDir/usr/"
+rm -rf "$DIST_DIR/QuizPane-Question-Maker.AppDir"
+create_archives "QuizPane" "QuizPane.AppDir"
+
+# Debian/UOS 系用户优先获得系统安装包；同内容 tar.gz 仍保留给无法安装 deb 的
+# 环境。把 AppDir 的 usr 内容放入 /opt，避免污染系统 Qt 库。
+if command -v dpkg-deb >/dev/null 2>&1; then
+  DEB_ROOT="$BUILD_DIR/deb-root"
+  rm -rf "$DEB_ROOT"
+  mkdir -p "$DEB_ROOT/DEBIAN" "$DEB_ROOT/opt/quizpane" "$DEB_ROOT/usr/bin"
+  cp -R "$DIST_DIR/QuizPane.AppDir/usr/." "$DEB_ROOT/opt/quizpane/"
+  ln -s ../opt/quizpane/bin/小窗刷题 "$DEB_ROOT/usr/bin/小窗刷题"
+  ln -s ../opt/quizpane/bin/题库制作器 "$DEB_ROOT/usr/bin/题库制作器"
+  cat > "$DEB_ROOT/DEBIAN/control" <<EOF
+Package: quizpane
+Version: ${PROJECT_VERSION:-0.2.4}
+Section: education
+Priority: optional
+Architecture: $ARCH
+Maintainer: QuizPane Project
+Description: QuizPane floating quiz client and question maker
+EOF
+  dpkg-deb --root-owner-group --build "$DEB_ROOT" \
+    "$DIST_DIR/QuizPane-$DISTRO_ID-$ARCH$PACKAGE_SUFFIX.deb"
+fi

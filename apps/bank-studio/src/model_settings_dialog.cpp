@@ -1,4 +1,5 @@
 #include "model_settings_dialog.hpp"
+#include "styled_dropdown.hpp"
 
 #include <QColor>
 #include <QComboBox>
@@ -170,7 +171,7 @@ std::optional<ModelSettings> editModelSettings(QWidget* parent,
     auto* form = new QFormLayout;
     form->setSpacing(10);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    auto* service = new QComboBox;
+    auto* service = new StyledDropdown;
     for (const auto& vendor : modelVendors()) {
         service->addItem(vendorIcon(vendor), vendor.name, vendor.id);
     }
@@ -332,7 +333,7 @@ std::optional<ModelSettings> editModelSettings(QWidget* parent,
         if (model->findText(current.modelName) < 0) model->insertItem(0, current.modelName);
         model->setCurrentText(current.modelName);
     }
-    QObject::connect(service, &QComboBox::currentIndexChanged, &dialog,
+    QObject::connect(service, &StyledDropdown::currentIndexChanged, &dialog,
                      [&, refreshVendor](int) {
         apiKey->clear();
         refreshVendor(false);

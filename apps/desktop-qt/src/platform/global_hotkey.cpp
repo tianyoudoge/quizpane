@@ -19,8 +19,6 @@ constexpr int kHotkeyId = 0x5150;
 
 bool parseHotkey(const QKeySequence& sequence, int* key,
                  Qt::KeyboardModifiers* modifiers, QString* error) {
-    // 只开放“修饰键 + 字母/数字”的交集，避免某个平台接受、另一个平台无法表示。
-    // 这是一种 portability-first 的校验策略。
     if (sequence.count() != 1) {
         if (error) *error = QStringLiteral("老板键必须是一个按键组合");
         return false;
@@ -28,11 +26,14 @@ bool parseHotkey(const QKeySequence& sequence, int* key,
     const QKeyCombination combination = sequence[0];
     const int parsedKey = combination.key();
     const auto parsedModifiers = combination.keyboardModifiers();
-    if (!((parsedKey >= Qt::Key_A && parsedKey <= Qt::Key_Z) ||
-          (parsedKey >= Qt::Key_0 && parsedKey <= Qt::Key_9)) ||
+    const bool portableKey =
+        (parsedKey >= Qt::Key_A && parsedKey <= Qt::Key_Z) ||
+        (parsedKey >= Qt::Key_0 && parsedKey <= Qt::Key_9) ||
+        (parsedKey >= Qt::Key_F1 && parsedKey <= Qt::Key_F12);
+    if (!portableKey ||
         parsedModifiers == Qt::NoModifier) {
         if (error)
-            *error = QStringLiteral("请选择带修饰键的字母或数字，例如 Ctrl+Shift+H");
+            *error = QStringLiteral("请选择带修饰键的字母、数字或 F1–F12，例如 Ctrl+Shift+H");
         return false;
     }
     *key = parsedKey;
@@ -61,6 +62,12 @@ UInt32 macKeyCode(int key) {
     case Qt::Key_4: return kVK_ANSI_4; case Qt::Key_5: return kVK_ANSI_5;
     case Qt::Key_6: return kVK_ANSI_6; case Qt::Key_7: return kVK_ANSI_7;
     case Qt::Key_8: return kVK_ANSI_8; case Qt::Key_9: return kVK_ANSI_9;
+    case Qt::Key_F1: return kVK_F1; case Qt::Key_F2: return kVK_F2;
+    case Qt::Key_F3: return kVK_F3; case Qt::Key_F4: return kVK_F4;
+    case Qt::Key_F5: return kVK_F5; case Qt::Key_F6: return kVK_F6;
+    case Qt::Key_F7: return kVK_F7; case Qt::Key_F8: return kVK_F8;
+    case Qt::Key_F9: return kVK_F9; case Qt::Key_F10: return kVK_F10;
+    case Qt::Key_F11: return kVK_F11; case Qt::Key_F12: return kVK_F12;
     default: return UINT32_MAX;
     }
 }
@@ -124,8 +131,9 @@ bool GlobalHotkey::registerBossKey(const QKeySequence& sequence, QString* error)
     if (modifiers.testFlag(Qt::ShiftModifier)) nativeModifiers |= MOD_SHIFT;
     if (modifiers.testFlag(Qt::AltModifier)) nativeModifiers |= MOD_ALT;
     if (modifiers.testFlag(Qt::MetaModifier)) nativeModifiers |= MOD_WIN;
-    if (!RegisterHotKey(nullptr, kHotkeyId, nativeModifiers,
-                        static_cast<UINT>(key))) {
+    const UINT nativeKey = key >= Qt::Key_F1 && key <= Qt::Key_F12
+        ? VK_F1 + static_cast<UINT>(key - Qt::Key_F1) : static_cast<UINT>(key);
+    if (!RegisterHotKey(nullptr, kHotkeyId, nativeModifiers, nativeKey)) {
         if (error) *error = QStringLiteral("%1 已被其他程序占用")
                                 .arg(sequence.toString(QKeySequence::NativeText));
         return false;
@@ -142,7 +150,9 @@ bool GlobalHotkey::registerBossKey(const QKeySequence& sequence, QString* error)
     }
     const Window root = DefaultRootWindow(display);
     const KeySym symbol = key >= Qt::Key_A && key <= Qt::Key_Z
-        ? XK_A + (key - Qt::Key_A) : XK_0 + (key - Qt::Key_0);
+        ? XK_A + (key - Qt::Key_A)
+        : key >= Qt::Key_F1 && key <= Qt::Key_F12
+            ? XK_F1 + (key - Qt::Key_F1) : XK_0 + (key - Qt::Key_0);
     const int keycode = XKeysymToKeycode(display, symbol);
     unsigned int base = 0;
     if (modifiers.testFlag(Qt::ControlModifier)) base |= ControlMask;

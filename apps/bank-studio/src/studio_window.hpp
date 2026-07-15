@@ -2,25 +2,29 @@
 
 #include "model_settings_dialog.hpp"
 
+#include <QHash>
 #include <QMainWindow>
+#include "quizpane/studio/review_result.hpp"
 #include <QJsonArray>
 #include <QStringList>
 
-class QComboBox;
 class QLabel;
 class QLineEdit;
-class QListWidget;
 class QProgressBar;
 class QPushButton;
+class QScrollArea;
 class QStackedWidget;
 class QTreeWidget;
+class QVBoxLayout;
 class QTimer;
 class QCloseEvent;
 class QNetworkAccessManager;
 
 namespace quizpane::studio {
 class GenerationWorkflow;
-struct GeneratedBankCandidate;
+class SourceRowWidget;
+class StyledDropdown;
+using GeneratedBankCandidate = ReviewResult;
 struct WorkflowProgress;
 }
 
@@ -48,7 +52,8 @@ private:
                         const QString& description);
     void addSourceFiles();
     void appendSources(const QStringList& paths);
-    void removeSelectedSource();
+    void pairAnswer(const QString& question, const QString& answer);
+    void removeSource(const QString& question);
     void showModelSettings();
     void updateNavigation();
     void movePage(int delta);
@@ -59,7 +64,8 @@ private:
     void applyStyle();
 
     QStackedWidget* pages_ = nullptr;
-    QListWidget* sourceList_ = nullptr;
+    QScrollArea* sourceScroll_ = nullptr;
+    QVBoxLayout* sourceListLayout_ = nullptr;
     QWidget* sourcePanel_ = nullptr;
     QLabel* sourceSummary_ = nullptr;
     QLabel* modelSummary_ = nullptr;
@@ -75,14 +81,16 @@ private:
     QPushButton* duplicateButton_ = nullptr;
     QLabel* finishPath_ = nullptr;
     QLineEdit* bankName_ = nullptr;
-    QComboBox* questionCount_ = nullptr;
-    QComboBox* generationMode_ = nullptr;
+    StyledDropdown* questionCount_ = nullptr;
+    StyledDropdown* generationMode_ = nullptr;
     QPushButton* backButton_ = nullptr;
     QPushButton* nextButton_ = nullptr;
     QPushButton* startButton_ = nullptr;
     QNetworkAccessManager* networkManager_ = nullptr;
     GenerationWorkflow* workflow_ = nullptr;
     QStringList sourcePaths_;
+    QHash<QString, QString> answerPathsByQuestion_;
+    QHash<QString, SourceRowWidget*> sourceRows_;
     QJsonArray generatedMaterials_;
     QJsonArray generatedQuestions_;
     QJsonArray reviewQuestions_;

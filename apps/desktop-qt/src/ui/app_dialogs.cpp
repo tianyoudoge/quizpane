@@ -5,10 +5,69 @@
 #include <QDialogButtonBox>
 #include <QKeySequenceEdit>
 #include <QLabel>
+#include <QListWidget>
 #include <QPushButton>
 #include <QVBoxLayout>
 
 namespace quizpane::ui {
+
+bool confirm(QWidget* parent, const QString& title, const QString& message,
+             const QString& confirmText, const QString& cancelText) {
+    QDialog dialog(parent);
+    dialog.setWindowTitle(title);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* label = new QLabel(message);
+    label->setWordWrap(true);
+    auto* buttons = new QDialogButtonBox;
+    auto* cancel = buttons->addButton(cancelText, QDialogButtonBox::RejectRole);
+    auto* accept = buttons->addButton(confirmText, QDialogButtonBox::AcceptRole);
+    QObject::connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+    QObject::connect(accept, &QPushButton::clicked, &dialog, &QDialog::accept);
+    layout->addWidget(label);
+    layout->addWidget(buttons);
+    dialog.setMinimumWidth(340);
+    return dialog.exec() == QDialog::Accepted;
+}
+
+DraftDecision chooseDraft(QWidget* parent, const QList<DraftSnapshot>& drafts) {
+    if (drafts.isEmpty()) return {};
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("恢复未完成练习"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* description = new QLabel(QStringLiteral(
+        "选择要继续的练习。稍后处理会完整保留草稿；只有“删除草稿”会移除所选记录。"));
+    description->setWordWrap(true);
+    auto* list = new QListWidget;
+    for (const DraftSnapshot& draft : drafts) {
+        const QString time = draft.updatedAt.isValid()
+            ? draft.updatedAt.toLocalTime().toString(QStringLiteral("MM-dd HH:mm"))
+            : QStringLiteral("时间未知");
+        list->addItem(QStringLiteral("%1 · %2 · 第 %3 题")
+            .arg(draft.title.isEmpty() ? QStringLiteral("未命名练习") : draft.title,
+                 time).arg(draft.currentQuestionIndex + 1));
+    }
+    list->setCurrentRow(0);
+    auto* buttons = new QDialogButtonBox;
+    auto* discard = buttons->addButton(QStringLiteral("删除草稿"), QDialogButtonBox::DestructiveRole);
+    auto* later = buttons->addButton(QStringLiteral("稍后处理"), QDialogButtonBox::RejectRole);
+    auto* restore = buttons->addButton(QStringLiteral("继续练习"), QDialogButtonBox::AcceptRole);
+    DraftDecision decision;
+    QObject::connect(restore, &QPushButton::clicked, &dialog, [&] {
+        decision = {DraftChoice::Restore, list->currentRow()}; dialog.accept();
+    });
+    QObject::connect(later, &QPushButton::clicked, &dialog, [&] {
+        decision = {DraftChoice::Later, list->currentRow()}; dialog.reject();
+    });
+    QObject::connect(discard, &QPushButton::clicked, &dialog, [&] {
+        decision = {DraftChoice::Discard, list->currentRow()}; dialog.done(2);
+    });
+    layout->addWidget(description);
+    layout->addWidget(list);
+    layout->addWidget(buttons);
+    dialog.resize(430, 280);
+    dialog.exec();
+    return decision;
+}
 
 std::optional<QKeySequence> askBossKey(QWidget* parent,
                                        const QKeySequence& current) {
@@ -18,7 +77,7 @@ std::optional<QKeySequence> askBossKey(QWidget* parent,
     dialog.setWindowTitle(QStringLiteral("老板键设置"));
     auto* layout = new QVBoxLayout(&dialog);
     auto* description = new QLabel(
-        QStringLiteral("按下组合键可立即隐藏或显示小窗。请使用修饰键加字母或数字。"));
+        QStringLiteral("按下组合键可立即隐藏或显示小窗。支持修饰键加字母、数字或 F1–F12。"));
     description->setWordWrap(true);
     auto* editor = new QKeySequenceEdit(current, &dialog);
     editor->setClearButtonEnabled(true);

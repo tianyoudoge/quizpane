@@ -88,20 +88,27 @@ QByteArray readDocxDocumentXml(const QString& path, QString* error) {
     constexpr mz_uint64 kMaximumXmlBytes = 32 * 1024 * 1024;
     if (!mz_zip_reader_file_stat(&archive, static_cast<mz_uint>(index), &stat) ||
         stat.m_uncomp_size > kMaximumXmlBytes ||
-        stat.m_uncomp_size > static_cast<mz_uint64>(std::numeric_limits<qsizetype>::max())) {
+        stat.m_uncomp_size >
+            static_cast<mz_uint64>((std::numeric_limits<qsizetype>::max)())) {
         mz_zip_reader_end(&archive);
         *error = QStringLiteral("DOCX 正文 XML 过大或无法读取");
         return {};
     }
     size_t size = 0;
     void* bytes = mz_zip_reader_extract_to_heap(&archive, static_cast<mz_uint>(index), &size, 0);
-    QByteArray result;
-    if (bytes || size == 0)
-        result = QByteArray(static_cast<const char*>(bytes), static_cast<qsizetype>(size));
+    // extract_to_heap 在成功时返回非空指针；失败时返回空指针（此时 size 仍可能
+    // 非零，是把"需要多大"写回给调用方的信号）。必须把"有 size 无指针"当作
+    // 解压失败，而不是构造一个空的 QByteArray 当成功。
+    if (!bytes) {
+        mz_zip_reader_end(&archive);
+        *error = QStringLiteral("DOCX 正文 XML 解压失败");
+        return {};
+    }
+    QByteArray result(static_cast<const char*>(bytes), static_cast<qsizetype>(size));
     mz_free(bytes);
     mz_zip_reader_end(&archive);
     if (result.isEmpty())
-        *error = QStringLiteral("DOCX 正文 XML 为空或解压失败");
+        *error = QStringLiteral("DOCX 正文 XML 为空");
     return result;
 }
 
@@ -291,15 +298,17 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
                 QString ocrError;
                 text = recognizePage(image, &ocrError);
                 if (!ocrError.isEmpty()) {
-                    result.error = QStringLiteral("PDF 第 %1 页：%2").arg(page + 1).arg(ocrError);
-                    return result;
+                    result.warnings.append(
+                        QStringLiteral("第 %1 页 OCR 失败：%2").arg(page + 1).arg(ocrError));
+                    pages.append(QString{});
+                    continue;
                 }
                 result.usedOcr = true;
 #else
-                result.error =
-                    QStringLiteral("PDF 第 %1 页是扫描内容；当前构建未启用 Tesseract C++ OCR 后端")
-                        .arg(page + 1);
-                return result;
+                result.warnings.append(QStringLiteral(
+                    "第 %1 页是扫描内容，当前构建未启用 OCR，已跳过").arg(page + 1));
+                pages.append(QString{});
+                continue;
 #endif
             }
         }
@@ -307,8 +316,11 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
     }
     result.plainText = pages.join(QChar('\f'));
     result.hasPageBoundaries = true;
-    if (result.plainText.trimmed().isEmpty())
-        result.error = QStringLiteral("PDF 没有可提取的文字内容");
+    if (result.plainText.trimmed().isEmpty()) {
+        result.error = result.warnings.isEmpty()
+            ? QStringLiteral("PDF 没有可提取的文字内容")
+            : QStringLiteral("PDF 所有页面均无法提取：%1").arg(result.warnings.join(QStringLiteral("；")));
+    }
     return result;
 }
 

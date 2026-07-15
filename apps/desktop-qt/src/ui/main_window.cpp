@@ -1,8 +1,10 @@
 #include "main_window.hpp"
+#include "../app_settings.hpp"
 #include "../platform/global_hotkey.hpp"
 #include "../platform/window_pinning.hpp"
 #include "app_dialogs.hpp"
 #include "quizpane/diagnostic_logger.hpp"
+#include "quizpane/provider_response_router.hpp"
 #include "line_icons.hpp"
 #include "material_card.hpp"
 
@@ -14,23 +16,25 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QIcon>
 #include <QJsonDocument>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QNetworkReply>
 #include <QPushButton>
 #include <QPixmap>
 #include <QProcess>
 #include <QRadioButton>
 #include <QResizeEvent>
 #include <QScreen>
-#include <QSettings>
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QScrollArea>
@@ -86,17 +90,28 @@ QString choiceLabel(int choice) {
     return choice >= 0 ? QString(QChar(u'A' + choice)) : QStringLiteral("未作答");
 }
 
-QString userFacingError(QString message) {
-    if (message.compare(QStringLiteral("Connection closed"),
-                        Qt::CaseInsensitive) == 0 ||
-        message.contains(QStringLiteral("remote host closed"),
-                         Qt::CaseInsensitive))
+QString userFacingError(const QJsonObject& error) {
+    const int code = error.value(QStringLiteral("data")).toObject()
+        .value(QStringLiteral("networkError")).toInt(QNetworkReply::NoError);
+    switch (static_cast<QNetworkReply::NetworkError>(code)) {
+    case QNetworkReply::ConnectionRefusedError:
+    case QNetworkReply::RemoteHostClosedError:
         return QStringLiteral("网络连接中断，请稍后重试");
-    if (message.contains(QStringLiteral("timed out"), Qt::CaseInsensitive))
-        return QStringLiteral("网络请求超时，请检查网络后重试");
-    if (message.contains(QStringLiteral("host not found"), Qt::CaseInsensitive))
+    case QNetworkReply::HostNotFoundError:
         return QStringLiteral("无法连接题库服务，请检查网络");
-    return message;
+    case QNetworkReply::TimeoutError:
+        return QStringLiteral("网络请求超时，请检查网络后重试");
+    case QNetworkReply::SslHandshakeFailedError:
+        return QStringLiteral("题库服务的安全连接验证失败");
+    case QNetworkReply::ProxyConnectionRefusedError:
+    case QNetworkReply::ProxyConnectionClosedError:
+    case QNetworkReply::ProxyNotFoundError:
+    case QNetworkReply::ProxyTimeoutError:
+        return QStringLiteral("代理服务器连接失败，请检查网络代理设置");
+    default:
+        return error.value(QStringLiteral("message")).toString(
+            QStringLiteral("题库请求失败"));
+    }
 }
 
 }  // namespace
@@ -104,10 +119,8 @@ QString userFacingError(QString message) {
 // ===== 窗口与页面装配 =====
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    // Qt Widgets 采用“对象树”管理生命周期：把 card_、按钮、Label 的 parent
-    // 指向窗口后，窗口析构时会递归释放它们。这里的 new 不等于 Java 中必然泄漏，
-    // 也不需要逐个 delete；没有 parent 的普通 C++ 对象才需要 RAII/智能指针。
-    pinned_ = QSettings().value(QStringLiteral("window/pinned"), true).toBool();
+    // Qt Widgets 通过父子对象树管理控件生命周期；窗口析构时会递归释放子控件。
+    pinned_ = AppSettings::windowPinned();
     Qt::WindowFlags flags = Qt::FramelessWindowHint |
                             Qt::NoDropShadowWindowHint | Qt::Tool;
     if (pinned_) flags |= Qt::WindowStaysOnTopHint;
@@ -162,7 +175,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     header->addWidget(sizeButton_);
     header->addWidget(pinButton_);
     header->addWidget(closeButton);
-    // connect 相当于 jQuery 的事件绑定。信号带 bool 参数，槽函数签名在编译时校验。
+    // 信号带 bool 参数，槽函数签名在编译时校验。
     connect(pinButton_, &QPushButton::toggled, this, &MainWindow::setPinned);
     connect(sizeButton_, &QPushButton::clicked, this, &MainWindow::showUiSizeMenu);
     connect(menuButton_, &QPushButton::clicked, this, &MainWindow::showMainMenu);
@@ -189,14 +202,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     qrLabel_->setVisible(false);
     actionButton_ = new QPushButton(QStringLiteral("导入题库"));
     actionButton_->setFixedHeight(32);
+    createBankButton_ = new QPushButton(QStringLiteral("制作自己的题库"));
+    createBankButton_->setObjectName(QStringLiteral("secondaryButton"));
+    createBankButton_->setFixedHeight(32);
 
     loginLayout->addWidget(titleLabel_);
     loginLayout->addWidget(qrLabel_);
     loginLayout->setAlignment(qrLabel_, Qt::AlignHCenter);
     loginLayout->addWidget(detailLabel_);
     loginLayout->addWidget(actionButton_);
+    loginLayout->addWidget(createBankButton_);
     connect(actionButton_, &QPushButton::clicked, this,
             &MainWindow::runPrimaryAction);
+    connect(createBankButton_, &QPushButton::clicked, this, &MainWindow::openBankStudio);
 
     catalogPage_ = new QWidget;
     auto* catalogPageLayout = new QVBoxLayout(catalogPage_);
@@ -331,7 +349,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     solutionQuestionLabel_->setTextFormat(Qt::RichText);
     solutionAnswerLabel_ = new QLabel;
     solutionAnswerLabel_->setObjectName(QStringLiteral("resultAnswer"));
-    solutionAnswerLabel_->setWordWrap(true);
+    auto* answerSummary = new QHBoxLayout(solutionAnswerLabel_);
+    answerSummary->setContentsMargins(8, 7, 8, 7);
+    answerSummary->setSpacing(8);
+    selectedAnswerLabel_ = new QLabel;
+    correctAnswerLabel_ = new QLabel;
+    answerStatusLabel_ = new QLabel;
+    answerStatusLabel_->setObjectName(QStringLiteral("answerStatus"));
+    for (QLabel* label : {selectedAnswerLabel_, correctAnswerLabel_, answerStatusLabel_})
+        label->setWordWrap(true);
+    answerSummary->addWidget(selectedAnswerLabel_);
+    answerSummary->addWidget(correctAnswerLabel_);
+    answerSummary->addStretch();
+    answerSummary->addWidget(answerStatusLabel_);
     solutionExplanationLabel_ = new QLabel;
     solutionExplanationLabel_->setObjectName(QStringLiteral("solutionText"));
     solutionExplanationLabel_->setWordWrap(true);
@@ -397,14 +427,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(loginPollTimer_, &QTimer::timeout, this, &MainWindow::pollLogin);
     setCentralWidget(card_);
     applyCardStyle();
-    QSettings settings;
-    QString savedSize = settings.value(QStringLiteral("ui/size")).toString();
-    if (savedSize.isEmpty()) {
-        QSettings legacySettings(QStringLiteral("QuizPane Project"),
-                                 QStringLiteral("QuizPane"));
-        savedSize = legacySettings.value(QStringLiteral("ui/size"),
-                                         QStringLiteral("medium")).toString();
-    }
+    const QString savedSize = AppSettings::uiSize();
     applyUiSize(savedSize == QStringLiteral("small") ? UiSize::Small
                 : savedSize == QStringLiteral("large") ? UiSize::Large
                                                          : UiSize::Medium);
@@ -428,9 +451,7 @@ void MainWindow::initializeDesktopShell() {
     globalHotkey_ = new GlobalHotkey(this);
     connect(globalHotkey_, &GlobalHotkey::activated, this,
             &MainWindow::toggleWindowVisibility);
-    const QString savedHotkey = QSettings().value(
-        QStringLiteral("bossKey/sequence"), QStringLiteral("Ctrl+Shift+H"))
-                                    .toString();
+    const QString savedHotkey = AppSettings::bossKey();
     bossKey_ = QKeySequence::fromString(savedHotkey, QKeySequence::PortableText);
     if (bossKey_.isEmpty()) bossKey_ = QKeySequence(QStringLiteral("Ctrl+Shift+H"));
     QString hotkeyError;
@@ -442,6 +463,7 @@ void MainWindow::initializeDesktopShell() {
     showHideAction_ = new QAction(QStringLiteral("隐藏窗口"), this);
     showHideAction_->setShortcut(bossKey_);
     showHideAction_->setShortcutContext(Qt::ApplicationShortcut);
+    addAction(showHideAction_);
     connect(showHideAction_, &QAction::triggered, this,
             &MainWindow::toggleWindowVisibility);
     pinAction_ = new QAction(QStringLiteral("始终置顶"), this);
@@ -574,12 +596,18 @@ void MainWindow::saveDraft() {
 bool MainWindow::maybeRestoreDraft() {
     if (draftRestoreChecked_ || providerId_.isEmpty()) return false;
     draftRestoreChecked_ = true;
-    DraftSnapshot snapshot;
     QString error;
-    if (!draftStore_.load(providerId_, &snapshot, &error)) return false;
-    if (QMessageBox::question(this, QStringLiteral("恢复未完成练习"),
-            QStringLiteral("发现一套未完成练习，是否恢复到上次答题位置？")) !=
-        QMessageBox::Yes) return false;
+    QList<DraftSnapshot> drafts = draftStore_.list(providerId_, &error);
+    while (!drafts.isEmpty()) {
+        const ui::DraftDecision decision = ui::chooseDraft(this, drafts);
+        if (decision.choice == ui::DraftChoice::Later) return false;
+        if (decision.index < 0 || decision.index >= drafts.size()) return false;
+        if (decision.choice == ui::DraftChoice::Discard) {
+            draftStore_.clearAttempt(providerId_, drafts.at(decision.index).attemptId, &error);
+            drafts.removeAt(decision.index);
+            continue;
+        }
+        const DraftSnapshot snapshot = drafts.at(decision.index);
     attemptId_ = snapshot.attemptId;
     attemptTitle_ = snapshot.title;
     questions_ = snapshot.questions;
@@ -594,7 +622,9 @@ bool MainWindow::maybeRestoreDraft() {
     pages_->setCurrentWidget(practicePage_);
     showQuestion(qBound(0, snapshot.currentQuestionIndex,
                         static_cast<int>(questions_.size()) - 1));
-    return true;
+        return true;
+    }
+    return false;
 }
 
 // ===== 登录、目录和答题请求 =====
@@ -671,28 +701,36 @@ void MainWindow::populateCatalog(const QJsonArray& nodes) {
 
         auto* row = new QWidget;
         row->setObjectName(QStringLiteral("catalogRow"));
-        auto* rowLayout = new QHBoxLayout(row);
+        auto* rowLayout = new QVBoxLayout(row);
         rowLayout->setContentsMargins(12, 10, 10, 10);
+        rowLayout->setSpacing(7);
         auto* label = new QLabel(QStringLiteral("%1\n%2 道可练").arg(title).arg(available));
         label->setWordWrap(true);
-        rowLayout->addWidget(label, 1);
+        rowLayout->addWidget(label);
         QList<int> counts;
         for (const auto& countValue : node.value("suggestedCounts").toArray()) {
             const int count = countValue.toInt();
             if (count > 0 && count <= available && !counts.contains(count)) counts.append(count);
         }
-        if (counts.isEmpty()) {
-            if (available >= 5) counts.append(5);
-            if (available >= 15) counts.append(15);
-            if (counts.isEmpty() && available > 0) counts.append(available);
-        }
-        for (const int count : counts.mid(0, 2)) {
+        for (const int preset : {5, 10, 15, 20})
+            if (preset <= available && !counts.contains(preset)) counts.append(preset);
+        if (available > 0 && !counts.contains(available)) counts.append(available);
+        std::sort(counts.begin(), counts.end());
+        auto* countLayout = new QGridLayout;
+        countLayout->setContentsMargins(0, 0, 0, 0);
+        countLayout->setHorizontalSpacing(6);
+        countLayout->setVerticalSpacing(6);
+        int buttonIndex = 0;
+        for (const int count : counts) {
             auto* button = new QPushButton(QStringLiteral("%1 题").arg(count));
+            if (count == available) button->setText(QStringLiteral("全部 %1 题").arg(available));
             button->setObjectName(QStringLiteral("smallButton"));
             connect(button, &QPushButton::clicked, this,
                     [this, categoryId, title, count] { startAttempt(categoryId, title, count); });
-            rowLayout->addWidget(button);
+            countLayout->addWidget(button, buttonIndex / 3, buttonIndex % 3);
+            ++buttonIndex;
         }
+        rowLayout->addLayout(countLayout);
         catalogListLayout_->addWidget(row);
     }
     catalogListLayout_->addStretch();
@@ -702,7 +740,6 @@ void MainWindow::populateCatalog(const QJsonArray& nodes) {
 
 void MainWindow::startAttempt(const QString& categoryId, const QString& title,
                               int count) {
-    draftStore_.clear(providerId_);
     attemptTitle_ = title;
     practiceProgressLabel_->setText(QStringLiteral("正在创建练习 · %1 题").arg(count));
     questionLabel_->setText(QStringLiteral("请稍候…"));
@@ -791,25 +828,28 @@ void MainWindow::chooseAnswer(int choice) {
         {"time", 0}, {"flag", 0},
         {"answer", QJsonObject{{"type", 201}, {"choice", QString::number(choice)}}}}};
     QString error;
-    // request 只是发起异步 RPC，不会阻塞 UI。结果稍后统一进入
-    // handleProviderResponse()，类似前端 $.ajax(...).done(...) 的集中式写法。
+    // request 只发起异步 RPC，不阻塞 UI；结果统一进入 handleProviderResponse()。
     provider_.request(
         {{"id", QStringLiteral("save-%1-%2").arg(currentQuestionIndex_).arg(choice)},
          {"method", "attempt.saveAnswers"},
          {"params", QJsonObject{{"attemptId", attemptId_}, {"answers", payload}}}},
         &error);
     saveDraft();
-    // 留出极短的选中反馈，再自动进入下一题。若用户已经手动切题，index 校验
-    // 会阻止旧定时器把新页面再次向前推进。
+    // 留出选中反馈再自动进入下一题。原值 120ms 几乎是“一眨眼”，在职备考用户
+    // 常想先点一个答案、再核对是否改主意，根本来不及回退；默认放宽到 700ms
+    // 并允许在设置里调整（practice/autoAdvanceMs），设为 0 即关闭自动跳题。
+    // 若用户已手动切题，index 校验会阻止旧定时器把新页面再次向前推进。
+    const int advanceMs = AppSettings::autoAdvanceMs();
     const int answeredIndex = currentQuestionIndex_;
+    if (advanceMs <= 0) return;
     if (answeredIndex + 1 < questions_.size()) {
-        QTimer::singleShot(120, this, [this, answeredIndex] {
+        QTimer::singleShot(advanceMs, this, [this, answeredIndex] {
             if (currentQuestionIndex_ == answeredIndex)
                 showQuestion(answeredIndex + 1);
         });
     } else {
         // 最后一题没有“下一题”可跳，短暂停留显示选中反馈后直接询问是否交卷。
-        QTimer::singleShot(120, this, [this, answeredIndex] {
+        QTimer::singleShot(advanceMs, this, [this, answeredIndex] {
             if (currentQuestionIndex_ == answeredIndex)
                 submitAttempt();
         });
@@ -853,7 +893,8 @@ void MainWindow::positionSubmitConfirmation() {
     const int x = qMax(4, practicePage_->width() -
                              submitConfirmationBubble_->width() - 4);
     const int y = qMax(4, practiceControlBar_->y() -
-                             submitConfirmationBubble_->height() - 7);
+                             submitConfirmationBubble_->height() -
+                                 layout_metrics::kSubmitBubbleInset);
     submitConfirmationBubble_->move(x, y);
 }
 
@@ -908,21 +949,22 @@ void MainWindow::showSolution(int index) {
     QString optionsHtml;
     for (const auto& optionValue : solution.value("options").toArray()) {
         const auto option = optionValue.toObject();
-        optionsHtml += QStringLiteral("<p><b>%1.</b> %2</p>")
+        optionsHtml += QStringLiteral("<div class=\"option\"><b>%1.</b> %2</div>")
             .arg(option.value("label").toString().toHtmlEscaped(),
-                 plainText(option.value("contentHtml").toString()).toHtmlEscaped());
+                 option.value("contentHtml").toString());
     }
     solutionQuestionLabel_->setText(
         QStringLiteral("<div style=\"color:#c7ccd2\">%1%2</div>")
             .arg(solution.value("contentHtml").toString(), optionsHtml));
     const int correct = solution.value("correctChoice").toInt(-1);
     const int selected = answers_.value(currentSolutionIndex_, -1);
-    solutionAnswerLabel_->setText(QStringLiteral("你的答案：%1　正确答案：%2　%3")
-        .arg(choiceLabel(selected), choiceLabel(correct),
-             selected == correct ? QStringLiteral("✓ 正确") : QStringLiteral("✗ 错误")));
-    solutionAnswerLabel_->setProperty("correct", selected == correct);
-    solutionAnswerLabel_->style()->unpolish(solutionAnswerLabel_);
-    solutionAnswerLabel_->style()->polish(solutionAnswerLabel_);
+    selectedAnswerLabel_->setText(QStringLiteral("你的答案\n%1").arg(choiceLabel(selected)));
+    correctAnswerLabel_->setText(QStringLiteral("正确答案\n%1").arg(choiceLabel(correct)));
+    answerStatusLabel_->setText(selected == correct ? QStringLiteral("✓ 正确")
+                                                     : QStringLiteral("✗ 错误"));
+    answerStatusLabel_->setProperty("correct", selected == correct);
+    answerStatusLabel_->style()->unpolish(answerStatusLabel_);
+    answerStatusLabel_->style()->polish(answerStatusLabel_);
     solutionExplanationLabel_->setText(
         QStringLiteral("<div style=\"color:#aebbb5\"><p><b>解析</b></p>%1</div>")
             .arg(solution.value("solutionHtml").toString()));
@@ -944,13 +986,17 @@ void MainWindow::setQrContent(const QString& content) {
         const int size = (code.getSize() + border * 2) * scale;
         QImage image(size, size, QImage::Format_RGB32);
         image.fill(Qt::white);
-        for (int y = 0; y < code.getSize(); ++y)
-            for (int x = 0; x < code.getSize(); ++x)
-                if (code.getModule(x, y))
-                    for (int dy = 0; dy < scale; ++dy)
-                        for (int dx = 0; dx < scale; ++dx)
-                            image.setPixelColor((x + border) * scale + dx,
-                                                (y + border) * scale + dy, Qt::black);
+        const QRgb black = qRgb(0, 0, 0);
+        for (int y = 0; y < code.getSize(); ++y) {
+            for (int dy = 0; dy < scale; ++dy) {
+                auto* row = reinterpret_cast<QRgb*>(
+                    image.scanLine((y + border) * scale + dy));
+                for (int x = 0; x < code.getSize(); ++x) {
+                    if (code.getModule(x, y))
+                        std::fill_n(row + (x + border) * scale, scale, black);
+                }
+            }
+        }
         qrLabel_->setPixmap(QPixmap::fromImage(image));
         qrLabel_->setFixedSize(size, size);
         qrLabel_->setVisible(true);
@@ -971,14 +1017,14 @@ void MainWindow::setActionMode(ActionMode mode, const QString& text) {
 
 void MainWindow::handleProviderResponse(const QJsonObject& response) {
     // 这是桌面端的“响应路由器”。Provider 回包携带请求 id，我们据此更新对应页面。
-    // id 相当于前端 Promise/后端 traceId；同一时刻可并行等待报告和题目解析。
-    const QString id = response.value("id").toString();
+    // 请求 id 决定路由；同一时刻可并行等待报告和题目解析。
+    const ProviderResponseEnvelope envelope = routeProviderResponse(response);
+    const QString& id = envelope.id;
     diagnostic::event(QStringLiteral("ui"), QStringLiteral("provider-response-route"),
         {{QStringLiteral("id"), id},
          {QStringLiteral("error"), response.contains(QStringLiteral("error"))}});
-    if (response.contains("error")) {
-        const QString message = userFacingError(
-            response.value("error").toObject().value("message").toString());
+    if (envelope.failed) {
+        const QString message = userFacingError(envelope.error);
         detailLabel_->setText(message);
         if (id == QStringLiteral("auth-begin")) {
             titleLabel_->setText(QStringLiteral("二维码生成失败"));
@@ -998,7 +1044,7 @@ void MainWindow::handleProviderResponse(const QJsonObject& response) {
             QMessageBox::warning(this, QStringLiteral("操作失败"), message);
         return;
     }
-    const QJsonObject result = response.value("result").toObject();
+    const QJsonObject& result = envelope.result;
     if (id == QStringLiteral("host-init-1")) {
         if (result.value("requiresLogin").toBool() &&
             !result.value("sessionRestored").toBool()) {
@@ -1067,7 +1113,7 @@ void MainWindow::handleProviderResponse(const QJsonObject& response) {
     } else if (id == QStringLiteral("final-save")) {
         sendSubmit();
     } else if (id == QStringLiteral("attempt-submit")) {
-        draftStore_.clear(providerId_);
+        draftStore_.clearAttempt(providerId_, attemptId_);
         requestResults();
     } else if (id == QStringLiteral("attempt-report")) {
         resultSummaryLabel_->setText(QStringLiteral("%1 / %2 题正确")
@@ -1133,7 +1179,8 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
         pageMargins.top() + pageMargins.bottom() +
         practiceProgressLabel_->sizeHint().height() +
         practiceControlBar_->height() + practice->spacing() * 2;
-    const int viewportHeight = qMax(120, event->size().height() - fixedHeight);
+    const int viewportHeight = qMax(layout_metrics::kMinimumPracticeViewportHeight,
+                                    event->size().height() - fixedHeight);
     if (questionScroll_->height() != viewportHeight) {
         lockedPracticeViewportHeight_ = viewportHeight;
         questionScroll_->setFixedHeight(viewportHeight);
@@ -1162,12 +1209,11 @@ void MainWindow::installProviderPackage(const QString& path) {
     }
     const QString permission = package.requestsNetwork
         ? QStringLiteral("需要访问网络") : QStringLiteral("不访问网络");
-    const auto answer = QMessageBox::question(
-        this, QStringLiteral("确认导入题库"),
+    if (!ui::confirm(this, QStringLiteral("确认导入题库"),
         QStringLiteral("%1\n版本：%2\n权限：%3\n\n"
                        "导入后即可在小窗刷题中使用。是否继续？")
-            .arg(package.name, package.version, permission));
-    if (answer != QMessageBox::Yes) return;
+            .arg(package.name, package.version, permission),
+        QStringLiteral("导入"), QStringLiteral("取消"))) return;
 
     ProviderInstallResult result;
     if (!installer_.install(package, &result, &error)) {
@@ -1212,8 +1258,7 @@ void MainWindow::loadProvider(const QString& path) {
         {{QStringLiteral("id"), providerId_},
          {QStringLiteral("version"), descriptor.value("version").toString()}});
     currentProviderPath_ = QFileInfo(path).absoluteFilePath();
-    QSettings().setValue(QStringLiteral("provider/lastLibraryPath"),
-                         QFileInfo(path).absoluteFilePath());
+    AppSettings::setLastProviderPath(QFileInfo(path).absoluteFilePath());
     draftRestoreChecked_ = false;
     sourceLabel_->setText(descriptor.value("name").toString(QStringLiteral("题库")));
     titleLabel_->setText(QStringLiteral("正在打开题库…"));
@@ -1222,21 +1267,29 @@ void MainWindow::loadProvider(const QString& path) {
 }
 
 bool MainWindow::loadLastProvider() {
-    QString path = QSettings()
-        .value(QStringLiteral("provider/lastLibraryPath")).toString();
+    // 旧版把裸动态库路径写进设置。升级后该文件可能还在，却已经无法与新版 ABI
+    // 或依赖组合加载；“没有题库”绝不能因此呈现为加载失败。
+    const auto installed = installer_.listInstalled();
+    const QString savedPath = AppSettings::lastProviderPath();
+    QString path;
+    for (const InstalledProviderInfo& candidate : installed) {
+        if (candidate.entryPath == savedPath) {
+            path = candidate.entryPath;
+            break;
+        }
+    }
+    if (path.isEmpty() && !installed.isEmpty()) path = installed.first().entryPath;
     if (path.isEmpty()) {
-        QSettings legacySettings(QStringLiteral("QuizPane Project"),
-                                 QStringLiteral("QuizPane"));
-        path = legacySettings.value(QStringLiteral("provider/lastLibraryPath"))
-                   .toString();
+        AppSettings::clearLastProviderPath();
+        return false;
     }
-    if (path.isEmpty() || !QFileInfo(path).isFile()) {
-        const auto installed = installer_.listInstalled();
-        if (!installed.isEmpty()) path = installed.first().entryPath;
-    }
-    if (path.isEmpty() || !QFileInfo(path).isFile()) return false;
     loadProvider(path);
-    return provider_.isLoaded();
+    if (!provider_.isLoaded()) {
+        AppSettings::clearLastProviderPath();
+        showProviderOnboarding();
+        return false;
+    }
+    return true;
 }
 
 void MainWindow::sendInitialize() {
@@ -1251,24 +1304,24 @@ void MainWindow::sendInitialize() {
     if (!error.isEmpty()) detailLabel_->setText(error);
 }
 
-// ===== 用户菜单与独立题库制作器 =====
+// ===== 用户菜单与内置题库制作器 =====
 
 void MainWindow::showUiSizeMenu() {
     QMenu menu(this);
-    QAction* small = menu.addAction(QStringLiteral("小"));
-    QAction* medium = menu.addAction(QStringLiteral("中"));
-    QAction* large = menu.addAction(QStringLiteral("大"));
-    small->setCheckable(true);
-    medium->setCheckable(true);
-    large->setCheckable(true);
-    small->setChecked(uiSize_ == UiSize::Small);
-    medium->setChecked(uiSize_ == UiSize::Medium);
-    large->setChecked(uiSize_ == UiSize::Large);
+    QAction* smallAction = menu.addAction(QStringLiteral("小"));
+    QAction* mediumAction = menu.addAction(QStringLiteral("中"));
+    QAction* largeAction = menu.addAction(QStringLiteral("大"));
+    smallAction->setCheckable(true);
+    mediumAction->setCheckable(true);
+    largeAction->setCheckable(true);
+    smallAction->setChecked(uiSize_ == UiSize::Small);
+    mediumAction->setChecked(uiSize_ == UiSize::Medium);
+    largeAction->setChecked(uiSize_ == UiSize::Large);
     QAction* selected = menu.exec(
         sizeButton_->mapToGlobal(QPoint(0, sizeButton_->height())));
-    if (selected == small) applyUiSize(UiSize::Small);
-    else if (selected == medium) applyUiSize(UiSize::Medium);
-    else if (selected == large) applyUiSize(UiSize::Large);
+    if (selected == smallAction) applyUiSize(UiSize::Small);
+    else if (selected == mediumAction) applyUiSize(UiSize::Medium);
+    else if (selected == largeAction) applyUiSize(UiSize::Large);
 }
 
 void MainWindow::showMainMenu() {
@@ -1286,12 +1339,16 @@ void MainWindow::showMainMenu() {
         installer_.listInstalled(&listError);
     QMenu* switchMenu = providerMenu->addMenu(QStringLiteral("切换题库"));
     QMenu* deleteMenu = providerMenu->addMenu(QStringLiteral("删除题库"));
+    QMenu* exportMenu = providerMenu->addMenu(QStringLiteral("导出我的题库"));
     if (installed.isEmpty()) {
         QAction* emptySwitch = switchMenu->addAction(QStringLiteral("暂无已添加题库"));
         QAction* emptyDelete = deleteMenu->addAction(QStringLiteral("暂无可删除题库"));
+        QAction* emptyExport = exportMenu->addAction(QStringLiteral("暂无可导出的本地题库"));
         emptySwitch->setEnabled(false);
         emptyDelete->setEnabled(false);
+        emptyExport->setEnabled(false);
     } else {
+        bool hasExportableProvider = false;
         for (const InstalledProviderInfo& item : installed) {
             QAction* switchAction = switchMenu->addAction(
                 QStringLiteral("%1 · %2").arg(item.name, item.version));
@@ -1303,6 +1360,17 @@ void MainWindow::showMainMenu() {
             QAction* deleteAction = deleteMenu->addAction(item.name);
             connect(deleteAction, &QAction::triggered, this,
                     [this, item] { deleteProvider(item); });
+            if (item.kind == QStringLiteral("declarative")) {
+                hasExportableProvider = true;
+                QAction* exportAction = exportMenu->addAction(item.name);
+                connect(exportAction, &QAction::triggered, this,
+                        [this, item] { exportDeclarativeProvider(item); });
+            }
+        }
+        if (!hasExportableProvider) {
+            QAction* emptyExport = exportMenu->addAction(
+                QStringLiteral("暂无可导出的本地题库"));
+            emptyExport->setEnabled(false);
         }
     }
 
@@ -1346,8 +1414,8 @@ void MainWindow::openBankStudio() {
         if (candidate.isEmpty() || !QFileInfo(candidate).isExecutable()) continue;
         if (QProcess::startDetached(candidate, {})) return;
     }
-    QMessageBox::information(this, QStringLiteral("尚未安装题库制作器"),
-        QStringLiteral("题库制作器是独立工具，请安装对应版本后重试。"));
+    QMessageBox::warning(this, QStringLiteral("题库制作器不可用"),
+        QStringLiteral("当前安装不完整，请重新安装小窗刷题。"));
 }
 
 void MainWindow::configureBossKey() {
@@ -1358,12 +1426,16 @@ void MainWindow::configureBossKey() {
     QString error;
     if (!globalHotkey_->registerBossKey(requested, &error)) {
         globalHotkey_->registerBossKey(previous);
-        QMessageBox::warning(this, QStringLiteral("无法设置老板键"), error);
+        bossKey_ = requested;
+        showHideAction_->setShortcut(bossKey_);
+        AppSettings::setBossKey(bossKey_.toString(QKeySequence::PortableText));
+        QMessageBox::information(this, QStringLiteral("已启用前台老板键"),
+            QStringLiteral("%1\n\n当前桌面环境无法注册系统级热键；该组合键在小窗位于前台时仍可隐藏窗口。")
+                .arg(error));
         return;
     }
     bossKey_ = requested;
-    QSettings().setValue(QStringLiteral("bossKey/sequence"),
-                         bossKey_.toString(QKeySequence::PortableText));
+    AppSettings::setBossKey(bossKey_.toString(QKeySequence::PortableText));
     showHideAction_->setShortcut(bossKey_);
     if (trayIcon_)
         trayIcon_->setToolTip(QStringLiteral("小窗刷题 · %1")
@@ -1381,6 +1453,7 @@ void MainWindow::switchProvider(const InstalledProviderInfo& provider) {
 
 void MainWindow::deleteProvider(const InstalledProviderInfo& provider) {
     const bool current = provider.id == providerId_;
+    const QString currentPath = current ? currentProviderPath_ : QString{};
     const QString message = current
         ? QStringLiteral("正在使用“%1”。删除后将返回题库导入页。\n\n"
                          "登录状态会保留，重新添加后仍可恢复。确定删除吗？")
@@ -1388,25 +1461,60 @@ void MainWindow::deleteProvider(const InstalledProviderInfo& provider) {
         : QStringLiteral("确定删除“%1”吗？\n\n"
                          "登录状态会保留，重新添加后仍可恢复。")
               .arg(provider.name);
-    if (QMessageBox::question(this, QStringLiteral("删除题库"), message) !=
-        QMessageBox::Yes) return;
+    if (!ui::confirm(this, QStringLiteral("删除题库"), message,
+                     QStringLiteral("删除"), QStringLiteral("取消"))) return;
 
     if (current) {
         provider_.unload();
         providerId_.clear();
         currentProviderPath_.clear();
-        QSettings().remove(QStringLiteral("provider/lastLibraryPath"));
+        AppSettings::clearLastProviderPath();
     }
     QString error;
     if (!installer_.removeInstalled(provider.id, &error)) {
-        QSettings settings;
-        QStringList pending = settings.value(
-            QStringLiteral("providers/pendingDelete")).toStringList();
+        QMessageBox retryBox(QMessageBox::Warning, QStringLiteral("题库文件仍被占用"),
+            QStringLiteral("暂时无法删除“%1”。\n\n原因：%2\n\n"
+                           "可以立即重试，或安排在下次启动小窗刷题时清理。")
+                .arg(provider.name, error), QMessageBox::NoButton, this);
+        auto* retry = retryBox.addButton(QStringLiteral("立即重试清理"), QMessageBox::AcceptRole);
+        auto* later = retryBox.addButton(QStringLiteral("下次启动清理"), QMessageBox::ActionRole);
+        retryBox.addButton(QStringLiteral("取消"), QMessageBox::RejectRole);
+        retryBox.exec();
+        if (retryBox.clickedButton() == retry && installer_.removeInstalled(provider.id, &error)) {
+            if (current) showProviderOnboarding();
+            return;
+        }
+        if (retryBox.clickedButton() != later && retryBox.clickedButton() != retry) {
+            if (current && !currentPath.isEmpty()) loadProvider(currentPath);
+            return;
+        }
+        QStringList pending = AppSettings::pendingProviderDeletions();
         if (!pending.contains(provider.id)) pending.append(provider.id);
-        settings.setValue(QStringLiteral("providers/pendingDelete"), pending);
-        QMessageBox::information(this, QStringLiteral("将在重启后删除"), error);
+        AppSettings::setPendingProviderDeletions(pending);
+        QMessageBox::information(this, QStringLiteral("已安排启动时清理"),
+            QStringLiteral("下次启动“小窗刷题”时会再次删除“%1”。若仍被其他程序占用，"
+                           "它会继续保留在待清理列表中。\n\n最后一次错误：%2")
+                .arg(provider.name, error));
     }
     if (current) showProviderOnboarding();
+}
+
+void MainWindow::exportDeclarativeProvider(const InstalledProviderInfo& provider) {
+    const QString defaultName = provider.name + QStringLiteral(".quizpane-provider");
+    QString output = QFileDialog::getSaveFileName(
+        this, QStringLiteral("导出题库"), defaultName,
+        QStringLiteral("QuizPane 题库 (*.quizpane-provider)"));
+    if (output.isEmpty()) return;
+    if (!output.endsWith(QStringLiteral(".quizpane-provider"), Qt::CaseInsensitive))
+        output += QStringLiteral(".quizpane-provider");
+    QString error;
+    if (!installer_.exportDeclarative(provider, output, &error)) {
+        QMessageBox::warning(this, QStringLiteral("导出失败"), error);
+        return;
+    }
+    QMessageBox::information(this, QStringLiteral("已导出题库"),
+                             QStringLiteral("已保存到：%1")
+                                 .arg(QDir::toNativeSeparators(output)));
 }
 
 void MainWindow::showProviderOnboarding() {
@@ -1424,15 +1532,13 @@ void MainWindow::showProviderOnboarding() {
 }
 
 void MainWindow::processPendingProviderDeletions() {
-    QSettings settings;
-    const QStringList pending = settings.value(
-        QStringLiteral("providers/pendingDelete")).toStringList();
+    const QStringList pending = AppSettings::pendingProviderDeletions();
     QStringList remaining;
     for (const QString& id : pending) {
         QString error;
         if (!installer_.removeInstalled(id, &error)) remaining.append(id);
     }
-    settings.setValue(QStringLiteral("providers/pendingDelete"), remaining);
+    AppSettings::setPendingProviderDeletions(remaining);
 }
 
 // ===== 窗口尺寸、置顶和视觉样式 =====
@@ -1443,10 +1549,10 @@ void MainWindow::applyUiSize(UiSize size) {
     uiSize_ = size;
     QString property;
     QSize windowSize;
-    constexpr int margin = 14;
-    constexpr int spacing = 7;
-    constexpr int iconPixels = 15;
-    constexpr int iconButtonPixels = 26;
+    constexpr int margin = layout_metrics::kWindowMargin;
+    constexpr int spacing = layout_metrics::kControlSpacing;
+    constexpr int iconPixels = layout_metrics::kIconPixels;
+    constexpr int iconButtonPixels = layout_metrics::kIconButtonPixels;
     if (size == UiSize::Small) {
         property = QStringLiteral("small");
         windowSize = QSize(320, 460);
@@ -1467,9 +1573,9 @@ void MainWindow::applyUiSize(UiSize size) {
         layout->setContentsMargins(margin, 10, margin, margin);
         layout->setSpacing(spacing);
     }
-    headerBar_->setFixedHeight(28);
-    practiceControlBar_->setFixedHeight(30);
-    solutionControlBar_->setFixedHeight(30);
+    headerBar_->setFixedHeight(layout_metrics::kHeaderHeight);
+    practiceControlBar_->setFixedHeight(layout_metrics::kControlBarHeight);
+    solutionControlBar_->setFixedHeight(layout_metrics::kControlBarHeight);
     const QSize iconSize(iconPixels, iconPixels);
     for (auto* button : card_->findChildren<QPushButton*>()) {
         const QString name = button->objectName();
@@ -1496,7 +1602,7 @@ void MainWindow::applyUiSize(UiSize size) {
     sizeButton_->setAccessibleName(QStringLiteral("界面大小：%1")
         .arg(size == UiSize::Small ? QStringLiteral("小")
              : size == UiSize::Large ? QStringLiteral("大") : QStringLiteral("中")));
-    QSettings().setValue(QStringLiteral("ui/size"), property);
+    AppSettings::setUiSize(property);
 }
 
 void MainWindow::adjustWindowForCurrentPage() {
@@ -1557,7 +1663,7 @@ void MainWindow::setPinned(bool pinned) {
     show();
     platform::applyNativeWindowPin(this, pinned_);
     if (pinned_) raise();
-    QSettings().setValue(QStringLiteral("window/pinned"), pinned_);
+    AppSettings::setWindowPinned(pinned_);
     if (pinAction_) {
         const QSignalBlocker blocker(pinAction_);
         pinAction_->setChecked(pinned_);
@@ -1575,157 +1681,42 @@ void MainWindow::showEvent(QShowEvent* event) {
     });
 }
 
+void MainWindow::keyPressEvent(QKeyEvent* event) {
+    // 小窗场景下双手不离键盘做几题更顺手：数字键直接选选项，方向键翻题，
+    // Enter/Return 交卷。只对答题页和解析页生效，避免影响对话框默认行为。
+    if (event->isAutoRepeat()) { QMainWindow::keyPressEvent(event); return; }
+    QWidget* page = pages_ ? pages_->currentWidget() : nullptr;
+    if (page == practicePage_) {
+        const int key = event->key();
+        if (key == Qt::Key_Left || key == Qt::Key_Up) {
+            showQuestion(currentQuestionIndex_ - 1); return;
+        }
+        if (key == Qt::Key_Right || key == Qt::Key_Down) {
+            showQuestion(currentQuestionIndex_ + 1); return;
+        }
+        // 数字键 1-9 / 小键盘 1-9：直接选对应序号的选项。
+        const int digit = key - Qt::Key_1;
+        if (digit >= 0 && digit < 9 && digit < questions_.size() &&
+            currentQuestionIndex_ >= 0 && currentQuestionIndex_ < questions_.size()) {
+            const QJsonObject question = questions_.at(currentQuestionIndex_).toObject();
+            if (digit < question.value("options").toArray().size()) { chooseAnswer(digit); return; }
+        }
+        if (key == Qt::Key_Enter || key == Qt::Key_Return) { submitAttempt(); return; }
+    } else if (page == solutionPage_) {
+        const int key = event->key();
+        if (key == Qt::Key_Left || key == Qt::Key_Up) { showSolution(currentSolutionIndex_ - 1); return; }
+        if (key == Qt::Key_Right || key == Qt::Key_Down) { showSolution(currentSolutionIndex_ + 1); return; }
+    }
+    QMainWindow::keyPressEvent(event);
+}
+
 void MainWindow::applyCardStyle() {
-    setStyleSheet(R"(
-        QWidget#card {
-            background: rgba(12, 14, 18, 96);
-            border: none;
-            border-radius: 0;
-            color: #c8cdd3;
-        }
-        QWidget#card[uiSize="small"] { font-size: 11px; }
-        QWidget#card[uiSize="medium"] { font-size: 12px; }
-        QWidget#card[uiSize="large"] { font-size: 13px; }
-        QWidget#card QLabel { color: #c8cdd3; }
-        QWidget#card QScrollArea {
-            background: transparent;
-            border: none;
-        }
-        QWidget#card QScrollArea > QWidget > QWidget { background: transparent; }
-        QWidget#card QScrollBar:vertical {
-            background: transparent;
-            width: 7px;
-            margin: 3px 2px 3px 2px;
-        }
-        QWidget#card QScrollBar::handle:vertical {
-            background: rgba(220,225,232,62);
-            border: none;
-            border-radius: 1px;
-            min-height: 26px;
-        }
-        QWidget#card QScrollBar::handle:vertical:hover {
-            background: rgba(225,230,236,100);
-        }
-        QWidget#card QScrollBar::handle:vertical:pressed {
-            background: rgba(230,234,240,132);
-        }
-        QWidget#card QScrollBar::add-line:vertical,
-        QWidget#card QScrollBar::sub-line:vertical {
-            background: transparent;
-            border: none;
-            width: 0;
-            height: 0;
-        }
-        QWidget#card QScrollBar::add-page:vertical,
-        QWidget#card QScrollBar::sub-page:vertical { background: transparent; }
-        QWidget#card QScrollBar::up-arrow:vertical,
-        QWidget#card QScrollBar::down-arrow:vertical { width: 0; height: 0; }
-        QLabel#sourceTitle { color: #aeb4bb; font-weight: 500; }
-        QLabel#title, QLabel#pageTitle { color: #c6cbd1; font-weight: 550; }
-        QWidget#card[uiSize="small"] QLabel#title,
-        QWidget#card[uiSize="small"] QLabel#pageTitle { font-size: 13px; }
-        QWidget#card[uiSize="medium"] QLabel#title,
-        QWidget#card[uiSize="medium"] QLabel#pageTitle { font-size: 15px; }
-        QWidget#card[uiSize="large"] QLabel#title,
-        QWidget#card[uiSize="large"] QLabel#pageTitle { font-size: 17px; }
-        QLabel#detail { color: #9ca3ab; }
-        QLabel#questionText {
-            color: #d5d1c5;
-            background: rgba(18, 20, 24, 44);
-            border: none;
-            border-radius: 5px;
-            padding: 7px;
-            font-weight: 550;
-        }
-        QWidget#card[uiSize="small"] QLabel#questionText { font-size: 12px; }
-        QWidget#card[uiSize="medium"] QLabel#questionText { font-size: 13px; }
-        QWidget#card[uiSize="large"] QLabel#questionText { font-size: 15px; }
-        QLabel#solutionQuestion { color: #c7ccd2; }
-        QLabel#resultAnswer { color: #c2b7a3; }
-        QWidget#materialCard {
-            background: rgba(24, 27, 32, 60);
-            border: none;
-            border-radius: 5px;
-        }
-        QLabel#materialCardTitle { color: #b7bec7; font-weight: 600; }
-        QWidget#card[uiSize="small"] QLabel#materialCardTitle { font-size: 11px; }
-        QWidget#card[uiSize="medium"] QLabel#materialCardTitle { font-size: 12px; }
-        QWidget#card[uiSize="large"] QLabel#materialCardTitle { font-size: 13px; }
-        QPushButton#materialCardToggle { background: transparent; padding: 0; }
-        QLabel#materialCardBody { color: #a9b0b8; }
-        QWidget#card[uiSize="small"] QLabel#materialCardBody { font-size: 11px; }
-        QWidget#card[uiSize="medium"] QLabel#materialCardBody { font-size: 12px; }
-        QWidget#card[uiSize="large"] QLabel#materialCardBody { font-size: 13px; }
-        QLabel#solutionText {
-            color: #aebbb5;
-            background: rgba(28, 36, 33, 48);
-            border: none;
-            border-radius: 5px;
-            padding: 7px;
-        }
-        QWidget#catalogRow {
-            background: rgba(20, 23, 28, 58);
-            border: none;
-            border-radius: 7px;
-        }
-        QPushButton {
-            background: rgba(255,255,255,10);
-            color: #b9c0c8;
-            border: none;
-            border-radius: 6px;
-            padding: 5px 8px;
-            font-weight: 500;
-        }
-        QPushButton#smallButton {
-            background: rgba(255,255,255,8);
-            padding: 4px 6px;
-            min-width: 30px;
-            color: #aeb5bd;
-        }
-        QPushButton#navIconButton,
-        QPushButton#headerIconButton,
-        QPushButton#pinButton,
-        QPushButton#closeButton { background: transparent; padding: 0; }
-        QPushButton:disabled { background: transparent; color: rgba(170,176,184,70); }
-        QRadioButton#answerOption {
-            color: #c8cdd3;
-            background: rgba(18, 21, 26, 52);
-            border: none;
-            border-radius: 6px;
-            padding: 8px;
-        }
-        QRadioButton#answerOption::indicator { width: 0; height: 0; }
-        QRadioButton#answerOption:checked {
-            background: rgba(180, 188, 198, 38);
-            color: #e0e3e7;
-        }
-        QLabel[correct="true"] { color: #9fb6a7; font-weight: 550; }
-        QLabel[correct="false"] { color: #b89d9c; font-weight: 550; }
-        QPushButton#pinButton:checked {
-            background: rgba(255,255,255,18);
-        }
-        QFrame#submitConfirmationBubble {
-            background: rgba(25, 28, 33, 236);
-            border: none;
-            border-radius: 9px;
-        }
-        QLabel#submitConfirmationText {
-            color: #d0d4d9;
-            background: transparent;
-        }
-        QPushButton#confirmationSecondary {
-            background: transparent;
-            color: #9299a2;
-            padding: 4px 7px;
-        }
-        QPushButton#confirmationPrimary {
-            background: rgba(255,255,255,16);
-            color: #cbd0d6;
-            padding: 4px 7px;
-        }
-        QPushButton:hover { background: rgba(255,255,255,18); }
-        QPushButton:pressed { background: rgba(255,255,255,28); }
-    )");
+    QFile style(QStringLiteral(":/styles/desktop.qss"));
+    if (!style.open(QIODevice::ReadOnly)) {
+        qWarning("Unable to load embedded desktop stylesheet");
+        return;
+    }
+    setStyleSheet(QString::fromUtf8(style.readAll()));
 }
 
 }  // namespace quizpane

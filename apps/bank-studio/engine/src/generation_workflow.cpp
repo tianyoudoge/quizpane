@@ -150,6 +150,10 @@ void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettin
             failWorkflow(QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error));
             return;
         }
+        if (!document.warnings.isEmpty())
+            publish(WorkflowStage::Extracting,
+                    QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(),
+                                                   document.warnings.join(QStringLiteral("；"))));
         diagnostic::event(QStringLiteral("extractor"), QStringLiteral("success"),
             {{QStringLiteral("file"), QFileInfo(path).fileName()},
              {QStringLiteral("path"), QFileInfo(path).absoluteFilePath()},
@@ -179,11 +183,18 @@ void GenerationWorkflow::start(const QStringList& sourcePaths, const ModelSettin
 }
 
 void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
+    QList<SourceMaterialGroup> groups;
+    for (const QString& path : sourcePaths)
+        groups.append({path, {}});
+    startRuleBased(groups);
+}
+
+void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& sources) {
     if (active_)
         return;
     diagnostic::event(QStringLiteral("workflow"), QStringLiteral("start"),
-        {{QStringLiteral("mode"), QStringLiteral("rules")},
-         {QStringLiteral("sources"), sourcePaths.size()}});
+         {{QStringLiteral("mode"), QStringLiteral("rules")},
+         {QStringLiteral("sources"), sources.size()}});
     checkpoint_ = {};
     chunks_.clear();
     currentChunkPosition_ = -1;
@@ -195,13 +206,30 @@ void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
     QList<ExtractedDocument> documents;
     ExtractorRegistry registry;
     int completed = 0;
-    for (const QString& path : sourcePaths) {
+    for (const SourceMaterialGroup& source : sources) {
+        const QString path = source.questionPath;
         publish(WorkflowStage::Extracting,
                 QStringLiteral("正在本地提取：%1").arg(QFileInfo(path).fileName()));
         ExtractedDocument document = registry.extract(QFileInfo(path).absoluteFilePath());
         if (!document.error.isEmpty()) {
             failWorkflow(QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error));
             return;
+        }
+        if (!document.warnings.isEmpty())
+            publish(WorkflowStage::Extracting,
+                    QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(),
+                                                   document.warnings.join(QStringLiteral("；"))));
+        if (!source.answerPath.isEmpty()) {
+            const ExtractedDocument answers = registry.extract(
+                QFileInfo(source.answerPath).absoluteFilePath());
+            if (!answers.error.isEmpty()) {
+                failWorkflow(QStringLiteral("%1：%2")
+                    .arg(QFileInfo(source.answerPath).fileName(), answers.error));
+                return;
+            }
+            // 规则生成器本来就支持“答案汇总”区。把独立答案文件接入该区，既不会
+            // 伪造题目，也能按题号将答案和解析归回题目文件。
+            document.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
         }
         diagnostic::event(QStringLiteral("extractor"), QStringLiteral("success"),
             {{QStringLiteral("file"), QFileInfo(path).fileName()},
@@ -214,13 +242,13 @@ void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
 #endif
         documents.append(document);
         ++completed;
-        checkpoint_.sourceBlockCount = sourcePaths.size();
+        checkpoint_.sourceBlockCount = sources.size();
         checkpoint_.completedSourceBlocks.append(completed - 1);
     }
 
     publish(WorkflowStage::Chunking, QStringLiteral("正在按题号、选项、答案和材料规则解析"));
     const RuleBasedGenerationResult result = RuleBasedBankGenerator{}.generate(documents);
-    if (result.normalQuestions.isEmpty() && result.needsReviewQuestions.isEmpty()) {
+    if (result.questions.isEmpty() && result.needsReviewQuestions.isEmpty()) {
         active_ = false;
         const QString detail = result.warnings.isEmpty()
                                    ? QStringLiteral("规则引擎没有识别到题目")
@@ -232,10 +260,11 @@ void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
 
     active_ = false;
     const QString detail = QStringLiteral("规则解析完成：%1 道可直接使用，%2 道待复核")
-                               .arg(result.normalQuestions.size())
+                               .arg(result.questions.size())
                                .arg(result.needsReviewQuestions.size());
     publish(WorkflowStage::Done, detail);
-    emit questionsReady({result.materials, result.normalQuestions, result.needsReviewQuestions});
+    emit questionsReady({result.materials, result.questions,
+                         result.needsReviewQuestions, result.warnings});
     emit finished();
 }
 

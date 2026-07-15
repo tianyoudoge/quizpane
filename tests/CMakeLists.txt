@@ -16,6 +16,10 @@ add_executable(draft_store_test draft_store_test.cpp)
 target_link_libraries(draft_store_test PRIVATE quizpane_core Qt6::Core)
 add_test(NAME draft_store_test COMMAND draft_store_test)
 
+add_executable(provider_response_router_test provider_response_router_test.cpp)
+target_link_libraries(provider_response_router_test PRIVATE quizpane_core Qt6::Core)
+add_test(NAME provider_response_router_test COMMAND provider_response_router_test)
+
 add_executable(image_privacy_filter_test image_privacy_filter_test.cpp)
 target_link_libraries(image_privacy_filter_test PRIVATE
     quizpane_core Qt6::Core Qt6::Gui
@@ -88,6 +92,10 @@ if(TARGET question_maker_engine)
     target_compile_definitions(document_extractor_test PRIVATE
         DOCUMENT_EXTRACTOR_OCR_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ocr-scan-fixture.pdf"
     )
+    if(QUIZPANE_ENABLE_TESSERACT_OCR)
+        target_compile_definitions(document_extractor_test PRIVATE
+            DOCUMENT_EXTRACTOR_HAS_OCR=1)
+    endif()
     add_test(NAME document_extractor_test COMMAND document_extractor_test)
 
     add_executable(rule_based_generator_test rule_based_generator_test.cpp)

@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
     source.currentQuestionIndex = 1;
     QString error;
     if (!store.save(source, &error)) return 2;
-    if (!QFileInfo(store.pathForProvider(source.providerId)).isFile()) return 3;
+    if (!QFileInfo(store.pathForAttempt(source.providerId, source.attemptId)).isFile()) return 3;
     quizpane::DraftSnapshot restored;
     if (!store.load(source.providerId, &restored, &error)) return 4;
     if (restored.attemptId != source.attemptId || restored.questions.size() != 2 ||
@@ -37,7 +37,13 @@ int main(int argc, char** argv) {
     const QJsonObject restoredMaterial = restored.materials.first().toObject();
     if (restoredMaterial.value("id").toString() != QStringLiteral("material-001") ||
         restoredMaterial.value("contentHtml").toString() != QStringLiteral("<p>材料正文</p>")) return 7;
-    if (!store.clear(source.providerId, &error)) return 8;
-    if (store.load(source.providerId, &restored, &error)) return 9;
+    quizpane::DraftSnapshot second = source;
+    second.attemptId = QStringLiteral("attempt-43");
+    second.title = QStringLiteral("另一套练习");
+    if (!store.save(second, &error) || store.list(source.providerId, &error).size() != 2) return 8;
+    if (!store.clearAttempt(source.providerId, second.attemptId, &error) ||
+        store.list(source.providerId, &error).size() != 1) return 9;
+    if (!store.clear(source.providerId, &error)) return 10;
+    if (store.load(source.providerId, &restored, &error)) return 11;
     return 0;
 }

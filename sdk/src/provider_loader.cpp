@@ -1,51 +1,13 @@
 #include "quizpane/provider_loader.hpp"
 #include "quizpane/diagnostic_logger.hpp"
+#include "quizpane/secret_store.hpp"
 
 #include <QJsonDocument>
 #include <QMetaObject>
 #include <QFileInfo>
 #include <QTimer>
 
-#include <cstring>
-
-#if defined(Q_OS_MACOS)
-#include <Security/Security.h>
-#elif defined(Q_OS_WIN)
-#include <windows.h>
-#include <wincred.h>
-#elif defined(QUIZPANE_HAVE_LIBSECRET)
-// Qt 为 signals 定义了关键字宏，而 GLib 的 GDBusSignalInfo 恰好有一个
-// signals 字段。包含 libsecret 时临时撤掉宏，随后恢复 Qt 信号语法。
-#ifdef signals
-#define QUIZPANE_RESTORE_QT_SIGNALS
-#undef signals
-#endif
-#include <libsecret/secret.h>
-#ifdef QUIZPANE_RESTORE_QT_SIGNALS
-#define signals Q_SIGNALS
-#undef QUIZPANE_RESTORE_QT_SIGNALS
-#endif
-#endif
-
 namespace quizpane {
-namespace {
-#if defined(QUIZPANE_HAVE_LIBSECRET)
-const SecretSchema kQuizPaneSecretSchema = {
-    "org.quizpane.Provider", SECRET_SCHEMA_NONE,
-    {{"provider", SECRET_SCHEMA_ATTRIBUTE_STRING},
-     {"key", SECRET_SCHEMA_ATTRIBUTE_STRING},
-     {nullptr, SECRET_SCHEMA_ATTRIBUTE_STRING}}};
-#endif
-
-#if defined(Q_OS_WIN)
-// Credential Manager 使用字符串 TargetName 定位记录。只在 Windows 编译该辅助
-// 函数，避免 macOS/Linux 产物携带无用平台代码。
-QString credentialTarget(const QString& providerId, const QByteArray& key) {
-    return QStringLiteral("QuizPane/%1/%2")
-        .arg(providerId, QString::fromUtf8(key));
-}
-#endif
-}  // namespace
 
 ProviderLoader::ProviderLoader(QObject* parent) : QObject(parent) {
     // 组装“依赖注入表”。Provider 只能调用这些显式开放的 Host 能力，不能获得
@@ -65,6 +27,7 @@ bool ProviderLoader::load(const QString& libraryPath, QString* error) {
     // QLibrary 对应 Java 的 System.loadLibrary，但这里还会逐个 resolve 导出函数，
     // 并校验 ABI/descriptor，防止把任意 DLL 当作题库执行。
     unload();
+    ++generation_;  // 让任何仍在排队的旧响应在 acceptResponse 里被判为陈旧。
     diagnostic::event(QStringLiteral("provider"), QStringLiteral("load-start"),
         {{QStringLiteral("file"), QFileInfo(libraryPath).fileName()}});
     if (QFileInfo(libraryPath).suffix().compare(QStringLiteral("json"),
@@ -154,7 +117,10 @@ void ProviderLoader::unload() {
     descriptor_ = {};
     providerId_.clear();
     declarative_.unload();
-    if (library_.isLoaded()) library_.unload();
+    // PreventUnloadHint 告诉 Qt 在卸载原生题库后不要真正把动态库从进程地址空间
+    // 移除：基于 Qt 的题库可能注册了 metatype 或进程级回调，卸载镜像会让那些
+    // 指针悬空。因此这里只销毁题库实例，绝不调用 library_.unload()，与 load 时
+    // 设置的 hint 保持一致的语义。
 }
 
 bool ProviderLoader::isLoaded() const { return handle_ != nullptr || declarative_.isLoaded(); }
@@ -167,7 +133,13 @@ bool ProviderLoader::request(const QJsonObject& request, QString* error) {
          {QStringLiteral("method"), request.value(QStringLiteral("method")).toString()}});
     if (declarative_.isLoaded()) {
         const QJsonObject response = declarative_.request(request);
-        QTimer::singleShot(0, this, [this, response] { emit responseReceived(response); });
+        const quint64 generation = generation_;
+        QTimer::singleShot(0, this, [this, generation, response] {
+            // 0ms 投递窗口内用户可能已切换/卸载题库；代号不匹配说明这是上一份
+            // 题库的回包，直接丢弃，避免把旧响应错路由到当前页面。
+            if (generation_ != generation) return;
+            emit responseReceived(response);
+        });
         return true;
     }
     if (!handle_ || !requestFn_) {
@@ -208,10 +180,13 @@ void ProviderLoader::responseThunk(void* userData, const char* json, size_t size
     if (!userData || !json) return;
     auto* self = static_cast<ProviderLoader*>(userData);
     const QByteArray copy(json, static_cast<qsizetype>(size));
+    const quint64 generation = self->generation_;
     // Provider 的网络回调可能来自任意线程。QueuedConnection 把处理任务投递回
     // self 所在线程（桌面端通常是 UI 主线程），类似把结果 dispatch 到前端主线程。
-    QMetaObject::invokeMethod(self, [self, copy] { self->acceptResponse(copy); },
-                              Qt::QueuedConnection);
+    // 代号在主线程真正执行 lambda 前再核对一次，覆盖“投递后用户又切了题库”的情形。
+    QMetaObject::invokeMethod(self, [self, copy, generation] {
+        self->acceptResponse(copy, generation);
+    }, Qt::QueuedConnection);
 }
 
 void ProviderLoader::logThunk(void* hostContext, qp_log_level level,
@@ -229,82 +204,8 @@ int ProviderLoader::secureReadThunk(void* hostContext, const char* key,
                                     size_t* inoutOutputSize) {
     if (!hostContext || !key || !inoutOutputSize) return 3;
     const auto* self = static_cast<ProviderLoader*>(hostContext);
-    // 同一个接口在编译期选择平台实现。#if 类似 Maven profile，但发生在 C/C++
-    // 预处理阶段：最终二进制只包含当前系统的分支。
-#if defined(Q_OS_MACOS)
-    const QByteArray service = QByteArrayLiteral("org.quizpane.provider.") +
-                               self->providerId_.toUtf8();
-    const QByteArray account(key, static_cast<qsizetype>(keySize));
-    const void* keys[] = {kSecClass, kSecAttrService, kSecAttrAccount,
-                          kSecReturnData, kSecMatchLimit};
-    const void* values[] = {kSecClassGenericPassword,
-        CFStringCreateWithBytes(nullptr,
-            reinterpret_cast<const UInt8*>(service.constData()), service.size(),
-            kCFStringEncodingUTF8, false),
-        CFStringCreateWithBytes(nullptr,
-            reinterpret_cast<const UInt8*>(account.constData()), account.size(),
-            kCFStringEncodingUTF8, false), kCFBooleanTrue, kSecMatchLimitOne};
-    CFDictionaryRef query = CFDictionaryCreate(nullptr, keys, values, 5,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    CFTypeRef result = nullptr;
-    const OSStatus status = SecItemCopyMatching(query, &result);
-    CFRelease(query);
-    CFRelease(values[1]);
-    CFRelease(values[2]);
-    if (status == errSecItemNotFound) return 1;
-    if (status != errSecSuccess || !result) return 3;
-    const auto data = static_cast<CFDataRef>(result);
-    const size_t required = static_cast<size_t>(CFDataGetLength(data));
-    if (!output || *inoutOutputSize < required) {
-        *inoutOutputSize = required;
-        CFRelease(result);
-        return output ? 2 : 0;
-    }
-    memcpy(output, CFDataGetBytePtr(data), required);
-    *inoutOutputSize = required;
-    CFRelease(result);
-    return 0;
-#elif defined(Q_OS_WIN)
-    const QByteArray account(key, static_cast<qsizetype>(keySize));
-    const QString target = credentialTarget(self->providerId_, account);
-    PCREDENTIALW credential = nullptr;
-    if (!CredReadW(reinterpret_cast<LPCWSTR>(target.utf16()),
-                   CRED_TYPE_GENERIC, 0, &credential))
-        return GetLastError() == ERROR_NOT_FOUND ? 1 : 3;
-    const size_t required = credential->CredentialBlobSize;
-    if (!output || *inoutOutputSize < required) {
-        *inoutOutputSize = required;
-        CredFree(credential);
-        return output ? 2 : 0;
-    }
-    memcpy(output, credential->CredentialBlob, required);
-    *inoutOutputSize = required;
-    CredFree(credential);
-    return 0;
-#elif defined(QUIZPANE_HAVE_LIBSECRET)
-    const QByteArray account(key, static_cast<qsizetype>(keySize));
-    const QByteArray provider = self->providerId_.toUtf8();
-    GError* error = nullptr;
-    gchar* encoded = secret_password_lookup_sync(&kQuizPaneSecretSchema,
-        nullptr, &error, "provider", provider.constData(), "key",
-        account.constData(), nullptr);
-    if (error) { g_error_free(error); return 3; }
-    if (!encoded) return 1;
-    const QByteArray value = QByteArray::fromBase64(QByteArray(encoded));
-    secret_password_free(encoded);
-    const size_t required = static_cast<size_t>(value.size());
-    if (!output || *inoutOutputSize < required) {
-        *inoutOutputSize = required;
-        return output ? 2 : 0;
-    }
-    memcpy(output, value.constData(), required);
-    *inoutOutputSize = required;
-    return 0;
-#else
-    Q_UNUSED(self);
-    Q_UNUSED(output);
-    return 4;
-#endif
+    return SecretStore::read(self->providerId_,
+        QByteArray(key, static_cast<qsizetype>(keySize)), output, inoutOutputSize);
 }
 
 int ProviderLoader::secureWriteThunk(void* hostContext, const char* key,
@@ -312,120 +213,25 @@ int ProviderLoader::secureWriteThunk(void* hostContext, const char* key,
                                      size_t valueSize) {
     if (!hostContext || !key || (!value && valueSize)) return 3;
     const auto* self = static_cast<ProviderLoader*>(hostContext);
-    // service/target 同时包含 providerId，因此不同题库即使都使用
-    // "session.cookies" 作为 key，也不会互相覆盖登录态。
-#if defined(Q_OS_MACOS)
-    const QByteArray service = QByteArrayLiteral("org.quizpane.provider.") +
-                               self->providerId_.toUtf8();
-    const QByteArray account(key, static_cast<qsizetype>(keySize));
-    CFStringRef serviceRef = CFStringCreateWithBytes(nullptr,
-        reinterpret_cast<const UInt8*>(service.constData()), service.size(),
-        kCFStringEncodingUTF8, false);
-    CFStringRef accountRef = CFStringCreateWithBytes(nullptr,
-        reinterpret_cast<const UInt8*>(account.constData()), account.size(),
-        kCFStringEncodingUTF8, false);
-    CFDataRef dataRef = CFDataCreate(nullptr, value, static_cast<CFIndex>(valueSize));
-    const void* queryKeys[] = {kSecClass, kSecAttrService, kSecAttrAccount};
-    const void* queryValues[] = {kSecClassGenericPassword, serviceRef, accountRef};
-    CFDictionaryRef query = CFDictionaryCreate(nullptr, queryKeys, queryValues, 3,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    const void* updateKeys[] = {kSecValueData};
-    const void* updateValues[] = {dataRef};
-    CFDictionaryRef update = CFDictionaryCreate(nullptr, updateKeys, updateValues, 1,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    OSStatus status = SecItemUpdate(query, update);
-    if (status == errSecItemNotFound) {
-        const void* addKeys[] = {kSecClass, kSecAttrService, kSecAttrAccount,
-                                 kSecValueData};
-        const void* addValues[] = {kSecClassGenericPassword, serviceRef,
-                                   accountRef, dataRef};
-        CFDictionaryRef add = CFDictionaryCreate(nullptr, addKeys, addValues, 4,
-            &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-        status = SecItemAdd(add, nullptr);
-        CFRelease(add);
-    }
-    CFRelease(update);
-    CFRelease(query);
-    CFRelease(dataRef);
-    CFRelease(accountRef);
-    CFRelease(serviceRef);
-    return status == errSecSuccess ? 0 : 3;
-#elif defined(Q_OS_WIN)
-    const QByteArray account(key, static_cast<qsizetype>(keySize));
-    QString target = credentialTarget(self->providerId_, account);
-    QString userName = self->providerId_;
-    CREDENTIALW credential{};
-    credential.Type = CRED_TYPE_GENERIC;
-    credential.TargetName = reinterpret_cast<LPWSTR>(target.data());
-    credential.UserName = reinterpret_cast<LPWSTR>(userName.data());
-    credential.CredentialBlobSize = static_cast<DWORD>(valueSize);
-    credential.CredentialBlob = const_cast<LPBYTE>(value);
-    credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
-    return CredWriteW(&credential, 0) ? 0 : 3;
-#elif defined(QUIZPANE_HAVE_LIBSECRET)
-    const QByteArray account(key, static_cast<qsizetype>(keySize));
-    const QByteArray provider = self->providerId_.toUtf8();
-    const QByteArray encoded(reinterpret_cast<const char*>(value),
-                             static_cast<qsizetype>(valueSize));
-    const QByteArray base64 = encoded.toBase64();
-    GError* error = nullptr;
-    const gboolean ok = secret_password_store_sync(&kQuizPaneSecretSchema,
-        SECRET_COLLECTION_DEFAULT, "QuizPane Provider session",
-        base64.constData(), nullptr, &error, "provider", provider.constData(),
-        "key", account.constData(), nullptr);
-    if (error) g_error_free(error);
-    return ok ? 0 : 3;
-#else
-    Q_UNUSED(self);
-    return 4;
-#endif
+    return SecretStore::write(self->providerId_,
+        QByteArray(key, static_cast<qsizetype>(keySize)), value, valueSize);
 }
 
 int ProviderLoader::secureDeleteThunk(void* hostContext, const char* key,
                                       size_t keySize) {
     if (!hostContext || !key) return 3;
     const auto* self = static_cast<ProviderLoader*>(hostContext);
-#if defined(Q_OS_MACOS)
-    const QByteArray service = QByteArrayLiteral("org.quizpane.provider.") +
-                               self->providerId_.toUtf8();
-    const QByteArray account(key, static_cast<qsizetype>(keySize));
-    CFStringRef serviceRef = CFStringCreateWithBytes(nullptr,
-        reinterpret_cast<const UInt8*>(service.constData()), service.size(),
-        kCFStringEncodingUTF8, false);
-    CFStringRef accountRef = CFStringCreateWithBytes(nullptr,
-        reinterpret_cast<const UInt8*>(account.constData()), account.size(),
-        kCFStringEncodingUTF8, false);
-    const void* keys[] = {kSecClass, kSecAttrService, kSecAttrAccount};
-    const void* values[] = {kSecClassGenericPassword, serviceRef, accountRef};
-    CFDictionaryRef query = CFDictionaryCreate(nullptr, keys, values, 3,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    const OSStatus status = SecItemDelete(query);
-    CFRelease(query);
-    CFRelease(accountRef);
-    CFRelease(serviceRef);
-    return status == errSecSuccess || status == errSecItemNotFound ? 0 : 3;
-#elif defined(Q_OS_WIN)
-    const QByteArray account(key, static_cast<qsizetype>(keySize));
-    const QString target = credentialTarget(self->providerId_, account);
-    if (CredDeleteW(reinterpret_cast<LPCWSTR>(target.utf16()),
-                    CRED_TYPE_GENERIC, 0)) return 0;
-    return GetLastError() == ERROR_NOT_FOUND ? 0 : 3;
-#elif defined(QUIZPANE_HAVE_LIBSECRET)
-    const QByteArray account(key, static_cast<qsizetype>(keySize));
-    const QByteArray provider = self->providerId_.toUtf8();
-    GError* error = nullptr;
-    const gboolean ok = secret_password_clear_sync(&kQuizPaneSecretSchema,
-        nullptr, &error, "provider", provider.constData(), "key",
-        account.constData(), nullptr);
-    if (error) g_error_free(error);
-    return ok ? 0 : 3;
-#else
-    Q_UNUSED(self);
-    return 4;
-#endif
+    return SecretStore::remove(self->providerId_,
+        QByteArray(key, static_cast<qsizetype>(keySize)));
 }
 
-void ProviderLoader::acceptResponse(const QByteArray& json) {
+void ProviderLoader::acceptResponse(const QByteArray& json, quint64 generation) {
+    if (generation != generation_) {
+        // 回包属于已被卸载或替换掉的旧题库，丢弃以免错路由。
+        diagnostic::event(QStringLiteral("provider"), QStringLiteral("response-stale"),
+            {{QStringLiteral("bytes"), json.size()}});
+        return;
+    }
     QJsonParseError parseError;
     const auto document = QJsonDocument::fromJson(json, &parseError);
     if (!document.isObject()) {

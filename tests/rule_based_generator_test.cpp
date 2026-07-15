@@ -19,7 +19,7 @@ QJsonObject bankFor(const quizpane::studio::RuleBasedGenerationResult& result) {
                                                 {"title", "Rules"},
                                                 {"practice", QJsonObject{{"mode", "all"}}}}}},
             {"materials", result.materials},
-            {"questions", result.normalQuestions}};
+            {"questions", result.questions}};
 }
 } // namespace
 
@@ -42,13 +42,13 @@ int main(int argc, char** argv) {
     const auto result = RuleBasedBankGenerator{}.generate({structured});
     if (result.materials.size() != 1)
         return 1;
-    if (result.normalQuestions.size() != 2 || !result.needsReviewQuestions.isEmpty())
+    if (result.questions.size() != 2 || !result.needsReviewQuestions.isEmpty())
         return 2;
     const QString materialId = result.materials.first().toObject().value("id").toString();
-    for (const auto& value : result.normalQuestions)
+    for (const auto& value : result.questions)
         if (value.toObject().value("materialId").toString() != materialId)
             return 3;
-    if (!result.normalQuestions.first()
+    if (!result.questions.first()
              .toObject()
              .value("solution")
              .toString()
@@ -66,9 +66,9 @@ int main(int argc, char** argv) {
                        "【答案】A\n【解析】vector 提供连续存储。\n"
                        "2、这道题故意没有答案\nA、甲\nB、乙\n");
     const auto inlineResult = RuleBasedBankGenerator{}.generate({inlineDocument});
-    if (inlineResult.normalQuestions.size() != 1 || inlineResult.needsReviewQuestions.size() != 1)
+    if (inlineResult.questions.size() != 1 || inlineResult.needsReviewQuestions.size() != 1)
         return 5;
-    const QJsonObject first = inlineResult.normalQuestions.first().toObject();
+    const QJsonObject first = inlineResult.questions.first().toObject();
     if (!first.value("solution").toString().contains(QStringLiteral("连续存储")))
         return 6;
     const QString reason = inlineResult.needsReviewQuestions.first()
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     multiple.plainText =
         QStringLiteral("1. 下列哪些是容器？\nA. vector\nB. map\nC. mutex\nD. thread\n答案：AB\n");
     const auto multipleResult = RuleBasedBankGenerator{}.generate({multiple});
-    if (!multipleResult.normalQuestions.isEmpty() ||
+    if (!multipleResult.questions.isEmpty() ||
         multipleResult.needsReviewQuestions.size() != 1)
         return 8;
 
@@ -93,10 +93,10 @@ int main(int argc, char** argv) {
     trueFalse.sourcePath = QStringLiteral("boolean.txt");
     trueFalse.plainText = QStringLiteral("1. C++ 是编译型语言。\nA. 错误\nB. 正确\n答案：正确\n");
     const auto trueFalseResult = RuleBasedBankGenerator{}.generate({trueFalse});
-    if (trueFalseResult.normalQuestions.size() != 1 ||
-        trueFalseResult.normalQuestions.first().toObject().value("type").toString() !=
+    if (trueFalseResult.questions.size() != 1 ||
+        trueFalseResult.questions.first().toObject().value("type").toString() !=
             QStringLiteral("true_false") ||
-        trueFalseResult.normalQuestions.first()
+        trueFalseResult.questions.first()
                 .toObject()
                 .value("answer")
                 .toObject()
@@ -112,8 +112,216 @@ int main(int argc, char** argv) {
                                               "2. 第二题\nA. 丙\nB. 丁\n"
                                               "答案\n1-2 AB\n");
     const auto compactResult = RuleBasedBankGenerator{}.generate({compactAnswers});
-    if (compactResult.normalQuestions.size() != 2 || !compactResult.needsReviewQuestions.isEmpty())
+    if (compactResult.questions.size() != 2 || !compactResult.needsReviewQuestions.isEmpty())
         return 20;
+
+    // 场景 3：阶段分组——阶段一题目 + 阶段一答案 + 阶段二题目 + 阶段二答案。
+    // 旧逻辑只认第一个答案区头，会把阶段二的题目当成答案区文本吞掉。这里断言
+    // 两阶段共 4 题全部识别，且答案各自归属正确。
+    ExtractedDocument staged;
+    staged.sourcePath = QStringLiteral("staged.txt");
+    staged.plainText = QStringLiteral("1. 阶段一第一题\nA. 甲\nB. 乙\n"
+                                      "2. 阶段一第二题\nA. 丙\nB. 丁\n"
+                                      "参考答案\n1.A\n2.B\n"
+                                      "3. 阶段二第一题\nA. 戊\nB. 己\n"
+                                      "4. 阶段二第二题\nA. 庚\nB. 辛\n"
+                                      "参考答案\n3.A\n4.B\n");
+    const auto stagedResult = RuleBasedBankGenerator{}.generate({staged});
+    if (stagedResult.questions.size() != 4 || !stagedResult.needsReviewQuestions.isEmpty())
+        return 21;
+    {
+        const auto ids = [](const QJsonObject& q) {
+            const QJsonArray arr = q.value("answer").toObject().value("optionIds").toArray();
+            QStringList out;
+            for (const auto& v : arr)
+                out.append(v.toString());
+            return out.join(u'.');
+        };
+        const auto findQ = [&](int number) -> QJsonObject {
+            for (const auto& v : stagedResult.questions)
+                if (v.toObject().value("id").toString().contains(
+                        QStringLiteral("q%1-").arg(number)))
+                    return v.toObject();
+            return {};
+        };
+        if (ids(findQ(1)) != QStringLiteral("a") || ids(findQ(2)) != QStringLiteral("b") ||
+            ids(findQ(3)) != QStringLiteral("a") || ids(findQ(4)) != QStringLiteral("b"))
+            return 22;
+        if (!quizpane::validateBank(bankFor(stagedResult), &validationError))
+            return 23;
+    }
+
+    // 场景 2：选项内联进题干行——题号、题干、四个选项写在同一行，答案另起一行。
+    ExtractedDocument inlineOptions;
+    inlineOptions.sourcePath = QStringLiteral("inline-options.txt");
+    inlineOptions.plainText = QStringLiteral(
+        "1. 下列哪个是顺序容器 A. vector B. mutex C. thread D. filesystem\n答案：A\n");
+    const auto inlineOptionsResult = RuleBasedBankGenerator{}.generate({inlineOptions});
+    if (inlineOptionsResult.questions.size() != 1 ||
+        !inlineOptionsResult.needsReviewQuestions.isEmpty())
+        return 24;
+    {
+        const QJsonObject q = inlineOptionsResult.questions.first().toObject();
+        if (q.value("options").toArray().size() != 4)
+            return 25;
+        if (q.value("answer").toObject().value("optionIds").toArray().first().toString() !=
+            QStringLiteral("a"))
+            return 26;
+        if (!q.value("stem").toString().contains(QStringLiteral("顺序容器")))
+            return 27;
+    }
+
+    // 场景 2（尾随答案）：题干与选项分行，答案写在最后一行末尾。
+    ExtractedDocument trailing;
+    trailing.sourcePath = QStringLiteral("trailing.txt");
+    trailing.plainText =
+        QStringLiteral("1. C++ 是编译型语言吗 A. 是 B. 否 答案：A\n");
+    const auto trailingResult = RuleBasedBankGenerator{}.generate({trailing});
+    if (trailingResult.questions.size() != 1 ||
+        !trailingResult.needsReviewQuestions.isEmpty())
+        return 28;
+    if (trailingResult.questions.first()
+            .toObject()
+            .value("answer")
+            .toObject()
+            .value("optionIds")
+            .toArray()
+            .first()
+            .toString() != QStringLiteral("a"))
+        return 29;
+
+    // 场景 C：选项用圈码 ①②③④ 而非字母。
+    ExtractedDocument circled;
+    circled.sourcePath = QStringLiteral("circled.txt");
+    circled.plainText = QStringLiteral("1. 下列哪一个是蓝色\n① 蓝色\n② 红色\n③ 黄色\n④ 黑色\n答案：①\n");
+    const auto circledResult = RuleBasedBankGenerator{}.generate({circled});
+    if (circledResult.questions.size() != 1 || !circledResult.needsReviewQuestions.isEmpty())
+        return 30;
+    {
+        const QJsonObject q = circledResult.questions.first().toObject();
+        if (q.value("options").toArray().size() != 4)
+            return 31;
+        if (q.value("answer").toObject().value("optionIds").toArray().first().toString() !=
+            QStringLiteral("a"))
+            return 32;
+    }
+
+    // 场景 C：选项用括号数字 (1)(2)(3)(4)。
+    ExtractedDocument parenNumeric;
+    parenNumeric.sourcePath = QStringLiteral("paren.txt");
+    parenNumeric.plainText = QStringLiteral(
+        "1. 选出正确的项\n(1) 甲\n(2) 乙\n(3) 丙\n(4) 丁\n答案：(1)\n");
+    const auto parenResult = RuleBasedBankGenerator{}.generate({parenNumeric});
+    if (parenResult.questions.size() != 1 || !parenResult.needsReviewQuestions.isEmpty())
+        return 33;
+    if (parenResult.questions.first()
+            .toObject()
+            .value("answer")
+            .toObject()
+            .value("optionIds")
+            .toArray()
+            .first()
+            .toString() != QStringLiteral("a"))
+        return 34;
+
+    // 场景 D：选择题答案直接写在题干末尾括号里（（A）），选项在后面分行。
+    ExtractedDocument bracketAnswer;
+    bracketAnswer.sourcePath = QStringLiteral("bracket.txt");
+    bracketAnswer.plainText = QStringLiteral(
+        "1. 下列哪个是顺序容器（A）\nA. vector\nB. mutex\nC. thread\nD. filesystem\n");
+    const auto bracketResult = RuleBasedBankGenerator{}.generate({bracketAnswer});
+    if (bracketResult.questions.size() != 1 || !bracketResult.needsReviewQuestions.isEmpty())
+        return 35;
+    if (bracketResult.questions.first()
+            .toObject()
+            .value("answer")
+            .toObject()
+            .value("optionIds")
+            .toArray()
+            .first()
+            .toString() != QStringLiteral("a"))
+        return 36;
+    if (!bracketResult.questions.first()
+             .toObject()
+             .value("stem")
+             .toString()
+             .contains(QStringLiteral("顺序容器")))
+        return 37;
+
+    // 场景 H：答案区是 markdown 表格。
+    ExtractedDocument tableAnswer;
+    tableAnswer.sourcePath = QStringLiteral("table.txt");
+    tableAnswer.plainText = QStringLiteral("1. 第一题\nA. 甲\nB. 乙\n"
+                                           "2. 第二题\nA. 丙\nB. 丁\n"
+                                           "答案\n"
+                                           "题号 | 1 | 2\n"
+                                           "答案 | A | B\n");
+    const auto tableResult = RuleBasedBankGenerator{}.generate({tableAnswer});
+    if (tableResult.questions.size() != 2 || !tableResult.needsReviewQuestions.isEmpty())
+        return 38;
+    {
+        const auto findQ = [&](int number) -> QJsonObject {
+            for (const auto& v : tableResult.questions)
+                if (v.toObject().value("id").toString().contains(
+                        QStringLiteral("q%1-").arg(number)))
+                    return v.toObject();
+            return {};
+        };
+        if (findQ(1).value("answer").toObject().value("optionIds").toArray().first().toString() !=
+                QStringLiteral("a") ||
+            findQ(2).value("answer").toObject().value("optionIds").toArray().first().toString() !=
+                QStringLiteral("b"))
+            return 39;
+    }
+
+    // 场景 I：题干跨多行，中间夹空行续写，然后才出选项。
+    ExtractedDocument multilineStem;
+    multilineStem.sourcePath = QStringLiteral("multiline.txt");
+    multilineStem.plainText = QStringLiteral(
+        "1. 这是一道题干很长的问题，第一行\n"
+        "题干继续第二行\n"
+        "\n"
+        "题干第三行（空行之后续写）\n"
+        "A. 甲\nB. 乙\n答案：A\n");
+    const auto multilineResult = RuleBasedBankGenerator{}.generate({multilineStem});
+    if (multilineResult.questions.size() != 1 || !multilineResult.needsReviewQuestions.isEmpty())
+        return 40;
+    {
+        const QString stem = multilineResult.questions.first()
+                                 .toObject()
+                                 .value("stem")
+                                 .toString();
+        if (!stem.contains(QStringLiteral("第一行")) ||
+            !stem.contains(QStringLiteral("第二行")) ||
+            !stem.contains(QStringLiteral("第三行")))
+            return 41;
+    }
+
+    // 场景 C（答案区）：选项用圈码，答案也用圈码，且答案单独成区（参考答案）。
+    ExtractedDocument circledSection;
+    circledSection.sourcePath = QStringLiteral("circled-section.txt");
+    circledSection.plainText = QStringLiteral(
+        "1. 下列哪一个是蓝色\n① 蓝色\n② 红色\n③ 黄色\n④ 黑色\n"
+        "2. 下列哪一个是红色\n① 蓝色\n② 红色\n③ 黄色\n④ 黑色\n"
+        "参考答案\n1.①\n2.②\n");
+    const auto circledSectionResult = RuleBasedBankGenerator{}.generate({circledSection});
+    if (circledSectionResult.questions.size() != 2 ||
+        !circledSectionResult.needsReviewQuestions.isEmpty())
+        return 42;
+    {
+        const auto findQ = [&](int number) -> QJsonObject {
+            for (const auto& v : circledSectionResult.questions)
+                if (v.toObject().value("id").toString().contains(
+                        QStringLiteral("q%1-").arg(number)))
+                    return v.toObject();
+            return {};
+        };
+        if (findQ(1).value("answer").toObject().value("optionIds").toArray().first().toString() !=
+                QStringLiteral("a") ||
+            findQ(2).value("answer").toObject().value("optionIds").toArray().first().toString() !=
+                QStringLiteral("b"))
+            return 43;
+    }
 
     // 规则候选最终仍进入现有声明式 ZIP，不产生本机代码。这里复用上面以内存
     // 构造的稳定样例写包、检查 manifest、重新读 ZIP，再交给运行时加载。

@@ -1,0 +1,25 @@
+QMainWindow, QWidget#content { background: #0c0e12; color: #c8cdd3; }
+QFrame#sidebar { background: #111419; border: none; border-right: 1px solid #252a31; }
+QLabel#brand { font-size: 20px; font-weight: 700; color: #e0e3e7; }
+QLabel#pageTitle { font-size: 25px; font-weight: 700; color: #e0e3e7; }
+QLabel#eyebrow { color: #aeb5bd; font-size: 11px; font-weight: 600; }
+QLabel#muted, QLabel#privacyFootnote { color: #9ca3ab; }
+QLabel#sideStep { color: #aeb5bd; padding: 9px 10px; border-radius: 7px; }
+QLabel#sideStep[active="true"] { color: #ffffff; background: #252a31; }
+QLabel#sectionTitle, QLabel#phaseTitle, QLabel#sourceRowTitle { color: #e0e3e7; font-size: 15px; font-weight: 650; }
+QLabel#metricValue, QLabel#pairedAnswerBadge { color: #b7bec7; font-weight: 650; }
+QLabel#notice { background: #20252b; color: #cfd4da; padding: 12px; border-radius: 8px; border: 1px solid #343a42; }
+QFrame#dropZone { background: #15191e; border: 1px dashed #59616b; border-radius: 10px; }
+QFrame#panel, QFrame#metricCard, QFrame#sourceRow { background: #15191e; border: 1px solid #252a31; border-radius: 9px; }
+QPushButton { background: #20252b; color: #cfd4da; border: 1px solid #343a42; border-radius: 7px; padding: 8px 13px; }
+QPushButton:hover { background: #2a3037; border-color: #59616b; }
+QPushButton#primaryButton { background: #d7dbe0; color: #15191e; border-color: #d7dbe0; font-weight: 600; }
+QPushButton#primaryButton:hover { background: #ffffff; border-color: #ffffff; }
+QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #b7bec7; border-color: transparent; }
+QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget, QWidget#styledDropdown { background: #111419; color: #cfd4da; border: 1px solid #343a42; border-radius: 7px; padding: 8px; selection-background-color: #3b424b; }
+QListWidget::item { padding: 10px; border-bottom: 1px solid #252a31; }
+QListWidget::item:selected { color: #ffffff; background: #343a42; }
+QFrame#styledDropdownPopup { background: #171b20; border: 1px solid #3b424b; border-radius: 8px; }
+QHeaderView::section { background: #252a31; color: #cfd4da; border: none; padding: 8px; }
+QProgressBar { background: #20252b; border: none; border-radius: 3px; height: 7px; }
+QProgressBar::chunk { background: #9ca3ab; border-radius: 3px; }

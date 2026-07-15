@@ -1,5 +1,28 @@
 {
   "version": 6,
+  "buildPresets": [
+    {"name": "dev", "configurePreset": "dev"},
+    {"name": "fast", "configurePreset": "fast"},
+    {"name": "ci", "configurePreset": "ci"},
+    {"name": "release", "configurePreset": "release"}
+  ],
+  "testPresets": [
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": {"outputOnFailure": true}
+    }
+  ],
   "configurePresets": [
     {
       "name": "dev",
@@ -10,16 +33,48 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "QUIZPANE_BUILD_TESTS": "ON"
       }
-    }
-  ],
-  "buildPresets": [
-    {"name": "dev", "configurePreset": "dev"}
-  ],
-  "testPresets": [
+    },
     {
-      "name": "dev",
-      "configurePreset": "dev",
-      "output": {"outputOnFailure": true}
+      "name": "fast",
+      "inherits": "dev",
+      "displayName": "QuizPane fast clean build",
+      "binaryDir": "${sourceDir}/build/fast",
+      "cacheVariables": {
+        "QUIZPANE_ENABLE_UNITY_BUILD": "ON"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "QuizPane pull request CI",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ci",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "QUIZPANE_BUILD_TESTS": "ON",
+        "QUIZPANE_ENABLE_TESSERACT_OCR": "OFF",
+        "QUIZPANE_ENABLE_PCH": "ON",
+        "QUIZPANE_ENABLE_UNITY_BUILD": "ON",
+        "QUIZPANE_ENABLE_COMPILER_CACHE": "ON",
+        "QUIZPANE_PORTABLE_CPU_BASELINE": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "QuizPane complete release build",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "QUIZPANE_BUILD_TESTS": "ON",
+        "QUIZPANE_BUILD_BANK_STUDIO": "ON",
+        "QUIZPANE_ENABLE_TESSERACT_OCR": "ON",
+        "QUIZPANE_ENABLE_PCH": "ON",
+        "QUIZPANE_ENABLE_UNITY_BUILD": "OFF",
+        "QUIZPANE_ENABLE_COMPILER_CACHE": "ON",
+        "QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING": "OFF",
+        "QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS": "OFF",
+        "QUIZPANE_PORTABLE_CPU_BASELINE": "ON"
+      }
     }
   ]
 }

@@ -4,6 +4,7 @@
 #include "quizpane/studio/checkpoint_store.hpp"
 #include "quizpane/studio/chunker.hpp"
 #include "quizpane/studio/model_client.hpp"
+#include "quizpane/studio/review_result.hpp"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -35,13 +36,13 @@ struct WorkflowProgress {
     QString detail;
 };
 
-struct GeneratedBankCandidate {
-    // 已完成稳定重命名、可直接进入最终 BankValidator 的共享材料。
-    QJsonArray materials;
-    // 规则校验通过且无需人工判断的题目。
-    QJsonArray questions;
-    // 可解析但模型低置信度，或修复后仍有结构问题的题目。
-    QJsonArray needsReviewQuestions;
+using GeneratedBankCandidate = ReviewResult;
+
+// 一组资料可由题目文件和独立答案/解析文件组成。离线路径在本机合并两者，
+// 按题号匹配答案；没有答案文件时 answerPath 为空。
+struct SourceMaterialGroup {
+    QString questionPath;
+    QString answerPath;
 };
 
 // 模型输出解析是独立的确定性边界：网络状态机和 JSON/Schema 规则互不耦合。
@@ -63,6 +64,7 @@ class GenerationWorkflow final : public QObject {
     // 完全离线的规则结构化入口：复用同一批提取器和最终候选 DTO，但不创建模型
     // 请求或模型检查点。相同输入始终产生相同输出，适合规整题库快速导入。
     void startRuleBased(const QStringList& sourcePaths);
+    void startRuleBased(const QList<SourceMaterialGroup>& sources);
 
     // 取消当前网络请求并原子保存进度，任务可由相同源文件再次恢复。
     void pause();
