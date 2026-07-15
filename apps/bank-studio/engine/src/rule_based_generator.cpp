@@ -87,32 +87,24 @@ QString assetBaseName(const QString& sourcePath) {
     return base.left(40) + QChar('-') + fingerprint;
 }
 
-bool isFormulaImageQuestion(const QString& stem) {
-    // 仅对“概率/比例/倍数”类题开启选项小图裁切。图形推理等其它视觉题仍保留
-    // 图 A/B/C/D 占位，避免为了切图把一题误拆成多张不可靠的图片。
-    static const QRegularExpression marker(
-        QStringLiteral("概率|可能性|分数|比例|比值|多少倍|几倍"));
-    return marker.match(stem).hasMatch();
-}
-
-const PdfTextAnchor* questionAnchorFor(const ExtractedDocument& document, int page, int number) {
-    const auto anchors = document.questionAnchors.value(page);
+QRectF questionBoundsFor(const ExtractedDocument& document, int page, int number) {
+    const auto& anchors = document.questionAnchors.value(page);
     for (const PdfTextAnchor& anchor : anchors)
         if (anchor.text.toInt() == number)
-            return &anchor;
-    return nullptr;
+            return anchor.bounds;
+    return {};
 }
 
 QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, int page,
                                              int number) {
-    const PdfTextAnchor* question = questionAnchorFor(document, page, number);
-    if (!question)
+    const QRectF questionBounds = questionBoundsFor(document, page, number);
+    if (questionBounds.isEmpty())
         return {};
     const auto labels = document.optionLabelAnchors.value(page);
     QHash<QString, QRectF> best;
     qreal bestY = std::numeric_limits<qreal>::max();
     for (const PdfTextAnchor& candidate : labels) {
-        if (candidate.bounds.top() <= question->bounds.bottom())
+        if (candidate.bounds.top() <= questionBounds.bottom())
             continue;
         // 一行 A/B/C/D 的标签应当在近似相同的 y 位置。先以每个 A 为候选行，
         // 选择题号之后最靠上的完整一行，避免拿到本页下一题的选项标签。
@@ -120,7 +112,7 @@ QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, i
             continue;
         QHash<QString, QRectF> row{{QStringLiteral("a"), candidate.bounds}};
         for (const PdfTextAnchor& other : labels) {
-            if (other.bounds.top() <= question->bounds.bottom() ||
+            if (other.bounds.top() <= questionBounds.bottom() ||
                 qAbs(other.bounds.center().y() - candidate.bounds.center().y()) > 0.018)
                 continue;
             if (QStringLiteral("abcd").contains(other.text) && !row.contains(other.text))
@@ -134,9 +126,8 @@ QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, i
     return best;
 }
 
-QHash<QString, QJsonObject> extractFormulaOptionImages(const ExtractedDocument& document,
-                                                        int page, int number,
-                                                        QHash<QString, QByteArray>* assets) {
+QHash<QString, QJsonObject> extractOptionImages(const ExtractedDocument& document, int page,
+                                                 int number, QHash<QString, QByteArray>* assets) {
     const QHash<QString, QRectF> labels = optionRowForQuestion(document, page, number);
     if (labels.size() != 4 || !document.pageImages.contains(page))
         return {};
@@ -164,8 +155,8 @@ QHash<QString, QJsonObject> extractFormulaOptionImages(const ExtractedDocument& 
         const qreal right = index + 1 < centers.size()
             ? (centers.at(index) + centers.at(index + 1)) / 2.0
             : centers.at(index) + spacingLeft * 0.48;
-        // 分数位于标签正上方。高度刻意很窄，只带公式和 A/B/C/D 标签，不会把
-        // 题干或相邻题目卷进选项；整个过程完全以 PDF 文字层坐标定位，不做 OCR。
+        // 选项图片位于标签正上方。高度刻意很窄，只带图片和 A/B/C/D 标签，不会
+        // 把题干或相邻题目卷进选项；整个过程完全以 PDF 文字层坐标定位，不做 OCR。
         const QRect crop(qBound(0, qFloor(left * source.width()), source.width() - 1),
                          qBound(0, qFloor((rowY - 0.065) * source.height()), source.height() - 1),
                          qMax(1, qCeil((right - left) * source.width())),
@@ -670,15 +661,18 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
     const bool hasVisualContext = sourcePage > 0 && document.pageImages.contains(sourcePage) &&
         (visualText.contains(QStringLiteral("图")) || visualText.contains(QStringLiteral("表")) ||
          visualText.contains(QStringLiteral("统计")) || visualText.contains(QStringLiteral("问号")));
-    const bool hasVisualOptions = hasVisualContext ||
-        (options.size() < 2 && hasVisualOptionLabels && isFormulaImageQuestion(visualText));
+    const bool needsVisualOptions = options.size() < 2 &&
+        (hasVisualOptionLabels || hasVisualContext);
     QHash<QString, QJsonObject> optionImages;
-    if (hasVisualOptions && options.size() < 2) {
-        // 选项 A/B/C/D 完全画在原卷图片里时，PDF 文字层往往只留下题干甚至
-        // 什么也不留。我们不冒险切四张小图：整页视觉题图仍在题干中，选项用
-        // 稳定的“图A”占位，既能作答、判分，也不会把一题拆成五张易错图片。
-        if (isFormulaImageQuestion(visualText))
-            optionImages = extractFormulaOptionImages(document, sourcePage, anchor.number, generatedAssets);
+    bool attachStemImage = hasVisualContext;
+    if (needsVisualOptions) {
+        // 文字层只留下 A/B/C/D、但没有选项内容时，优先用这四个标签的版面位置
+        // 裁切各自的原卷图片。它适用于分数、图形、表格小图等，不按题型猜测。
+        if (hasVisualOptionLabels)
+            optionImages = extractOptionImages(document, sourcePage, anchor.number, generatedAssets);
+        // 找不到一整行可安全裁切的图片时，退回整页题图 + 图 A/B/C/D 占位；这样
+        // “题目有图、但没有可用选项”的题仍能作答，也不会把空选项直接入库。
+        attachStemImage = optionImages.size() != 4;
         options.clear();
         for (const QChar label : QStringLiteral("abcd")) {
             const QString id(label);
@@ -741,7 +735,7 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
         question.insert("materialId", materialId);
     // 图形推理、统计资料和明确提到图/表的题保留 PDF 页的可视内容。页图是
     // 原件视觉上下文，而非 OCR 猜测的文字，因此即使 PDF 可选中文本也不会漏图。
-    if (hasVisualContext) {
+    if (attachStemImage) {
         const QString path = QStringLiteral("assets/%1-p%2.png")
             .arg(assetBaseName(document.sourcePath)).arg(sourcePage);
         question.insert("stemImage", QJsonObject{{"path", path}, {"alt", "原卷图表"}});

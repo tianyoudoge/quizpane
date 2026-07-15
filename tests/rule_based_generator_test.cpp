@@ -93,13 +93,13 @@ int main(int argc, char** argv) {
             QStringLiteral("c") || imageQuestion.value("stemImage").toObject().isEmpty())
         return 101;
 
-    // 公式在 PDF 里常没有文字层，只有 A/B/C/D 标签。此时要将相应的小图挂在
-    // 选项上（而非把整页塞进题干），定位只使用文字标签坐标，不依赖 OCR。
+    // 图形、公式等选项在 PDF 里可能没有文字层，只有 A/B/C/D 标签。此时要将
+    // 相应的小图挂在选项上（而非把整页塞进题干），定位只使用文字标签坐标。
     ExtractedDocument formulaImages;
     formulaImages.sourcePath = QStringLiteral("formula-options.pdf");
     formulaImages.hasPageBoundaries = true;
     formulaImages.plainText = QStringLiteral(
-        "76. 随机抽取后，甲事件的可能性是乙事件的多少倍？\nA、 B、 C、 D、\n正确答案：C\n");
+        "76. 请从下列图形中选择填入问号处的一项。\nA、 B、 C、 D、\n正确答案：C\n");
     formulaImages.questionAnchors.insert(1, {{QStringLiteral("76"), QRectF(0.1, 0.2, 0.02, 0.02)}});
     formulaImages.optionLabelAnchors.insert(1, {
         {QStringLiteral("a"), QRectF(0.18, 0.55, 0.02, 0.02)},
@@ -113,12 +113,11 @@ int main(int argc, char** argv) {
     if (!formulaBuffer.open(QIODevice::WriteOnly) || !formulaPage.save(&formulaBuffer, "PNG")) return 102;
     formulaImages.pageImages.insert(1, formulaPng);
     const auto formulaResult = RuleBasedBankGenerator{}.generate({formulaImages});
-    if (formulaResult.questions.size() != 1 || !formulaResult.needsReviewQuestions.isEmpty() ||
-        formulaResult.assets.size() != 4 ||
-        formulaResult.questions.first().toObject().value("options").toArray().at(0).toObject()
-            .value("image").toObject().value("path").toString().isEmpty() ||
-        !quizpane::validateBank(bankFor(formulaResult), &validationError))
-        return 102;
+    if (formulaResult.questions.size() != 1 || !formulaResult.needsReviewQuestions.isEmpty()) return 102;
+    if (formulaResult.assets.size() != 4) return 103;
+    if (formulaResult.questions.first().toObject().value("options").toArray().at(0).toObject()
+            .value("image").toObject().value("path").toString().isEmpty()) return 104;
+    if (!quizpane::validateBank(bankFor(formulaResult), &validationError)) return 105;
 
     ExtractedDocument inlineDocument;
     inlineDocument.sourcePath = QStringLiteral("inline.md");
