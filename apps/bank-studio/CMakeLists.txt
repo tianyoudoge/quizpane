@@ -28,6 +28,11 @@ qt_add_executable(quizpane_bank_studio
     src/main.cpp
     src/model_settings_dialog.cpp
     src/model_settings_dialog.hpp
+    src/source_row_widget.cpp
+    src/source_row_widget.hpp
+    src/source_validation.hpp
+    src/styled_dropdown.cpp
+    src/styled_dropdown.hpp
     src/studio_window.cpp
     src/studio_window.hpp
     resources/resources.qrc

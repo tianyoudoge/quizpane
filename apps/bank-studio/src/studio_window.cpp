@@ -6,8 +6,10 @@
 #include "quizpane/provider_installer.hpp"
 #include "quizpane/studio/generation_workflow.hpp"
 #include "quizpane/zip_archive.hpp"
+#include "source_row_widget.hpp"
+#include "source_validation.hpp"
+#include "styled_dropdown.hpp"
 
-#include <QComboBox>
 #include <QCloseEvent>
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -24,7 +26,6 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QMimeData>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -33,6 +34,7 @@
 #include <QJsonObject>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QSet>
@@ -65,11 +67,6 @@ QFrame* metricCard(const QString& name, QLabel** value) {
     (*value)->setObjectName(QStringLiteral("metricValue"));
     layout->addWidget(*value);
     return card;
-}
-
-bool acceptedSource(const QString& path) {
-    const QString suffix = QFileInfo(path).suffix().toLower();
-    return QStringList{"txt", "md", "markdown", "docx", "pdf"}.contains(suffix);
 }
 
 }  // namespace
@@ -143,7 +140,7 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     connect(nextButton_, &QPushButton::clicked, this, [this] { movePage(1); });
     connect(startButton_, &QPushButton::clicked, this, &StudioWindow::beginPreflight);
     connect(pages_, &QStackedWidget::currentChanged, this, &StudioWindow::updateNavigation);
-    connect(generationMode_, &QComboBox::currentIndexChanged, this, [this] {
+    connect(generationMode_, &StyledDropdown::currentIndexChanged, this, [this] {
         if (!modelSummary_) return;
         if (generationMode_->currentData().toString() == QStringLiteral("rules")) {
             modelSummary_->setText(
@@ -199,13 +196,20 @@ QWidget* StudioWindow::buildSourcePage() {
     auto* modeLayout = new QVBoxLayout(modePanel);
     modeLayout->setContentsMargins(16, 12, 16, 12);
     modeLayout->addWidget(new QLabel(QStringLiteral("整理方式")));
-    generationMode_ = new QComboBox;
+    generationMode_ = new StyledDropdown;
     generationMode_->addItem(QStringLiteral("离线整理（推荐）"), QStringLiteral("rules"));
     generationMode_->addItem(QStringLiteral("AI 辅助整理"), QStringLiteral("model"));
     modeLayout->addWidget(generationMode_);
-    modeLayout->addWidget(mutedLabel(
-        QStringLiteral("离线整理不会上传资料，适合题号、选项和答案比较规范的文档；"
-                       "AI 辅助整理更适合排版复杂的资料，会使用你配置的模型，结果需要复核。")));
+    auto* modeHint = mutedLabel(QString());
+    modeLayout->addWidget(modeHint);
+    const auto refreshModeHint = [modeHint](const QString& mode) {
+        modeHint->setText(mode == QStringLiteral("model")
+            ? QStringLiteral("AI 辅助整理更适合排版复杂的资料，会使用你配置的模型，结果需要复核。")
+            : QStringLiteral("离线整理不会上传资料，适合题号、选项和答案比较规范的文档。"));
+    };
+    refreshModeHint(generationMode_->currentData().toString());
+    connect(generationMode_, &StyledDropdown::currentIndexChanged, this,
+        [this, refreshModeHint] { refreshModeHint(generationMode_->currentData().toString()); });
     layout->addWidget(modePanel);
     auto* drop = new QFrame;
     drop->setObjectName(QStringLiteral("dropZone"));
@@ -234,25 +238,27 @@ QWidget* StudioWindow::buildSourcePage() {
     auto* listTitle = new QLabel(QStringLiteral("已添加资料"));
     listTitle->setObjectName(QStringLiteral("sectionTitle"));
     sourceSummary_ = mutedLabel(QStringLiteral("尚未添加文件"));
-    auto* remove = new QPushButton(QStringLiteral("移除所选"));
-    remove->setObjectName(QStringLiteral("textButton"));
-    auto* addAnswers = new QPushButton(QStringLiteral("添加答案/解析"));
-    addAnswers->setObjectName(QStringLiteral("textButton"));
     listHeader->addWidget(listTitle);
     listHeader->addWidget(sourceSummary_);
     listHeader->addStretch();
-    listHeader->addWidget(addAnswers);
-    listHeader->addWidget(remove);
     sourcePanelLayout->addLayout(listHeader);
-    sourceList_ = new QListWidget;
-    sourceList_->setObjectName(QStringLiteral("sourceList"));
-    sourceList_->setMaximumHeight(210);
-    sourcePanelLayout->addWidget(sourceList_);
+
+    sourceScroll_ = new QScrollArea;
+    sourceScroll_->setObjectName(QStringLiteral("sourceScroll"));
+    sourceScroll_->setWidgetResizable(true);
+    sourceScroll_->setFrameShape(QFrame::NoFrame);
+    sourceScroll_->setMaximumHeight(320);
+    auto* sourceListContent = new QWidget;
+    sourceListLayout_ = new QVBoxLayout(sourceListContent);
+    sourceListLayout_->setContentsMargins(0, 4, 4, 4);
+    sourceListLayout_->setSpacing(10);
+    sourceListLayout_->addStretch();
+    sourceScroll_->setWidget(sourceListContent);
+    sourcePanelLayout->addWidget(sourceScroll_);
+
     sourcePanel_->setVisible(false);
     layout->addWidget(sourcePanel_);
     layout->addStretch();
-    connect(remove, &QPushButton::clicked, this, &StudioWindow::removeSelectedSource);
-    connect(addAnswers, &QPushButton::clicked, this, &StudioWindow::addAnswerFile);
     return page;
 }
 
@@ -342,7 +348,7 @@ QWidget* StudioWindow::buildFinishPage() {
     bankName_->setPlaceholderText(QStringLiteral("例如：我的行测常识题库"));
     form->addWidget(bankName_);
     form->addWidget(new QLabel(QStringLiteral("默认每套题数量")));
-    questionCount_ = new QComboBox;
+    questionCount_ = new StyledDropdown;
     questionCount_->addItems({QStringLiteral("5 题"), QStringLiteral("10 题"),
                      QStringLiteral("15 题"), QStringLiteral("全部题目")});
     form->addWidget(questionCount_);
@@ -367,10 +373,27 @@ void StudioWindow::appendSources(const QStringList& paths) {
         if (!acceptedSource(absolute) || sourcePaths_.contains(absolute)) continue;
         sourcePaths_.append(absolute);
         ++added;
-        auto* item = new QListWidgetItem(QStringLiteral("题目 / 资料  ·  %1\n%2")
-            .arg(QFileInfo(absolute).fileName(), QDir::toNativeSeparators(absolute)));
-        item->setToolTip(absolute);
-        sourceList_->addItem(item);
+        auto* row = new SourceRowWidget(absolute);
+        sourceRows_.insert(absolute, row);
+        // 插入到末尾的拉伸占位之前，保持新行始终追加在列表最下方。
+        sourceListLayout_->insertWidget(sourceListLayout_->count() - 1, row);
+        connect(row, &SourceRowWidget::answerRequested, this, [this, absolute] {
+            const QString answer = QFileDialog::getOpenFileName(
+                this, QStringLiteral("添加答案或解析"), {},
+                QStringLiteral("答案或解析 (*.txt *.md *.markdown *.docx *.pdf)"));
+            if (answer.isEmpty()) return;
+            pairAnswer(absolute, QFileInfo(answer).absoluteFilePath());
+        });
+        connect(row, &SourceRowWidget::answerDropped, this, [this, absolute](const QString& answer) {
+            pairAnswer(absolute, answer);
+        });
+        connect(row, &SourceRowWidget::answerCleared, this, [this, absolute] {
+            answerPathsByQuestion_.remove(absolute);
+            if (auto* r = sourceRows_.value(absolute)) r->clearPairedAnswer();
+        });
+        connect(row, &SourceRowWidget::removeRequested, this, [this, absolute] {
+            removeSource(absolute);
+        });
     }
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("sources-updated"),
         {{QStringLiteral("offered"), paths.size()},
@@ -379,39 +402,22 @@ void StudioWindow::appendSources(const QStringList& paths) {
     sourceSummary_->setText(sourcePaths_.isEmpty() ? QStringLiteral("尚未添加文件")
         : QStringLiteral("%1 个文件").arg(sourcePaths_.size()));
     sourcePanel_->setVisible(!sourcePaths_.isEmpty());
-    // 新导入的题目就是用户接下来最可能要配对答案的对象；同时避免
-    // 空选择让“添加答案/解析”只能弹出一个无助的提示。
-    if (added > 0) sourceList_->setCurrentRow(sourceList_->count() - 1);
     updateNavigation();
 }
 
-void StudioWindow::addAnswerFile() {
-    const int row = sourceList_->currentRow();
-    if (row < 0 || row >= sourcePaths_.size()) {
-        QMessageBox::information(this, QStringLiteral("先选择题目文件"),
-            QStringLiteral("在“已添加资料”中选中一份题目文件后，再添加对应的答案或解析。"));
-        return;
-    }
-    const QString answer = QFileDialog::getOpenFileName(
-        this, QStringLiteral("添加答案或解析"), {},
-        QStringLiteral("答案或解析 (*.txt *.md *.markdown *.docx *.pdf)"));
-    if (answer.isEmpty()) return;
-    const QString absolute = QFileInfo(answer).absoluteFilePath();
-    if (!acceptedSource(absolute)) return;
-    const QString question = sourcePaths_.at(row);
-    answerPathsByQuestion_.insert(question, absolute);
-    QListWidgetItem* item = sourceList_->item(row);
-    item->setText(QStringLiteral("题目  ·  %1\n答案/解析  ·  %2")
-        .arg(QFileInfo(question).fileName(), QFileInfo(absolute).fileName()));
-    item->setToolTip(question + QStringLiteral("\n") + absolute);
+void StudioWindow::pairAnswer(const QString& question, const QString& answer) {
+    if (answer == question || !acceptedSource(answer)) return;
+    answerPathsByQuestion_.insert(question, answer);
+    if (auto* row = sourceRows_.value(question)) row->setPairedAnswer(answer);
 }
 
-void StudioWindow::removeSelectedSource() {
-    const int row = sourceList_->currentRow();
-    if (row < 0) return;
-    answerPathsByQuestion_.remove(sourcePaths_.at(row));
-    sourcePaths_.removeAt(row);
-    delete sourceList_->takeItem(row);
+void StudioWindow::removeSource(const QString& question) {
+    sourcePaths_.removeAll(question);
+    answerPathsByQuestion_.remove(question);
+    if (auto* row = sourceRows_.take(question)) {
+        sourceListLayout_->removeWidget(row);
+        row->deleteLater();
+    }
     sourceSummary_->setText(sourcePaths_.isEmpty() ? QStringLiteral("尚未添加文件")
         : QStringLiteral("%1 个文件").arg(sourcePaths_.size()));
     sourcePanel_->setVisible(!sourcePaths_.isEmpty());
@@ -795,32 +801,78 @@ void StudioWindow::closeEvent(QCloseEvent* event) {
 
 void StudioWindow::applyStyle() {
     setStyleSheet(R"(
-      QMainWindow, QWidget#content { background: #f8fafc; color: #1f2937; }
-      QFrame#sidebar { background: #18324d; border: none; }
+      QMainWindow, QWidget#content {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #14182a, stop:1 #0a0c16);
+        color: #eef1f8;
+      }
+      QFrame#sidebar { background: rgba(255,255,255,46); border: none; border-right: 1px solid rgba(255,255,255,60); }
       QLabel#brand { font-size: 20px; font-weight: 700; color: #ffffff; }
-      QLabel#sidebar QLabel#muted, QFrame#sidebar QLabel#privacyFootnote { color: #c7d8e8; }
-      QLabel#pageTitle { font-size: 25px; font-weight: 700; color: #16283c; }
-      QLabel#eyebrow { color: #4d779d; font-size: 11px; font-weight: 600; }
-      QLabel#muted, QLabel#privacyFootnote { color: #64748b; }
+      QLabel#sidebar QLabel#muted, QFrame#sidebar QLabel#privacyFootnote { color: rgba(238,241,248,190); }
+      QLabel#pageTitle { font-size: 25px; font-weight: 700; color: #ffffff; }
+      QLabel#eyebrow { color: #8fb4ff; font-size: 11px; font-weight: 600; }
+      QLabel#muted, QLabel#privacyFootnote { color: rgba(238,241,248,200); }
       QLabel#privacyFootnote { font-size: 11px; }
-      QLabel#sideStep { color: #b7cbde; padding: 9px 10px; border-radius: 6px; }
-      QLabel#sideStep[active="true"] { color: #ffffff; background: rgba(255,255,255,28); }
-      QLabel#sectionTitle, QLabel#phaseTitle { color: #1f3b57; font-size: 15px; font-weight: 650; }
-      QLabel#metricValue { color: #1d4e79; font-size: 21px; font-weight: 700; }
-      QLabel#notice { background: #eef6fc; color: #31536e; padding: 12px; border-radius: 8px; }
-      QFrame#dropZone { background: #f4f9fd; border: 1px dashed #83a8c7; border-radius: 12px; }
-      QFrame#panel, QFrame#metricCard { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; }
-      QPushButton { background: #ffffff; color: #334155; border: 1px solid #d8e1ea; border-radius: 7px; padding: 8px 13px; }
-      QPushButton:hover { background: #eef6fc; border-color: #8fb4d2; }
-      QPushButton#primaryButton { background: #1f6fa8; color: #ffffff; border-color: #1f6fa8; }
-      QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #2f6e9f; border-color: transparent; }
-      QPushButton:disabled { color: #94a3b8; background: #f1f5f9; border-color: #e2e8f0; }
-      QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget { background: #ffffff; color: #334155; border: 1px solid #dbe4ec; border-radius: 7px; padding: 8px; selection-background-color: #dceefb; }
-      QListWidget::item { color: #1f2937; padding: 10px; border-bottom: 1px solid #edf2f7; }
-      QListWidget::item:selected { color: #0f3f63; background: #dceefb; }
-      QHeaderView::section { background: #f1f6fa; color: #587087; border: none; padding: 8px; }
-      QProgressBar { background: #e6eef5; border: none; border-radius: 3px; height: 7px; }
-      QProgressBar::chunk { background: #2e82bb; border-radius: 3px; }
+      QLabel#sideStep { color: rgba(238,241,248,210); padding: 9px 10px; border-radius: 6px; }
+      QLabel#sideStep[active="true"] { color: #ffffff; background: rgba(255,255,255,72); }
+      QLabel#sectionTitle, QLabel#phaseTitle { color: #ffffff; font-size: 15px; font-weight: 650; }
+      QLabel#metricValue { color: #9cc4ff; font-size: 21px; font-weight: 700; }
+      QLabel#notice { background: rgba(79,143,255,70); color: #d3e5ff; padding: 12px; border-radius: 8px; border: 1px solid rgba(143,192,255,110); }
+      QFrame#dropZone {
+        background: rgba(255,255,255,50);
+        border: 1px dashed rgba(160,200,255,190);
+        border-radius: 12px;
+      }
+      QFrame#panel, QFrame#metricCard {
+        background: rgba(255,255,255,48);
+        border: 1px solid rgba(255,255,255,76);
+        border-radius: 10px;
+      }
+      QPushButton {
+        background: rgba(255,255,255,50);
+        color: #eef1f8;
+        border: 1px solid rgba(255,255,255,78);
+        border-radius: 7px;
+        padding: 8px 13px;
+      }
+      QPushButton:hover { background: rgba(255,255,255,72); border-color: rgba(160,200,255,190); }
+      QPushButton#primaryButton { background: #4c86e6; color: #ffffff; border-color: #4c86e6; }
+      QPushButton#primaryButton:hover { background: #689aec; border-color: #689aec; }
+      QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #9cc4ff; border-color: transparent; }
+      QPushButton:disabled { color: rgba(238,241,248,90); background: rgba(255,255,255,58); border-color: rgba(255,255,255,80); }
+      QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget {
+        background: rgba(255,255,255,46);
+        color: #eef1f8;
+        border: 1px solid rgba(255,255,255,72);
+        border-radius: 7px;
+        padding: 8px;
+        selection-background-color: rgba(79,143,255,150);
+      }
+      QListWidget::item { color: #eef1f8; padding: 10px; border-bottom: 1px solid rgba(255,255,255,46); }
+      QListWidget::item:selected { color: #ffffff; background: rgba(79,143,255,130); }
+      QFrame#sourceRow {
+        background: rgba(255,255,255,48);
+        border: 1px solid rgba(255,255,255,76);
+        border-radius: 10px;
+      }
+      QLabel#sourceRowTitle { color: #ffffff; font-size: 14px; font-weight: 650; }
+      QLabel#pairedAnswerBadge { color: #9cc4ff; font-weight: 600; }
+      QWidget#styledDropdown {
+        background: rgba(10,12,20,110);
+        color: #eef1f8;
+        border: 1px solid rgba(255,255,255,60);
+        border-radius: 7px;
+        padding: 8px;
+      }
+      QWidget#styledDropdown:hover { border-color: rgba(160,200,255,190); background: rgba(10,12,20,140); }
+      QLabel#styledDropdownArrow { color: rgba(238,241,248,210); }
+      QFrame#styledDropdownPopup { background: #1b1f30; border: 1px solid rgba(255,255,255,80); border-radius: 8px; }
+      QFrame#styledDropdownPopup QListWidget { background: transparent; border: none; padding: 0px; }
+      QFrame#styledDropdownPopup QListWidget::item { padding: 8px 10px; border-bottom: none; }
+      QFrame#styledDropdownPopup QListWidget::item:hover { background: rgba(255,255,255,50); }
+      QFrame#styledDropdownPopup QListWidget::item:selected { background: rgba(79,143,255,150); color: #ffffff; }
+      QHeaderView::section { background: rgba(255,255,255,80); color: rgba(238,241,248,210); border: none; padding: 8px; }
+      QProgressBar { background: rgba(255,255,255,48); border: none; border-radius: 3px; height: 7px; }
+      QProgressBar::chunk { background: #4c86e6; border-radius: 3px; }
     )");
 }
 
