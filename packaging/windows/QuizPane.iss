@@ -1,6 +1,6 @@
 [Setup]
 AppName=QuizPane 小窗刷题
-AppVersion=0.2.4
+AppVersion=0.2.6
 DefaultDirName={autopf}\QuizPane
 DefaultGroupName=QuizPane
 OutputDir={#OutputDir}
