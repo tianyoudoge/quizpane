@@ -58,15 +58,68 @@ bool isMaterialHeader(const QString& text) {
     return pattern.match(text).hasMatch();
 }
 
-QString normalizeAnswer(QString answer) {
-    answer = answer.normalized(QString::NormalizationForm_KC).trimmed().toUpper();
-    answer.remove(QRegularExpression(QStringLiteral("[\\s,，、;；/|+]+")));
-    if (!QRegularExpression(QStringLiteral("^[A-F]{1,6}$")).match(answer).hasMatch())
+// 把任意选项标记归一化成小写字母 a/b/c…。支持：字母 A-I/a-i（含全角）、圈码
+// ①②③④、带点数字 ⒈⒉、以及括号内/带尾括号的数字 (1)/1) 等。括号兼容全角/半角
+// 与各种书写习惯：（ ( [ { 「 『 … ） ) ] } 」 』。
+// 注意：用 NFC 而非 NFKC，NFKC 会把圈码 ① 分解成裸 1 而丢失选项标记。
+QString normalizeOptionLabel(const QString& raw) {
+    const QString s = raw.normalized(QString::NormalizationForm_C).trimmed();
+    if (s.isEmpty())
         return {};
+    if (s.size() == 1) {
+        const QChar ch = s.at(0);
+        const ushort code = ch.unicode();
+        // 半角字母 A-I / a-i。
+        if ((code >= 'A' && code <= 'I') || (code >= 'a' && code <= 'i'))
+            return ch.toLower();
+        // 全角字母 Ａ(U+FF21)-Ｉ / ａ(U+FF41)-ｉ。
+        if (code >= 0xFF21 && code <= 0xFF29)
+            return QChar(code - 0xFF21 + u'a');
+        if (code >= 0xFF41 && code <= 0xFF49)
+            return QChar(code - 0xFF41 + u'a');
+        // 圈码 ①=U+2460 … 共 20 个；带点数字 ⒈=U+2488 … 取前 9 个。
+        if (code >= 0x2460 && code <= 0x2473)
+            return QChar(u'a' + (code - 0x2460));
+        if (code >= 0x2488 && code <= 0x2490)
+            return QChar(u'a' + (code - 0x2488));
+    }
+    // 括号/尾括号数字：(1) 1) 「1」 〔1〕 → a..（仅 1-9）。
+    static const QRegularExpression numeric(
+        QStringLiteral(R"(^[（(\[{「『]?\s*([1-9])\s*[)）\]}」』]?$)"));
+    const auto m = numeric.match(s);
+    if (m.hasMatch())
+        return QChar(u'a' + m.captured(1).toInt() - 1);
+    return {};
+}
+
+// 把答案文本归一化成大写字母串（如 "AC"）。支持字母、圈码、带点数字、
+// 括号数字等多种写法。无法识别返回空。
+QString normalizeAnswer(QString answer) {
+    answer = answer.normalized(QString::NormalizationForm_C).trimmed();
+    answer.remove(QRegularExpression(QStringLiteral("[\\s,，、;；/|+]+")));
+    if (answer.isEmpty())
+        return {};
+    // 逐标记归一化：单字符（字母/圈码/带点数字）或括号数字片段 “(1)”。
     QString normalized;
-    for (const QChar ch : answer)
-        if (!normalized.contains(ch))
-            normalized += ch;
+    for (int k = 0; k < answer.size();) {
+        const QChar ch = answer.at(k);
+        if (ch == u'(' || ch == u'（' || ch == u'[' || ch == u'{' ||
+            ch == u'「' || ch == u'『') {
+            int close = answer.indexOf(
+                QRegularExpression(QStringLiteral("[)）\\]}」』]")), k + 1);
+            if (close > k) {
+                const QString label = normalizeOptionLabel(answer.mid(k, close - k + 1));
+                if (!label.isEmpty() && !normalized.contains(label.toUpper()))
+                    normalized += label.toUpper();
+                k = close + 1;
+                continue;
+            }
+        }
+        const QString label = normalizeOptionLabel(QString(ch));
+        if (!label.isEmpty() && !normalized.contains(label.toUpper()))
+            normalized += label.toUpper();
+        ++k;
+    }
     return normalized;
 }
 
@@ -101,7 +154,7 @@ QList<SourceLine> sourceLines(const ExtractedDocument& document) {
     QList<SourceLine> result;
     int page = document.hasPageBoundaries ? 1 : 0;
     QString current;
-    const QString normalized = document.plainText.normalized(QString::NormalizationForm_KC);
+    const QString normalized = document.plainText.normalized(QString::NormalizationForm_C);
     for (const QChar ch : normalized) {
         if (ch == u'\f') {
             result.append({current.trimmed(), page});
@@ -146,17 +199,73 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
     QHash<int, QString> answers;
     if (sectionStart < 0)
         return answers;
-    static const QRegularExpression pair(QStringLiteral(
-        R"((?:^|[\s,，;；])(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）-])?\s*(?:【?答案】?\s*[:：]?)?\s*([A-Fa-f]{1,6})(?=$|[\s,，;；]))"));
+    const int limit = sectionEnd >= 0 ? sectionEnd : lines.size();
+    // 表格化答案区：形如
+    //   题号 | 1 | 2 | 3
+    //   答案 | A | B | C
+    // 或 markdown | 1 | 2 | 3 | 与 | A | B | C |。按列对齐配对。
+    static const QRegularExpression cell(QStringLiteral("[^|｜\\s,，]+"));
+    for (int index = sectionStart + 1; index < limit && index < lines.size(); ++index) {
+        const QString a = lines.at(index).text.trimmed();
+        if (a.isEmpty() || !a.contains(QRegularExpression(QStringLiteral("[|｜]"))))
+            continue;
+        if (!a.contains(QRegularExpression(QStringLiteral("题号|题"))))
+            continue;
+        // 下一非空行作为答案行。
+        int answerLine = index + 1;
+        while (answerLine < limit && answerLine < lines.size() &&
+               lines.at(answerLine).text.trimmed().isEmpty())
+            ++answerLine;
+        if (answerLine >= lines.size())
+            break;
+        const QString b = lines.at(answerLine).text.trimmed();
+        if (!b.contains(QRegularExpression(QStringLiteral("[|｜]"))) ||
+            !b.contains(QRegularExpression(QStringLiteral("答案|答"))))
+            continue;
+        // 抽取两行的非分隔单元格，按列配对（题号行第一格“题号”是表头，跳过）。
+        auto cells = [](const QString& row) {
+            QList<QString> out;
+            auto it = cell.globalMatch(row);
+            while (it.hasNext())
+                out.append(it.next().captured(0));
+            return out;
+        };
+        const QList<QString> numCells = cells(a);
+        const QList<QString> ansCells = cells(b);
+        // 去掉表头后逐列配对。
+        const int offset = 1;
+        for (int col = offset; col < numCells.size() && col < ansCells.size(); ++col) {
+            bool ok = false;
+            const int number = numCells.at(col).toInt(&ok);
+            if (!ok || number <= 0)
+                continue;
+            const QString answer = normalizeAnswer(ansCells.at(col));
+            if (!answer.isEmpty() && !answers.contains(number))
+                answers.insert(number, answer);
+        }
+        index = answerLine; // 跳过已消费的答案行
+    }
+    // 答案 token：字母 A-F（大小写）、圈码 ①-⑩、或带括号/带点的数字。捕获后
+    // 统一经 normalizeAnswer 归一化，兼容选项是圈码或数字括号的答案区。
+    const QString answerToken(QStringLiteral(
+        R"([A-Fa-f]{1,6}|[①②③④⑤⑥⑦⑧⑨⑩]{1,6}|[（(\[{「『]\s*[1-9]\s*[)）\]}」』]|[1-9]\s*[)）\]」』])"));
+    const QString pairPattern =
+        QStringLiteral(R"((?:^|[\s,，;；])(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）-])?\s*(?:【?答案】?\s*[:：]?)?\s*()") +
+        answerToken +
+        QStringLiteral(R"()(?=$|[\s,，;；]))");
+    static const QRegularExpression pair(pairPattern);
     static const QRegularExpression range(
-        QStringLiteral(R"((\d{1,4})\s*(?:[-—~～]|至|到)\s*(\d{1,4})\s*[:：]?\s*([A-Fa-f]+))"));
+        QStringLiteral(R"((\d{1,4})\s*(?:[-—~～]|至|到)\s*(\d{1,4})\s*[:：]?\s*([A-Fa-f①②③④⑤⑥⑦⑧⑨⑩]+))"));
     static const QRegularExpression answerRecord(
         QStringLiteral(R"(^\s*(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）])\s*)"));
-    static const QRegularExpression narrativeAnswer(
-        QStringLiteral(R"((?:故\s*)?(?:(?:正确|参考|标准)\s*)?答案\s*(?:为|是|[:：])\s*([A-Fa-f\s、，,]{1,12}))"));
+    const QString narrativePattern =
+        QStringLiteral(R"((?:故\s*)?(?:(?:正确|参考|标准)\s*)?答案\s*(?:为|是|[:：])\s*()") +
+        answerToken +
+        QStringLiteral(R"())");
+    static const QRegularExpression narrativeAnswer(narrativePattern);
     int currentNumber = 0;
-    const int limit = sectionEnd >= 0 ? sectionEnd : lines.size();
-    for (int index = sectionStart + 1; index < limit && index < lines.size(); ++index) {
+    const int lineLimit = sectionEnd >= 0 ? sectionEnd : lines.size();
+    for (int index = sectionStart + 1; index < lineLimit && index < lines.size(); ++index) {
         const QString line = lines.at(index).text;
         const auto record = answerRecord.match(line);
         if (record.hasMatch()) currentNumber = record.captured(1).toInt();
@@ -164,7 +273,14 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
         if (rangeMatch.hasMatch()) {
             const int first = rangeMatch.captured(1).toInt();
             const int last = rangeMatch.captured(2).toInt();
-            const QString values = rangeMatch.captured(3).toUpper();
+            const QString rawValues = rangeMatch.captured(3);
+            // 逐字符归一化（兼容字母与圈码答案），长度与题号数相同时才展开。
+            QString values;
+            for (const QChar& ch : rawValues) {
+                const QString one = normalizeAnswer(QString(ch));
+                if (!one.isEmpty())
+                    values += one;
+            }
             if (last >= first && last - first + 1 == values.size()) {
                 for (int number = first; number <= last; ++number)
                     if (!answers.contains(number))
@@ -242,14 +358,24 @@ QHash<int, QString> globalSolutions(const QList<SourceLine>& lines, int sectionS
     return solutions;
 }
 
-// 切分一行内的选项。返回选项列表与首个选项 marker 之前的题干前缀。
+// 切分一行内的选项。返回选项列表（label 已归一化为 a/b/c…）与首个选项 marker
+// 之前的题干前缀。支持的 marker 形式：字母 `A.`、圈码 `①`、带点数字 `⒈`、
+// 括号数字 `(1)` 与尾括号数字 `1)`。
 // - 仅 1 个 marker 且 marker 不在行首：拒绝（避免把含“B.”的英文题干误切）。
 // - ≥2 个 marker：即使 marker 前有题干文字也切分，前缀文本经 *prefix 回传给
 //   parseQuestion 合并进题干（覆盖“1. 题干 A.甲 B.乙 C.丙 D.丁”单行写法）。
 // - 1 个 marker 且在行首：原纯选项行行为。
 QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefix = nullptr) {
-    static const QRegularExpression marker(
-        QStringLiteral(R"((?<![A-Za-z0-9])([A-Fa-f])\s*[\.．、:：\)）]\s*)"));
+    // 各 marker 捕获其 label 原文，后续统一归一化。捕获组按出现顺序：
+    // 1=字母, 2=圈码, 3=括号数字 (1), 4=尾括号数字 1)。
+    // 括号兼容全角/半角与各种书写习惯：（ ( [ { 「 『 … ） ) ] } 」 』。
+    // 选项字母大小写都接受（A-F / a-f）。
+    static const QRegularExpression marker(QStringLiteral(
+        R"((?<![A-Za-z0-9])([A-Fa-f])\s*[\.．、:：\)）]\s*)"            // 字母 + 分隔（分隔必需）
+        R"(|([①②③④⑤⑥⑦⑧⑨⑩])\s*[:：\.．、\)）\]」』]?\s*)"          // 圈码 + 可选分隔
+        R"(|([①②③④⑤⑥⑦⑧⑨⑩])\s+)"                                  // 圈码 + 空格分隔
+        R"(|[（(\[{「『]\s*([1-9])\s*[)）\]}」』]\s*)"                  // (1) 形式（各种括号）
+        R"(|(?<![A-Za-z0-9])([1-9])\s*[)）\]」』]\s*)"));               // 1) 形式
     QList<QRegularExpressionMatch> markers;
     auto iterator = marker.globalMatch(line);
     while (iterator.hasNext())
@@ -261,31 +387,55 @@ QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefi
     // 单 marker 且前面有文字 → 视为题干，不当选项切。
     if (markers.size() == 1 && hasLeadText)
         return {};
-    // 单 marker 但前面是空 → 纯选项行（可能整行只有一个选项，少见但保留）。
     // ≥2 marker → 切分；若有 lead 文本则作为题干前缀回传。
     if (prefix && hasLeadText)
         *prefix = lead.trimmed();
     QList<QPair<QString, QString>> result;
     for (int index = 0; index < markers.size(); ++index) {
-        const int start = markers.at(index).capturedEnd();
+        const auto& m = markers.at(index);
+        // 从匹配里取出非空捕获组作为 label 原文，再归一化。
+        QString rawLabel;
+        for (int g = 1; g <= m.lastCapturedIndex(); ++g)
+            if (!m.captured(g).isEmpty()) {
+                rawLabel = m.captured(g);
+                break;
+            }
+        const QString label = normalizeOptionLabel(rawLabel);
+        if (label.isEmpty())
+            continue;
+        const int start = m.capturedEnd();
         const int end =
             index + 1 < markers.size() ? markers.at(index + 1).capturedStart() : line.size();
         const QString text = line.mid(start, end - start).trimmed();
         if (!text.isEmpty())
-            result.append({markers.at(index).captured(1).toLower(), text});
+            result.append({label, text});
     }
     return result;
 }
 
-// 题干/选项行末尾带“答案：A”这类尾随答案的抽取。返回归一化后的答案字母，
-// 空表示未识别。优先级低于以答案词开头的整行答案。
+// 题干/选项行末尾带的答案抽取。返回归一化后的答案字母串，空表示未识别。
+// 支持两种尾随形式：
+//   1) “答案：A” / “【答案】AB” 这类带答案词的；
+//   2) “（A）” / “(A)” / “（AB）” 这类题干末尾直接括号写答案的（选择题写法）。
+// 优先级低于以答案词开头的整行答案。
 QString trailingAnswer(const QString& line) {
-    static const QRegularExpression pattern(QStringLiteral(
+    static const QRegularExpression wordAnswer(QStringLiteral(
         R"((?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*([A-Fa-f]{1,6})\s*$)"));
-    const auto match = pattern.match(line);
-    if (!match.hasMatch())
-        return {};
-    return normalizeAnswer(match.captured(1));
+    auto match = wordAnswer.match(line);
+    if (match.hasMatch())
+        return normalizeAnswer(match.captured(1));
+    // 题干末尾括号答案：（A） 「AB」 [A] {A}，括号兼容各种书写习惯。要求括号前
+    // 有题干文字（start!=0），避免把整行选项“(A) ...”误判为答案。
+    static const QRegularExpression bracketAnswer(QStringLiteral(
+        R"([（(\[{「『]\s*([A-Fa-f]{1,6})\s*[)）\]}」』]\s*$)"));
+    match = bracketAnswer.match(line);
+    if (match.hasMatch()) {
+        const int start = match.capturedStart();
+        if (start == 0)
+            return {};
+        return normalizeAnswer(match.captured(1));
+    }
+    return {};
 }
 
 QString materialIdForQuestion(const QList<MaterialMarker>& materials, int questionLine,
@@ -370,10 +520,11 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
             solutionLines.append(line);
             continue;
         }
-        // 行尾可能带“答案：A”这类尾随答案。先剥掉尾随答案再切选项，避免
-        // “A. 甲 B. 乙 答案：A”里把“答案：A”粘到 B 选项文本末尾。
+        // 行尾可能带尾随答案（“答案：A”或题干末尾“（A）”括号答案）。先剥掉再
+        // 切选项，避免把答案文本粘到最后一个选项文本末尾。
         static const QRegularExpression trailingAnswerCut(QStringLiteral(
-            R"(\s*(?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*[A-Fa-f]{1,6}\s*$)"));
+            R"(\s*(?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*[A-Fa-f]{1,6}\s*$"
+            R"(|[（(]\s*[A-Fa-f]{1,6}\s*[)）]\s*$))"));
         QString lineForOptions = line;
         const auto cutMatch = trailingAnswerCut.match(lineForOptions);
         if (cutMatch.hasMatch()) {
@@ -387,9 +538,10 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
             options += parsedOptions;
             afterOptions = true;
         } else if (afterOptions && !options.isEmpty()) {
-            options.last().second += QStringLiteral("\n") + line;
+            // 选项已出现后的续行：仍可能含尾随答案，已剥过；归入最后选项文本。
+            options.last().second += QStringLiteral("\n") + lineForOptions;
         } else {
-            stemLines.append(line);
+            stemLines.append(lineForOptions.isEmpty() ? line : lineForOptions);
         }
     }
     QString answer = answerFromOptionText(rawAnswer, options);
@@ -491,19 +643,23 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
         static const QRegularExpression rangePattern(
             QStringLiteral(R"((\d{1,4})\s*(?:[-—~～]|至|到)\s*(\d{1,4})\s*题)"));
 
-        // 题号锚点整体扫描：覆盖阶段分组里出现在答案区头之后的题目。答案区头
-        // 行不算锚点；同时排除“1.A”“2.B”这类答案汇总行——它们的题号后紧跟答案
-        // 字母，与真实题干不同，用 record 模式识别。
+        // 题号锚点扫描：覆盖阶段分组里出现在答案区头之后的题目。答案区头行不算
+        // 锚点；同时排除“1.A”“2.B”这类答案汇总行（题号后紧跟答案字母）。
+        // 关键规则：最后一个答案区头之后的候选锚点都属于“末尾答案区”内的解析
+        // 文本（如“1. 某选项是第一个”），一律剔除；位于前序答案区头之间的候选
+        // 锚点才是阶段二的题目（前一个答案区已结束、下一个答案区未开始）。
         static const QRegularExpression answerRecordLine(QStringLiteral(
             R"(^\s*(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）])\s*(?:【?答案】?\s*[:：]?)?\s*[A-Fa-f]{1,6}\s*$)"));
+        const int lastAnswerSection = answerSections.isEmpty() ? -1 : answerSections.last();
         QList<QuestionAnchor> anchors;
         for (int index = 0; index < lines.size(); ++index) {
             if (isAnswerSectionHeader(lines.at(index).text))
                 continue;
             const QString text = lines.at(index).text;
-            // 在答案区头之后、直到下一个题号锚点之间的行属于答案区，跳过以避免
-            // 把答案汇总行误判为题干。这里用“题号后只剩答案字母”的强特征排除。
             if (answerRecordLine.match(text.trimmed()).hasMatch())
+                continue;
+            // 落在最后一个答案区头之后 → 属于末尾答案区的解析文本，剔除。
+            if (lastAnswerSection >= 0 && index > lastAnswerSection)
                 continue;
             const auto match = questionPattern().match(text);
             if (!match.hasMatch())
