@@ -45,8 +45,8 @@ if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 $Executables = @("小窗刷题.exe", "题库制作器.exe")
 $Sources = @(
-  Join-Path $Build "apps/desktop-qt/小窗刷题.exe",
-  Join-Path $Build "apps/bank-studio/题库制作器.exe"
+  (Join-Path $Build "apps/desktop-qt/小窗刷题.exe"),
+  (Join-Path $Build "apps/bank-studio/题库制作器.exe")
 )
 for ($Index = 0; $Index -lt $Executables.Count; $Index++) {
   Copy-Item $Sources[$Index] (Join-Path $Stage $Executables[$Index]) -Force

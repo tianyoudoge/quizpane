@@ -128,7 +128,10 @@ STAGED_APP="$STAGE_ROOT/QuizPane.app"
 ditto "$SOURCE_APP" "$STAGED_APP"
 deploy_app() {
   local app_path="$1"
-  local deploy_args=("$MACDEPLOYQT" "$app_path" -always-overwrite -no-codesign)
+  # Qt Online Installer 的 macdeployqt 不支持 Homebrew 版本提供的
+  # -no-codesign 参数。部署后无论来源都会由下方的 codesign 统一签名，故这里
+  # 只使用两者共有的参数，避免 GitHub macOS runner 直接失败。
+  local deploy_args=("$MACDEPLOYQT" "$app_path" -always-overwrite)
   local lib_path
   for lib_path in "${QT_DEPLOY_LIB_PATHS[@]}"; do
     deploy_args+=("-libpath=$lib_path")
