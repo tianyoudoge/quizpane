@@ -708,8 +708,15 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
                                            : QStringLiteral("答案文本无法唯一匹配选项"));
     else if (answerIds.size() != answer.size())
         reasons.append(QStringLiteral("答案引用了不存在的选项"));
+    const bool explicitlyMultiple = stemLines.join(QChar('\n')).contains(QStringLiteral("多选题"));
+    if (answerIds.size() > 1 && !explicitlyMultiple)
+        reasons.append(QStringLiteral("题干未标注多选题，却识别到多个答案"));
+    if (explicitlyMultiple && answerIds.size() < 2)
+        reasons.append(QStringLiteral("多选题答案少于两个选项"));
     QString type = QStringLiteral("single_choice");
-    if (answerIds.size() > 1 || stemLines.join(QChar('\n')).contains(QStringLiteral("多选题")))
+    // 试卷会在题干明确标注“多选题”。绝不能只因答案提取出多个字母就改成多选，
+    // 否则解析残片（例如 81 题的答案/解析）会触发“多选答案至少两个”的校验错误。
+    if (explicitlyMultiple)
         type = QStringLiteral("multiple_choice");
     if (jsonOptions.size() == 2) {
         const QString first = jsonOptions.at(0).toObject().value("text").toString();

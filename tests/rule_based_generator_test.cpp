@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
     ExtractedDocument multiple;
     multiple.sourcePath = QStringLiteral("multiple.txt");
     multiple.plainText =
-        QStringLiteral("1. 下列哪些是容器？\nA. vector\nB. map\nC. mutex\nD. thread\n答案：AB\n");
+        QStringLiteral("1. 【多选题】下列哪些是容器？\nA. vector\nB. map\nC. mutex\nD. thread\n答案：AB\n");
     const auto multipleResult = RuleBasedBankGenerator{}.generate({multiple});
     if (multipleResult.questions.size() != 1 ||
         !multipleResult.needsReviewQuestions.isEmpty() ||
@@ -172,6 +172,20 @@ int main(int argc, char** argv) {
         multipleResult.questions.first().toObject().value("answer").toObject()
             .value("optionIds").toArray().size() != 2)
         return 8;
+
+    // 异常答案文本即使被提取出多个字母，未标注“多选题”的题也不能被升级成
+    // multiple_choice；应转入复核，避免“多选答案至少需要两个 optionId”类误报。
+    ExtractedDocument suspiciousSingle;
+    suspiciousSingle.sourcePath = QStringLiteral("suspicious-single.txt");
+    suspiciousSingle.plainText = QStringLiteral(
+        "81. 每年最多开采多少万立方米林木？\nA. 30\nB. 50\nC. 60\nD. 75\n答案：AD\n");
+    const auto suspiciousResult = RuleBasedBankGenerator{}.generate({suspiciousSingle});
+    if (!suspiciousResult.questions.isEmpty() || suspiciousResult.needsReviewQuestions.size() != 1 ||
+        suspiciousResult.needsReviewQuestions.first().toObject().value("type").toString() !=
+            QStringLiteral("single_choice") ||
+        !suspiciousResult.needsReviewQuestions.first().toObject().value("review").toObject()
+             .value("reason").toString().contains(QStringLiteral("未标注多选题")))
+        return 108;
 
     ExtractedDocument trueFalse;
     trueFalse.sourcePath = QStringLiteral("boolean.txt");

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(QuizPane VERSION 0.2.10 LANGUAGES C CXX)
+project(QuizPane VERSION 0.2.11 LANGUAGES C CXX)
 
 if(WIN32)
     # 禁止 Windows SDK 注入 min/max 宏，避免破坏 std::min/std::max 和
