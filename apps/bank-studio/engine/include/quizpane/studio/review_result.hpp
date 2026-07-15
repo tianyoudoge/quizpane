@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QJsonArray>
+#include <QHash>
+#include <QByteArray>
 #include <QStringList>
 
 namespace quizpane::studio {
@@ -12,6 +14,8 @@ struct ReviewResult {
     QJsonArray questions;
     QJsonArray needsReviewQuestions;
     QStringList warnings;
+    // assets/<...>.png -> PNG bytes。该字段是制作过程中的附件清单，不写入 bank.json。
+    QHash<QString, QByteArray> assets;
 };
 
 }  // namespace quizpane::studio

@@ -19,7 +19,7 @@ const QString kSystemPrompt = QStringLiteral(
     "{\"materials\":[...],\"questions\":[...]}。共享文章、图表或案例必须只放在 "
     "materials 中，每份材料包含 id、catalogId、title、body；关联子题用 materialId 引用，"
     "不得把材料正文复制到每道题 stem。没有共享材料时返回空 materials 数组。"
-    "只生成 single_choice 或 true_false。每题必须包含 id、catalogId、type、stem、"
+    "生成 single_choice、multiple_choice 或 true_false；原文标注多选题或答案有多个选项时必须使用 multiple_choice。每题必须包含 id、catalogId、type、stem、"
     "options、answer、solution；catalogId 固定为 generated；id 和选项 id 只能用小写"
     "字母、数字、点、下划线或连字符；answer.optionIds 必须恰好引用一个现有选项。"
     "忠于原文，不确定时设置 review:{\"needsReview\":true,\"reason\":\"...\","

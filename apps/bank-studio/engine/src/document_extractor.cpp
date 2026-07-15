@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QBuffer>
 #include <QImage>
 #include <QPdfDocument>
 #include <QPdfSelection>
@@ -311,6 +312,15 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
                 continue;
 #endif
             }
+        }
+        // 不能仅在无文字时 OCR：文字型 PDF 常将图表单独嵌入，文字提取 API
+        // 天然看不见它。以 PNG 保留整页视觉上下文，后续按题号关联时才入包。
+        QImage pageImage = renderPdfPage(&document, page);
+        if (!pageImage.isNull()) {
+            QByteArray png;
+            QBuffer buffer(&png);
+            if (buffer.open(QIODevice::WriteOnly) && pageImage.save(&buffer, "PNG"))
+                result.pageImages.insert(page + 1, png);
         }
         pages.append(text);
     }

@@ -35,7 +35,8 @@ int main(int argc, char** argv) {
                            .toObject().value("nodes").toArray();
     if (nodes.size() != 1) return 3;
     const auto attempt = call(loader, "create", "attempt.create",
-        {{"categoryId", "general-knowledge"}, {"count", 1}}).value("result").toObject();
+        {{"categoryId", "general-knowledge"}, {"count", 1},
+         {"includePreviouslyAnswered", true}}).value("result").toObject();
     if (attempt.value("attemptId").toString().isEmpty()) return 4;
     const auto questions = call(loader, "questions", "attempt.questions")
                                .value("result").toObject().value("questions").toArray();

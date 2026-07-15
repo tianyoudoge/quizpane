@@ -55,7 +55,7 @@ bool isAnswerSectionHeader(const QString& text) {
 
 bool isMaterialHeader(const QString& text) {
     static const QRegularExpression pattern(QStringLiteral(
-        R"(^\s*(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*\s*[:：]?|阅读下列(?:材料|文字)|原文\s*[:：])\s*.*$)"));
+        R"(^\s*(?:[（(][一二三四五六七八九十\d]+[）)]\s*)?(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*\s*[:：]?|阅读(?:下列|以下)(?:材料|文字)|根据(?:下列|以下)(?:统计)?资料|原文\s*[:：])\s*.*$)"));
     return pattern.match(text).hasMatch();
 }
 
@@ -139,15 +139,19 @@ QList<SourceLine> sourceLines(const ExtractedDocument& document) {
             if (document.hasPageBoundaries)
                 ++page;
         } else if (ch == u'\n' || ch == u'\r') {
-            if (!current.isEmpty())
-                result.append({current.trimmed(), page});
+            if (!current.isEmpty()) {
+                QString cleaned = current.trimmed();
+                // PDF 页脚通常是 "- 15 -" / "-15-"，绝不能进入题干；保留
+                // 其它换行以免把资料题的段落硬拼成一行。
+                static const QRegularExpression pageFooter(QStringLiteral(R"(^[-—–\s]*\d{1,4}[-—–\s]*$)"));
+                if (!pageFooter.match(cleaned).hasMatch()) result.append({cleaned, page});
+            }
             current.clear();
         } else {
             current += ch;
         }
     }
-    if (!current.isEmpty())
-        result.append({current.trimmed(), page});
+    if (!current.isEmpty()) result.append({current.trimmed(), page});
     return result;
 }
 
@@ -531,6 +535,22 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
     if (solutionLines.isEmpty() && solutionKey.contains(anchor.number))
         solutionLines.append(solutionKey.value(anchor.number));
 
+    const QString visualText = stemLines.join(QChar('\n'));
+    const int sourcePage = anchor.line < lines.size() ? lines.at(anchor.line).page : 0;
+    const bool hasVisualContext = sourcePage > 0 && document.pageImages.contains(sourcePage) &&
+        (visualText.contains(QStringLiteral("图")) || visualText.contains(QStringLiteral("表")) ||
+         visualText.contains(QStringLiteral("统计")) || visualText.contains(QStringLiteral("问号")));
+    if (hasVisualContext && options.size() < 2) {
+        // 选项 A/B/C/D 完全画在原卷图片里时，PDF 文字层往往只留下题干甚至
+        // 什么也不留。我们不冒险切四张小图：整页视觉题图仍在题干中，选项用
+        // 稳定的“图A”占位，既能作答、判分，也不会把一题拆成五张易错图片。
+        options.clear();
+        for (const QChar label : QStringLiteral("abcd")) {
+            const QString id(label);
+            options.append({id, QStringLiteral("图%1").arg(label.toUpper())});
+        }
+    }
+
     QJsonArray jsonOptions;
     QSet<QString> optionIds;
     for (const auto& option : options) {
@@ -556,10 +576,9 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
                                            : QStringLiteral("答案文本无法唯一匹配选项"));
     else if (answerIds.size() != answer.size())
         reasons.append(QStringLiteral("答案引用了不存在的选项"));
-    if (answerIds.size() > 1)
-        reasons.append(QStringLiteral("识别为多选题，但当前答题运行时暂不支持多选"));
-
     QString type = QStringLiteral("single_choice");
+    if (answerIds.size() > 1 || stemLines.join(QChar('\n')).contains(QStringLiteral("多选题")))
+        type = QStringLiteral("multiple_choice");
     if (jsonOptions.size() == 2) {
         const QString first = jsonOptions.at(0).toObject().value("text").toString();
         const QString second = jsonOptions.at(1).toObject().value("text").toString();
@@ -582,6 +601,13 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
                          {"source", source}};
     if (!materialId.isEmpty())
         question.insert("materialId", materialId);
+    // 图形推理、统计资料和明确提到图/表的题保留 PDF 页的可视内容。页图是
+    // 原件视觉上下文，而非 OCR 猜测的文字，因此即使 PDF 可选中文本也不会漏图。
+    if (hasVisualContext) {
+        const QString path = QStringLiteral("assets/%1-p%2.png")
+            .arg(QFileInfo(document.sourcePath).completeBaseName()).arg(sourcePage);
+        question.insert("stemImage", QJsonObject{{"path", path}, {"alt", "原卷图表"}});
+    }
     if (!reasons.isEmpty()) {
         *reviewReason = reasons.join(QStringLiteral("；"));
         question.insert(
@@ -689,11 +715,28 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
             QJsonObject source{{"document", QFileInfo(document.sourcePath).fileName()}};
             if (lines.at(line).page > 0)
                 source.insert("page", lines.at(line).page);
-            result.materials.append(QJsonObject{{"id", id},
-                                                {"catalogId", "generated"},
-                                                {"title", lines.at(line).text.left(200)},
-                                                {"body", body.join(QChar('\n')).trimmed()},
-                                                {"source", source}});
+            QJsonObject material{{"id", id}, {"catalogId", "generated"},
+                                 {"title", lines.at(line).text.left(200)},
+                                 {"body", body.join(QChar('\n')).trimmed()}, {"source", source}};
+            const int firstPage = lines.at(line).page;
+            const int lastPage = lines.at(firstQuestionLine).page;
+            if (firstPage > 0 && lastPage >= firstPage &&
+                (lines.at(line).text.contains(QStringLiteral("资料")) ||
+                 lines.at(line).text.contains(QStringLiteral("图")) ||
+                 lines.at(line).text.contains(QStringLiteral("表")))) {
+                QJsonArray images;
+                // 资料文字与表格经常跨页；把材料头到第一道子题之间的视觉页都
+                // 带上，避免“标题在上一页、统计图在下一页”再次丢图。
+                for (int page = firstPage; page <= lastPage; ++page) {
+                    if (!document.pageImages.contains(page)) continue;
+                    const QString path = QStringLiteral("assets/%1-p%2.png")
+                        .arg(QFileInfo(document.sourcePath).completeBaseName()).arg(page);
+                    images.append(QJsonObject{{"path", path}, {"alt", "原卷资料图表"}});
+                    result.assets.insert(path, document.pageImages.value(page));
+                }
+                if (!images.isEmpty()) material.insert("images", images);
+            }
+            result.materials.append(material);
         }
 
         // 逐段解析答案区。每段的作用域到下一个题号锚点或下一个材料头为止，
@@ -740,6 +783,13 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
             QString reviewReason;
             QJsonObject question = parseQuestion(document, lines, anchor, blockEnd, id, materialId,
                                                  answers, solutions, &reviewReason);
+            const QJsonObject stemImage = question.value("stemImage").toObject();
+            const QString assetPath = stemImage.value("path").toString();
+            if (!assetPath.isEmpty()) {
+                const int page = question.value("source").toObject().value("page").toInt();
+                if (document.pageImages.contains(page))
+                    result.assets.insert(assetPath, document.pageImages.value(page));
+            }
             if (reviewReason.isEmpty())
                 result.questions.append(question);
             else

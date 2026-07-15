@@ -10,6 +10,8 @@
 #include <QRandomGenerator>
 #include <QSet>
 #include <QUuid>
+#include <QUrl>
+#include <QSettings>
 #include <algorithm>
 
 namespace quizpane {
@@ -77,6 +79,7 @@ bool DeclarativeProvider::load(const QString& bankPath, QString* errorOutput) {
     bankTitle_ = bank.value("title").toString(providerName_);
     catalogs_ = bank.value("catalogs").toArray();
     questions_ = bank.value("questions").toArray();
+    bankDirectory_ = QFileInfo(bankPath).absoluteDir().absolutePath();
     materials_ = bank.value("materials").toArray();
     if (providerId_.isEmpty() || providerName_.isEmpty()) {
         unload(); return fail(errorOutput, QStringLiteral("题库名称或标识为空"));
@@ -94,7 +97,7 @@ void DeclarativeProvider::unload() {
     providerId_.clear(); providerName_.clear(); providerVersion_.clear(); bankTitle_.clear();
     activeCatalogTitle_.clear();
     catalogs_ = {}; questions_ = {}; materials_ = {}; activeQuestions_ = {};
-    materialsById_.clear(); questionCountByCatalog_.clear(); answers_.clear();
+    materialsById_.clear(); questionCountByCatalog_.clear(); answers_.clear(); bankDirectory_.clear();
 }
 
 QJsonObject DeclarativeProvider::descriptor() const {
@@ -106,6 +109,13 @@ QJsonObject DeclarativeProvider::error(const QJsonValue& id, const QString& mess
 QJsonObject DeclarativeProvider::findCatalog(const QString& id) const {
     for (const auto& value : catalogs_) if (value.toObject().value("id").toString() == id) return value.toObject();
     return {};
+}
+
+QString DeclarativeProvider::assetUrl(const QJsonObject& asset) const {
+    const QString relative = asset.value("path").toString();
+    if (relative.isEmpty() || bankDirectory_.isEmpty()) return {};
+    const QString path = QDir(bankDirectory_).absoluteFilePath(QStringLiteral("../") + relative);
+    return QFileInfo::exists(path) ? QUrl::fromLocalFile(path).toString() : QString{};
 }
 
 QVector<QJsonArray> DeclarativeProvider::buildUnits(const QString& catalogId) const {
@@ -137,21 +147,33 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
     QJsonArray result;
     for (const auto& value : activeQuestions_) {
         const QJsonObject source = value.toObject();
-        const QString answerId = source.value("answer").toObject().value("optionIds").toArray().first().toString();
+        const QJsonArray answerIds = source.value("answer").toObject().value("optionIds").toArray();
         QJsonArray options;
         int correct = -1;
         const auto sourceOptions = source.value("options").toArray();
         for (qsizetype index = 0; index < sourceOptions.size(); ++index) {
             const auto option = sourceOptions.at(index).toObject();
-            if (option.value("id").toString() == answerId) correct = static_cast<int>(index);
+            for (const auto& answerId : answerIds)
+                if (option.value("id").toString() == answerId.toString()) correct = static_cast<int>(index);
             options.append(QJsonObject{{"index", index}, {"label", QString(QChar(char16_t(u'A' + index)))},
                 {"contentHtml", paragraph(option.value("text").toString())}});
         }
+        QString content = paragraph(source.value("stem").toString());
+        const QString stemImageUrl = assetUrl(source.value("stemImage").toObject());
+        if (!stemImageUrl.isEmpty())
+            content += QStringLiteral("<p><img src=\"%1\" width=\"340\"></p>").arg(stemImageUrl);
         QJsonObject question{{"id", source.value("id")}, {"type", source.value("type")},
-            {"contentHtml", paragraph(source.value("stem").toString())}, {"options", options}};
+            {"contentHtml", content}, {"options", options}};
         if (source.contains("materialId")) question.insert("materialId", source.value("materialId"));
         if (withSolutions) {
             question.insert("correctChoice", correct);
+            QJsonArray correctChoices;
+            for (const auto& answerId : answerIds) {
+                for (qsizetype index = 0; index < sourceOptions.size(); ++index)
+                    if (sourceOptions.at(index).toObject().value("id").toString() == answerId.toString())
+                        correctChoices.append(index);
+            }
+            question.insert("correctChoices", correctChoices);
             question.insert("solutionHtml", paragraph(source.value("solution").toString()));
         }
         result.append(question);
@@ -171,8 +193,13 @@ QJsonArray DeclarativeProvider::hostMaterials() const {
         if (materialId.isEmpty() || seen.contains(materialId)) continue;
         seen.insert(materialId);
         const QJsonObject material = materialsById_.value(materialId);
+        QString content = paragraph(material.value("body").toString());
+        for (const auto& image : material.value("images").toArray()) {
+            const QString url = assetUrl(image.toObject());
+            if (!url.isEmpty()) content += QStringLiteral("<p><img src=\"%1\" width=\"340\"></p>").arg(url);
+        }
         result.append(QJsonObject{{"id", materialId}, {"title", material.value("title")},
-            {"contentHtml", paragraph(material.value("body").toString())}});
+            {"contentHtml", content}});
     }
     return result;
 }
@@ -187,6 +214,7 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
     if (dispatch == Method::Capabilities) return {{"id", id}, {"result", QJsonObject{{"loginMethods", QJsonArray{"none"}}}}};
     if (dispatch == Method::CatalogList) {
         QJsonArray nodes;
+        QSettings settings;
         for (const auto& value : catalogs_) {
             const QJsonObject catalog = value.toObject(); const QString catalogId = catalog.value("id").toString();
             const int count = questionCountByCatalog_.value(catalogId, 0);
@@ -194,9 +222,19 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
             int suggested = practice.value("mode").toString() == QStringLiteral("all")
                 ? count : practice.value("questionCount").toInt(qMin(15, count));
             suggested = qBound(1, suggested, qMax(1, count));
+            int mastered = 0, mistakes = 0;
+            for (const auto& questionValue : questions_) {
+                const QJsonObject question = questionValue.toObject();
+                if (question.value("catalogId").toString() != catalogId) continue;
+                const QVariant state = settings.value(QStringLiteral("practice/history/%1/%2")
+                    .arg(providerId_, question.value("id").toString()));
+                if (state.toString() == QStringLiteral("correct")) ++mastered;
+                else if (state.toString() == QStringLiteral("wrong")) ++mistakes;
+            }
             nodes.append(QJsonObject{{"id", catalogId}, {"title", catalog.value("title")},
                 {"availableQuestionCount", count}, {"canStartAttempt", count > 0},
-                {"suggestedCounts", QJsonArray{suggested}}});
+                {"suggestedCounts", QJsonArray{suggested}}, {"masteredCount", mastered},
+                {"mistakeCount", mistakes}});
         }
         return {{"id", id}, {"result", QJsonObject{{"nodes", nodes}}}};
     }
@@ -204,6 +242,20 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
         const QJsonObject catalog = findCatalog(params.value("categoryId").toString());
         if (catalog.isEmpty()) return error(id, QStringLiteral("练习分类不存在"));
         QVector<QJsonArray> units = buildUnits(catalog.value("id").toString());
+        if (!params.value("includePreviouslyAnswered").toBool(false)) {
+            QSettings settings;
+            QVector<QJsonArray> filtered;
+            for (const QJsonArray& unit : units) {
+                bool allMastered = true;
+                for (const auto& value : unit)
+                    allMastered = allMastered && settings.value(
+                        QStringLiteral("practice/history/%1/%2").arg(
+                            providerId_, value.toObject().value("id").toString())).toString() ==
+                        QStringLiteral("correct");
+                if (!allMastered) filtered.append(unit);
+            }
+            units = filtered;
+        }
         if (catalog.value("practice").toObject().value("mode") == QStringLiteral("random"))
             std::shuffle(units.begin(), units.end(), *QRandomGenerator::global());
         int totalQuestions = 0;
@@ -224,14 +276,20 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
     if (dispatch == Method::AttemptQuestions) return {{"id", id}, {"result", QJsonObject{
         {"materials", hostMaterials()}, {"questions", hostQuestions(false)}}}};
     if (dispatch == Method::SaveAnswers) {
-        for (const auto& value : params.value("answers").toArray()) { const auto answer = value.toObject(); bool ok = false;
-            const int choice = answer.value("answer").toObject().value("choice").toString().toInt(&ok);
-            if (ok) answers_.insert(answer.value("questionIndex").toInt(), choice); }
+        for (const auto& value : params.value("answers").toArray()) {
+            const auto answer = value.toObject(); QSet<int> choices;
+            const QJsonValue choice = answer.value("answer").toObject().value("choice");
+            const QJsonArray array = choice.toArray();
+            if (!array.isEmpty()) for (const auto& item : array) { bool ok = false; const int index = item.toString().toInt(&ok); if (ok) choices.insert(index); }
+            else { bool ok = false; const int index = choice.toString().toInt(&ok); if (ok) choices.insert(index); }
+            const int index = answer.value("questionIndex").toInt(-1);
+            if (index >= 0) { if (choices.isEmpty()) answers_.remove(index); else answers_.insert(index, choices); }
+        }
         return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
     }
     if (dispatch == Method::Submit) return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
-    if (dispatch == Method::Report) { int correct = 0; const auto solutions = hostQuestions(true);
-        for (qsizetype i = 0; i < solutions.size(); ++i) correct += answers_.value(static_cast<int>(i), -1) == solutions.at(i).toObject().value("correctChoice").toInt(-2);
+    if (dispatch == Method::Report) { int correct = 0; const auto solutions = hostQuestions(true); QSettings settings;
+        for (qsizetype i = 0; i < solutions.size(); ++i) { QSet<int> expected; for (const auto& choice : solutions.at(i).toObject().value("correctChoices").toArray()) expected.insert(choice.toInt()); const bool passed = answers_.value(static_cast<int>(i)) == expected; if (passed) ++correct; settings.setValue(QStringLiteral("practice/history/%1/%2").arg(providerId_, solutions.at(i).toObject().value("id").toString()), passed ? QStringLiteral("correct") : QStringLiteral("wrong")); }
         return {{"id", id}, {"result", QJsonObject{{"questionCount", activeQuestions_.size()}, {"answerCount", answers_.size()}, {"correctCount", correct}}}};
     }
     if (dispatch == Method::Solutions) return {{"id", id}, {"result", QJsonObject{

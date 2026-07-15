@@ -41,6 +41,8 @@
 #include <QStyle>
 #include <QSet>
 #include <QTimer>
+#include <QSettings>
+#include <QProcess>
 #include <QTreeWidget>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -614,6 +616,7 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     generatedMaterials_ = candidate.materials;
     generatedQuestions_ = candidate.questions;
     reviewQuestions_ = candidate.needsReviewQuestions;
+    generatedAssets_ = candidate.assets;
     outputTokens_->setText(QString::number(generatedQuestions_.size()));
     totalTokens_->setText(QString::number(reviewQuestions_.size()));
     reviewTree_->clear();
@@ -742,9 +745,12 @@ void StudioWindow::packageProvider() {
         return;
     }
     const QString output = packageDirectory.filePath(QStringLiteral("generated.quizpane-provider"));
-    if (!quizpane::writeZipArchive(output, {
-            {QStringLiteral("manifest.json"), QJsonDocument(manifest).toJson(QJsonDocument::Indented)},
-            {QStringLiteral("content/bank.json"), QJsonDocument(bank).toJson(QJsonDocument::Indented)}}, &error)) {
+    QList<quizpane::ZipFile> packageFiles{
+        {QStringLiteral("manifest.json"), QJsonDocument(manifest).toJson(QJsonDocument::Indented)},
+        {QStringLiteral("content/bank.json"), QJsonDocument(bank).toJson(QJsonDocument::Indented)}};
+    for (auto it = generatedAssets_.cbegin(); it != generatedAssets_.cend(); ++it)
+        packageFiles.append({it.key(), it.value()});
+    if (!quizpane::writeZipArchive(output, packageFiles, &error)) {
         diagnostic::event(QStringLiteral("studio"), QStringLiteral("package-write-failed"),
             {{QStringLiteral("error"), error}});
         QMessageBox::critical(this, QStringLiteral("打包失败"), error);
@@ -792,6 +798,15 @@ void StudioWindow::packageProvider() {
         QMessageBox::critical(this, QStringLiteral("无法添加题库"), error);
         return;
     }
+    // 制作器与小窗是独立进程。把已安装题库写到小窗的启动偏好并主动唤起它，
+    // 避免 UI 提示“可以刷题”而用户还得从菜单再选一次。
+    QSettings practiceSettings(QStringLiteral("QuizPane Project"), QStringLiteral("小窗刷题"));
+    practiceSettings.setValue(QStringLiteral("provider/lastLibraryPath"), installed.entryPath);
+#if defined(Q_OS_MACOS)
+    QProcess::startDetached(QStringLiteral("open"),
+                            {QStringLiteral("-a"), QStringLiteral("小窗刷题"),
+                             QStringLiteral("--args"), QStringLiteral("--provider"), installed.entryPath});
+#endif
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("package-success"),
         {{QStringLiteral("file"), QFileInfo(output).fileName()},
          {QStringLiteral("questions"), selected.size()},

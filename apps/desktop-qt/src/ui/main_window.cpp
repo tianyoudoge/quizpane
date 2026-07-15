@@ -33,6 +33,7 @@
 #include <QPixmap>
 #include <QProcess>
 #include <QRadioButton>
+#include <QCheckBox>
 #include <QResizeEvent>
 #include <QScreen>
 #include <QShowEvent>
@@ -617,6 +618,7 @@ bool MainWindow::maybeRestoreDraft() {
     answers_.resize(static_cast<int>(questions_.size()));
     for (int index = restoredAnswerCount; index < answers_.size(); ++index)
         answers_[index] = -1;
+    multiAnswers_.resize(answers_.size());
     lockedPracticeViewportHeight_ = 0;
     submitButton_->setEnabled(true);
     pages_->setCurrentWidget(practicePage_);
@@ -705,8 +707,16 @@ void MainWindow::populateCatalog(const QJsonArray& nodes) {
         rowLayout->setContentsMargins(12, 10, 10, 10);
         rowLayout->setSpacing(7);
         auto* label = new QLabel(QStringLiteral("%1\n%2 道可练").arg(title).arg(available));
+        const int mastered = node.value("masteredCount").toInt();
+        const int mistakes = node.value("mistakeCount").toInt();
+        label->setText(QStringLiteral("%1\n%2 道可练 · 已掌握 %3 · 待巩固 %4")
+            .arg(title).arg(available).arg(mastered).arg(mistakes));
         label->setWordWrap(true);
         rowLayout->addWidget(label);
+        auto* includeAnswered = new QCheckBox(QStringLiteral("包含之前做过的题"));
+        includeAnswered->setObjectName(QStringLiteral("includeAnswered"));
+        includeAnswered->setChecked(false);
+        rowLayout->addWidget(includeAnswered);
         QList<int> counts;
         for (const auto& countValue : node.value("suggestedCounts").toArray()) {
             const int count = countValue.toInt();
@@ -726,7 +736,9 @@ void MainWindow::populateCatalog(const QJsonArray& nodes) {
             if (count == available) button->setText(QStringLiteral("全部 %1 题").arg(available));
             button->setObjectName(QStringLiteral("smallButton"));
             connect(button, &QPushButton::clicked, this,
-                    [this, categoryId, title, count] { startAttempt(categoryId, title, count); });
+                    [this, categoryId, title, count, includeAnswered] {
+                        startAttempt(categoryId, title, count, includeAnswered->isChecked());
+                    });
             countLayout->addWidget(button, buttonIndex / 3, buttonIndex % 3);
             ++buttonIndex;
         }
@@ -739,7 +751,7 @@ void MainWindow::populateCatalog(const QJsonArray& nodes) {
 }
 
 void MainWindow::startAttempt(const QString& categoryId, const QString& title,
-                              int count) {
+                              int count, bool includePreviouslyAnswered) {
     attemptTitle_ = title;
     practiceProgressLabel_->setText(QStringLiteral("正在创建练习 · %1 题").arg(count));
     questionLabel_->setText(QStringLiteral("请稍候…"));
@@ -750,7 +762,8 @@ void MainWindow::startAttempt(const QString& categoryId, const QString& title,
     QString error;
     if (!provider_.request(
             {{"id", "attempt-create"}, {"method", "attempt.create"},
-             {"params", QJsonObject{{"categoryId", categoryId}, {"count", count}}}},
+             {"params", QJsonObject{{"categoryId", categoryId}, {"count", count},
+                                      {"includePreviouslyAnswered", includePreviouslyAnswered}}}},
             &error))
         QMessageBox::warning(this, QStringLiteral("无法创建练习"), error);
 }
@@ -794,16 +807,22 @@ void MainWindow::showQuestion(int index) {
         .arg(question.value("contentHtml").toString()));
     clearLayout(optionsLayout_);
     const QJsonArray options = question.value("options").toArray();
+    const bool multiple = question.value("type").toString() == QStringLiteral("multiple_choice");
     for (qsizetype optionIndex = 0; optionIndex < options.size(); ++optionIndex) {
         const QJsonObject option = options.at(optionIndex).toObject();
-        auto* button = new QRadioButton(QStringLiteral("%1. %2")
-            .arg(option.value("label").toString(), plainText(option.value("contentHtml").toString())));
+        auto* button = multiple ? static_cast<QAbstractButton*>(new QCheckBox(QStringLiteral("%1. %2")
+            .arg(option.value("label").toString(), plainText(option.value("contentHtml").toString()))))
+            : static_cast<QAbstractButton*>(new QRadioButton(QStringLiteral("%1. %2")
+            .arg(option.value("label").toString(), plainText(option.value("contentHtml").toString()))));
         button->setObjectName(QStringLiteral("answerOption"));
-        button->setChecked(answers_.value(currentQuestionIndex_, -1) == optionIndex);
+        button->setChecked(multiple ? multiAnswers_.value(currentQuestionIndex_).contains(optionIndex)
+                                    : answers_.value(currentQuestionIndex_, -1) == optionIndex);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
-        connect(button, &QRadioButton::toggled, this,
+        connect(button, &QAbstractButton::toggled, this,
                 [this, optionIndex](bool checked) {
-                    if (checked) chooseAnswer(static_cast<int>(optionIndex));
+                    if (questions_.at(currentQuestionIndex_).toObject().value("type").toString() ==
+                        QStringLiteral("multiple_choice")) chooseAnswer(static_cast<int>(optionIndex), checked);
+                    else if (checked) chooseAnswer(static_cast<int>(optionIndex));
                 });
         optionsLayout_->addWidget(button);
     }
@@ -815,18 +834,27 @@ void MainWindow::showQuestion(int index) {
     saveDraft();
 }
 
-void MainWindow::chooseAnswer(int choice) {
+void MainWindow::chooseAnswer(int choice, bool checked) {
     if (currentQuestionIndex_ < 0 || currentQuestionIndex_ >= answers_.size()) return;
-    answers_[currentQuestionIndex_] = choice;
+    const bool multiple = questions_.at(currentQuestionIndex_).toObject().value("type").toString() ==
+        QStringLiteral("multiple_choice");
+    if (multiple) {
+        if (checked) multiAnswers_[currentQuestionIndex_].insert(choice);
+        else multiAnswers_[currentQuestionIndex_].remove(choice);
+        answers_[currentQuestionIndex_] = multiAnswers_[currentQuestionIndex_].isEmpty()
+            ? -1 : *multiAnswers_[currentQuestionIndex_].constBegin();
+    } else answers_[currentQuestionIndex_] = choice;
     practiceProgressLabel_->setText(QStringLiteral("第 %1 / %2 题 · 已作答 %3 题")
         .arg(currentQuestionIndex_ + 1).arg(questions_.size())
         .arg(std::count_if(answers_.cbegin(), answers_.cend(), [](int value) { return value >= 0; })));
     const QJsonObject question = questions_.at(currentQuestionIndex_).toObject();
+    QJsonValue savedChoice = QString::number(choice);
+    if (multiple) { QJsonArray values; for (int value : multiAnswers_[currentQuestionIndex_]) values.append(QString::number(value)); savedChoice = values; }
     const QJsonArray payload{QJsonObject{
         {"questionIndex", currentQuestionIndex_},
         {"questionId", question.value("id").toString()},
         {"time", 0}, {"flag", 0},
-        {"answer", QJsonObject{{"type", 201}, {"choice", QString::number(choice)}}}}};
+        {"answer", QJsonObject{{"type", multiple ? 202 : 201}, {"choice", savedChoice}}}}};
     QString error;
     // request 只发起异步 RPC，不阻塞 UI；结果统一进入 handleProviderResponse()。
     provider_.request(
@@ -841,7 +869,7 @@ void MainWindow::chooseAnswer(int choice) {
     // 若用户已手动切题，index 校验会阻止旧定时器把新页面再次向前推进。
     const int advanceMs = AppSettings::autoAdvanceMs();
     const int answeredIndex = currentQuestionIndex_;
-    if (advanceMs <= 0) return;
+    if (multiple || advanceMs <= 0) return;
     if (answeredIndex + 1 < questions_.size()) {
         QTimer::singleShot(advanceMs, this, [this, answeredIndex] {
             if (currentQuestionIndex_ == answeredIndex)
@@ -860,13 +888,14 @@ QJsonArray MainWindow::answerPayload() const {
     QJsonArray payload;
     for (qsizetype index = 0; index < questions_.size(); ++index) {
         const int selected = answers_.value(index, -1);
-        QJsonValue choice = selected >= 0 ? QJsonValue(QString::number(selected))
-                                          : QJsonValue(QJsonValue::Null);
+        const bool multiple = questions_.at(index).toObject().value("type").toString() == QStringLiteral("multiple_choice");
+        QJsonValue choice = selected >= 0 ? QJsonValue(QString::number(selected)) : QJsonValue(QJsonValue::Null);
+        if (multiple) { QJsonArray selections; for (int value : multiAnswers_.value(index)) selections.append(QString::number(value)); choice = selections; }
         payload.append(QJsonObject{
             {"questionIndex", index},
             {"questionId", questions_.at(index).toObject().value("id").toString()},
             {"time", 0}, {"flag", 0},
-            {"answer", QJsonObject{{"type", 201}, {"choice", choice}}}});
+            {"answer", QJsonObject{{"type", multiple ? 202 : 201}, {"choice", choice}}}});
     }
     return payload;
 }
@@ -957,12 +986,17 @@ void MainWindow::showSolution(int index) {
         QStringLiteral("<div style=\"color:#c7ccd2\">%1%2</div>")
             .arg(solution.value("contentHtml").toString(), optionsHtml));
     const int correct = solution.value("correctChoice").toInt(-1);
+    QSet<int> correctChoices;
+    for (const auto& value : solution.value("correctChoices").toArray()) correctChoices.insert(value.toInt());
+    const bool multiple = solution.value("type").toString() == QStringLiteral("multiple_choice");
     const int selected = answers_.value(currentSolutionIndex_, -1);
-    selectedAnswerLabel_->setText(QStringLiteral("你的答案\n%1").arg(choiceLabel(selected)));
-    correctAnswerLabel_->setText(QStringLiteral("正确答案\n%1").arg(choiceLabel(correct)));
-    answerStatusLabel_->setText(selected == correct ? QStringLiteral("✓ 正确")
-                                                     : QStringLiteral("✗ 错误"));
-    answerStatusLabel_->setProperty("correct", selected == correct);
+    const auto labels = [](const QSet<int>& set) { QStringList result; for (int value : set) result.append(choiceLabel(value)); std::sort(result.begin(), result.end()); return result.join(QStringLiteral("、")); };
+    const QSet<int> selectedChoices = multiple ? multiAnswers_.value(currentSolutionIndex_) : QSet<int>{selected};
+    const bool isCorrect = selectedChoices == correctChoices;
+    selectedAnswerLabel_->setText(QStringLiteral("你的答案\n%1").arg(multiple ? labels(selectedChoices) : choiceLabel(selected)));
+    correctAnswerLabel_->setText(QStringLiteral("正确答案\n%1").arg(multiple ? labels(correctChoices) : choiceLabel(correct)));
+    answerStatusLabel_->setText(isCorrect ? QStringLiteral("✓ 正确") : QStringLiteral("✗ 错误"));
+    answerStatusLabel_->setProperty("correct", isCorrect);
     answerStatusLabel_->style()->unpolish(answerStatusLabel_);
     answerStatusLabel_->style()->polish(answerStatusLabel_);
     solutionExplanationLabel_->setText(
@@ -1106,6 +1140,8 @@ void MainWindow::handleProviderResponse(const QJsonObject& response) {
             return;
         }
         answers_.fill(-1, static_cast<int>(questions_.size()));
+        multiAnswers_.clear();
+        multiAnswers_.resize(answers_.size());
         submitButton_->setEnabled(true);
         showQuestion(0);
         pages_->setCurrentWidget(practicePage_);
@@ -1244,6 +1280,7 @@ void MainWindow::loadProvider(const QString& path) {
     practiceMaterialCard_->hideMaterial();
     solutionMaterialCard_->hideMaterial();
     answers_.clear();
+    multiAnswers_.clear();
     QString error;
     if (!provider_.load(path, &error)) {
         diagnostic::event(QStringLiteral("ui"), QStringLiteral("load-provider-failed"),

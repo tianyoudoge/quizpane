@@ -94,6 +94,7 @@ private:
     QJsonArray generatedMaterials_;
     QJsonArray generatedQuestions_;
     QJsonArray reviewQuestions_;
+    QHash<QString, QByteArray> generatedAssets_;
     // 一个 DTO 保存完整模型选择，避免 vendor/model/endpoint 多个平行字段只更新
     // 其中一部分。API Key 当前只存在进程内，不进入普通配置文件。
     ModelSettings modelSettings_;

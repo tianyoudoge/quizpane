@@ -14,7 +14,7 @@ const QStringList& practiceModes() {
 }
 
 const QStringList& questionTypes() {
-    static const QStringList types{"single_choice", "true_false"};
+    static const QStringList types{"single_choice", "multiple_choice", "true_false"};
     return types;
 }
 
@@ -165,8 +165,11 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
     }
     if (!optionsValid) return;
 
-    if (!answers.isEmpty() && !optionIds.contains(answers.first().toString())) {
-        errors->append({index, id, QStringLiteral("第 %1 题的答案没有对应选项").arg(index + 1), {}});
+    for (const auto& answer : answers) {
+        if (!optionIds.contains(answer.toString())) {
+            errors->append({index, id, QStringLiteral("第 %1 题的答案没有对应选项").arg(index + 1), {}});
+            break;
+        }
     }
     if (question.contains("review")) {
         const QJsonObject review = question.value("review").toObject();
@@ -259,10 +262,13 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
                 QStringLiteral("题干为空、格式错误或超过 20000 字"));
         require(question.value("options").isArray() && options.size() >= 2 && options.size() <= 20,
                 QStringLiteral("选项必须为 2–20 项的数组"));
+        const bool multiple = type == QStringLiteral("multiple_choice");
         require(question.value("answer").isObject() &&
                 hasOnlyKeys(question.value("answer").toObject(), answerKeys) &&
-                question.value("answer").toObject().value("optionIds").isArray() && answers.size() == 1,
-                QStringLiteral("单选答案必须且只能包含一个 optionId"));
+                question.value("answer").toObject().value("optionIds").isArray() &&
+                (multiple ? answers.size() >= 2 : answers.size() == 1),
+                multiple ? QStringLiteral("多选答案至少需要两个 optionId")
+                         : QStringLiteral("单选答案必须且只能包含一个 optionId"));
         require(question.contains("solution") && question.value("solution").isString() &&
                 question.value("solution").toString().size() <= 20000,
                 QStringLiteral("解析缺失、格式错误或超过 20000 字"));

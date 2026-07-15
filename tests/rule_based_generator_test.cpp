@@ -58,6 +58,39 @@ int main(int argc, char** argv) {
     if (!quizpane::validateBank(bankFor(result), &validationError))
         return 4;
 
+    // 真实试卷常以“（一）阅读以下文字”而不是“材料一”标记资料题；文字
+    // PDF 的图表还必须作为题库 assets 保留，不能因为该页有文字层就被丢弃。
+    ExtractedDocument visualMaterial;
+    visualMaterial.sourcePath = QStringLiteral("visual.pdf");
+    visualMaterial.hasPageBoundaries = true;
+    visualMaterial.pageImages.insert(1, QByteArrayLiteral("png-bytes"));
+    visualMaterial.plainText = QStringLiteral("（一）阅读以下文字，完成各题。\n"
+                                               "根据下列统计资料回答问题。\n"
+                                               "1. 资料中的数值是多少？\nA. 一\nB. 二\n答案：A\n");
+    const auto visualResult = RuleBasedBankGenerator{}.generate({visualMaterial});
+    if (visualResult.materials.size() != 1 || visualResult.questions.size() != 1 ||
+        visualResult.questions.first().toObject().value("materialId").toString().isEmpty() ||
+        visualResult.materials.first().toObject().value("images").toArray().isEmpty() ||
+        visualResult.assets.isEmpty())
+        return 99;
+
+    ExtractedDocument imageOptions;
+    imageOptions.sourcePath = QStringLiteral("image-options.pdf");
+    imageOptions.hasPageBoundaries = true;
+    imageOptions.pageImages.insert(1, QByteArrayLiteral("png-bytes"));
+    imageOptions.plainText = QStringLiteral("1. 请从图中 A、B、C、D 四个图形中选择填入问号处的一项。\n"
+                                              "正确答案：C\n");
+    const auto imageOptionsResult = RuleBasedBankGenerator{}.generate({imageOptions});
+    if (imageOptionsResult.questions.size() != 1 || !imageOptionsResult.needsReviewQuestions.isEmpty())
+        return 100;
+    const QJsonObject imageQuestion = imageOptionsResult.questions.first().toObject();
+    if (imageQuestion.value("options").toArray().size() != 4 ||
+        imageQuestion.value("options").toArray().at(0).toObject().value("text").toString() !=
+            QStringLiteral("图A") ||
+        imageQuestion.value("answer").toObject().value("optionIds").toArray().first().toString() !=
+            QStringLiteral("c") || imageQuestion.value("stemImage").toObject().isEmpty())
+        return 101;
+
     ExtractedDocument inlineDocument;
     inlineDocument.sourcePath = QStringLiteral("inline.md");
     inlineDocument.plainText =
@@ -85,8 +118,12 @@ int main(int argc, char** argv) {
     multiple.plainText =
         QStringLiteral("1. 下列哪些是容器？\nA. vector\nB. map\nC. mutex\nD. thread\n答案：AB\n");
     const auto multipleResult = RuleBasedBankGenerator{}.generate({multiple});
-    if (!multipleResult.questions.isEmpty() ||
-        multipleResult.needsReviewQuestions.size() != 1)
+    if (multipleResult.questions.size() != 1 ||
+        !multipleResult.needsReviewQuestions.isEmpty() ||
+        multipleResult.questions.first().toObject().value("type").toString() !=
+            QStringLiteral("multiple_choice") ||
+        multipleResult.questions.first().toObject().value("answer").toObject()
+            .value("optionIds").toArray().size() != 2)
         return 8;
 
     ExtractedDocument trueFalse;

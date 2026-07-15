@@ -2,6 +2,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <QHash>
 
 namespace quizpane::studio {
 
@@ -20,6 +21,9 @@ struct ExtractedDocument {
     bool hasPageBoundaries = false;
     // 扫描页经过本地 OCR 时置 true，仅用于提示识别来源，不改变后续解析路径。
     bool usedOcr = false;
+    // 文字 PDF 也可能把统计图、图形推理题嵌为位图。保留渲染后的页图，规则
+    // 生成器会把需要视觉上下文的题目作为题库资源带走，而不是只在整页无文字时 OCR。
+    QHash<int, QByteArray> pageImages;
 };
 
 // 单一文档格式的提取器。supports() 只看扩展名，不打开文件，方便

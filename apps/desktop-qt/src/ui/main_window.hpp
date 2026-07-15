@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QKeySequence>
 #include <QVector>
+#include <QSet>
 
 #include "../app_services.hpp"
 
@@ -63,11 +64,12 @@ private:
     void setActionMode(ActionMode mode, const QString& text);
     void handleProviderResponse(const QJsonObject& response);
     void populateCatalog(const QJsonArray& nodes);
-    void startAttempt(const QString& categoryId, const QString& title, int count);
+    void startAttempt(const QString& categoryId, const QString& title, int count,
+                      bool includePreviouslyAnswered = false);
     void requestQuestions();
     void updateMaterialsCache(const QJsonArray& materials);
     void showQuestion(int index);
-    void chooseAnswer(int choice);
+    void chooseAnswer(int choice, bool checked = true);
     QJsonArray answerPayload() const;
     void submitAttempt();
     void confirmSubmitAttempt();
@@ -173,6 +175,8 @@ private:
     // 页面共用，避免每次切题都重新在数组里线性查找。
     QHash<QString, QJsonObject> materialsById_;
     QVector<int> answers_;
+    // 单选仍用 answers_ 保持草稿兼容；多选保存完整集合，判分和 RPC 不会丢项。
+    QVector<QSet<int>> multiAnswers_;
     int currentQuestionIndex_ = 0;
     int currentSolutionIndex_ = 0;
     // ---- 用户偏好与窗口几何 ----

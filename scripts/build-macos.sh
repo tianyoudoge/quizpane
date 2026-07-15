@@ -61,6 +61,29 @@ if [[ ${#QT_DEPLOY_LIB_PATHS[@]} -eq 0 ]]; then
   exit 1
 fi
 
+# install-qt-action 把模块放在 QT_PREFIX/lib；Homebrew 拆包环境才需要到各
+# formula 下查找。优先使用当前构建所用的 Qt，避免混入另一套 Qt 安装。
+resolve_qt_framework() {
+  local framework="$1"
+  local formula="$2"
+  local candidate="$QT_PREFIX/lib/$framework.framework"
+  if [[ -d "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  if command -v brew >/dev/null 2>&1 && brew list --versions "$formula" >/dev/null 2>&1; then
+    candidate="$(brew --prefix "$formula")/lib/$framework.framework"
+    if [[ -d "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+  echo "缺少 Qt Framework：$framework（QT_PREFIX=$QT_PREFIX）" >&2
+  return 1
+}
+QT_SVG_FRAMEWORK="$(resolve_qt_framework QtSvg qtsvg)"
+QT_PDF_FRAMEWORK="$(resolve_qt_framework QtPdf qtwebengine)"
+
 BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
 PACKAGE_SUFFIX=""
@@ -105,11 +128,14 @@ STAGED_APP="$STAGE_ROOT/QuizPane.app"
 ditto "$SOURCE_APP" "$STAGED_APP"
 deploy_app() {
   local app_path="$1"
-  local deploy_args=("$MACDEPLOYQT" "$app_path" -always-overwrite)
+  local deploy_args=("$MACDEPLOYQT" "$app_path" -always-overwrite -no-codesign)
   local lib_path
   for lib_path in "${QT_DEPLOY_LIB_PATHS[@]}"; do
     deploy_args+=("-libpath=$lib_path")
   done
+  # QtPdf/QtSvg 已先复制进 App；把目标 Frameworks 目录也传给 macdeployqt，
+  # 否则 Homebrew 拆包环境会在部署扫描 rpath 时误判这两个直接依赖缺失。
+  deploy_args+=("-libpath=$app_path/Contents/Frameworks")
   # macOS 自带的 Bash 3.2 在 set -u 下展开空数组会报 unbound variable，
   # QT_DEPLOY_LIB_PATHS 在初始化时至少有一个元素，因此展开不会触发该问题。
   if [[ "$DEBUG_BUILD" == "1" ]]; then
@@ -117,7 +143,18 @@ deploy_app() {
   else
     :
   fi
-  "${deploy_args[@]}"
+  local deploy_log
+  deploy_log="$(mktemp "${TMPDIR:-/tmp}/quizpane-macdeployqt.XXXXXX")"
+  set +e
+  "${deploy_args[@]}" 2>&1 | tee "$deploy_log"
+  local deploy_status="${PIPESTATUS[0]}"
+  set -e
+  if [[ "$deploy_status" -ne 0 ]] || grep -q '^ERROR:' "$deploy_log"; then
+    echo "macdeployqt 部署失败：$app_path" >&2
+    rm -f "$deploy_log"
+    return 1
+  fi
+  rm -f "$deploy_log"
 }
 
 # Homebrew 的 macdeployqt 在 Qt 模块拆分安装时不会始终解析 QtSvg/QtPdf 的
@@ -135,9 +172,12 @@ copy_qt_framework() {
   ditto "$framework_path" "$destination"
   chmod -R u+w "$destination"
 }
+# macdeployqt 会把 staging 根目录的 lib 当成一个隐式搜索目录。把 Homebrew
+# Framework 暂时暴露到这里，让它自行复制进 App，避免和预复制的目标文件冲突。
+mkdir -p "$STAGE_ROOT/lib"
+ln -s "$QT_SVG_FRAMEWORK" "$STAGE_ROOT/lib/QtSvg.framework"
+ln -s "$QT_PDF_FRAMEWORK" "$STAGE_ROOT/lib/QtPdf.framework"
 deploy_app "$STAGED_APP"
-copy_qt_framework "$STAGED_APP" "$(brew --prefix qtsvg)/lib/QtSvg.framework"
-copy_qt_framework "$STAGED_APP" "$(brew --prefix qtwebengine)/lib/QtPdf.framework"
 STAGED_STUDIO="$STAGE_ROOT/QuizPaneQuestionMaker.app"
 ditto "$SOURCE_STUDIO" "$STAGED_STUDIO"
 if [[ ! -f "$TESSDATA_DIR/eng.traineddata" || ! -f "$TESSDATA_LANG_DIR/chi_sim.traineddata" ]]; then
@@ -154,8 +194,6 @@ dylibbundler -od -b \
   -d "$STAGED_STUDIO/Contents/Frameworks" \
   -p @executable_path/../Frameworks
 deploy_app "$STAGED_STUDIO"
-copy_qt_framework "$STAGED_STUDIO" "$(brew --prefix qtsvg)/lib/QtSvg.framework"
-copy_qt_framework "$STAGED_STUDIO" "$(brew --prefix qtwebengine)/lib/QtPdf.framework"
 if ! find "$STAGED_STUDIO/Contents/Frameworks" -iname '*tesseract*.dylib' -print -quit | grep -q .; then
   echo "OCR 打包失败：应用包中没有 Tesseract 动态库" >&2
   exit 1
@@ -175,6 +213,7 @@ HELPERS="$APP/Contents/Helpers"
 mkdir -p "$HELPERS"
 STUDIO="$HELPERS/题库制作器.app"
 mv "$STAGED_STUDIO" "$STUDIO"
+rm -rf "$STAGE_ROOT/lib"
 # 制作器是主程序的一部分：先签 Helper，再签外层 App，确保 macOS 校验嵌套
 # Bundle 时能够追溯到同一份发行包。
 codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$STUDIO"
