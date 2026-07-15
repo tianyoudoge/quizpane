@@ -320,12 +320,23 @@ QWidget* StudioWindow::buildProgressPage() {
     phaseLabel_->setObjectName(QStringLiteral("phaseTitle"));
     phaseDetail_ =
         mutedLabel(QStringLiteral("点击下方“开始整理”后，先在本地检查资料。"));
+    activitySpinner_ = new QLabel(QStringLiteral("◐ 运行中"));
+    activitySpinner_->setObjectName(QStringLiteral("activitySpinner"));
+    activitySpinner_->hide();
+    activityTimer_ = new QTimer(this);
+    connect(activityTimer_, &QTimer::timeout, this, [this] {
+        static const QStringList frames{QStringLiteral("◐"), QStringLiteral("◓"),
+                                        QStringLiteral("◑"), QStringLiteral("◒")};
+        activitySpinner_->setText(frames.at(spinnerFrame_++ % frames.size()) +
+                                  QStringLiteral(" 运行中"));
+    });
     progressBar_ = new QProgressBar;
     progressBar_->setRange(0, 100);
     progressBar_->setValue(0);
     progressBar_->setTextVisible(false);
     layout->addWidget(phaseLabel_);
     layout->addWidget(phaseDetail_);
+    layout->addWidget(activitySpinner_);
     layout->addWidget(progressBar_);
     auto* metrics = new QHBoxLayout;
     metrics->addWidget(metricCard(QStringLiteral("已读取资料"), &inputTokens_));
@@ -527,6 +538,8 @@ void StudioWindow::beginPreflight() {
     connect(workflow_, &GenerationWorkflow::questionsReady,
             this, &StudioWindow::populateReview);
     connect(workflow_, &GenerationWorkflow::failed, this, [this](const QString& error) {
+        activityTimer_->stop();
+        activitySpinner_->hide();
         startButton_->setEnabled(true);
         if (error.contains(QStringLiteral("重新开始"))) {
             if (confirmAction(this, QStringLiteral("重新开始生成任务？"),
@@ -545,6 +558,8 @@ void StudioWindow::beginPreflight() {
         QMessageBox::warning(this, QStringLiteral("生成未完成"), error);
     });
     connect(workflow_, &GenerationWorkflow::finished, this, [this] {
+        activityTimer_->stop();
+        activitySpinner_->hide();
         startButton_->setEnabled(true);
         if (generatedQuestions_.isEmpty() && reviewQuestions_.isEmpty()) {
             QMessageBox::warning(this, QStringLiteral("没有生成题目"),
@@ -558,6 +573,10 @@ void StudioWindow::beginPreflight() {
     outputTokens_->setText(QStringLiteral("0"));
     totalTokens_->setText(QStringLiteral("0"));
     startButton_->setEnabled(false);
+    spinnerFrame_ = 0;
+    activitySpinner_->setText(QStringLiteral("◐ 运行中"));
+    activitySpinner_->show();
+    activityTimer_->start(120);
     if (ruleBased) {
         QList<SourceMaterialGroup> groups;
         for (const QString& question : sourcePaths_)

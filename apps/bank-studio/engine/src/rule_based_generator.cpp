@@ -2,10 +2,15 @@
 #include "quizpane/studio/option_label.hpp"
 
 #include <QFileInfo>
+#include <QBuffer>
+#include <QCryptographicHash>
 #include <QHash>
+#include <QImage>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSet>
+
+#include <limits>
 
 namespace quizpane::studio {
 namespace {
@@ -23,6 +28,7 @@ struct QuestionAnchor {
 
 struct MaterialMarker {
     int line = 0;
+    int contentLine = 0;
     int firstQuestionLine = -1;
     int firstNumber = 0;
     int lastNumber = 0;
@@ -57,6 +63,127 @@ bool isMaterialHeader(const QString& text) {
     static const QRegularExpression pattern(QStringLiteral(
         R"(^\s*(?:[（(][一二三四五六七八九十\d]+[）)]\s*)?(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*\s*[:：]?|阅读(?:下列|以下)(?:材料|文字)|根据(?:下列|以下)(?:统计)?资料|原文\s*[:：])\s*.*$)"));
     return pattern.match(text).hasMatch();
+}
+
+bool isMaterialSectionMarker(const QString& text) {
+    static const QRegularExpression pattern(
+        QStringLiteral(R"(^\s*[（(][一二三四五六七八九十\d]+[）)]\s*$)"));
+    return pattern.match(text).hasMatch();
+}
+
+bool isTopLevelSectionHeading(const QString& text) {
+    static const QRegularExpression pattern(
+        QStringLiteral(R"(^\s*[一二三四五六七八九十]+、\s*\S.{1,120}$)"));
+    return pattern.match(text).hasMatch();
+}
+
+QString assetBaseName(const QString& sourcePath) {
+    QString base = QFileInfo(sourcePath).completeBaseName().toLower();
+    base.replace(QRegularExpression(QStringLiteral("[^a-z0-9._-]+")), QStringLiteral("-"));
+    base.remove(QRegularExpression(QStringLiteral("^-+|-+$")));
+    if (base.isEmpty()) base = QStringLiteral("source");
+    const QString fingerprint = QString::fromLatin1(
+        QCryptographicHash::hash(sourcePath.toUtf8(), QCryptographicHash::Sha1).toHex().left(10));
+    return base.left(40) + QChar('-') + fingerprint;
+}
+
+bool isFormulaImageQuestion(const QString& stem) {
+    // 仅对“概率/比例/倍数”类题开启选项小图裁切。图形推理等其它视觉题仍保留
+    // 图 A/B/C/D 占位，避免为了切图把一题误拆成多张不可靠的图片。
+    static const QRegularExpression marker(
+        QStringLiteral("概率|可能性|分数|比例|比值|多少倍|几倍"));
+    return marker.match(stem).hasMatch();
+}
+
+const PdfTextAnchor* questionAnchorFor(const ExtractedDocument& document, int page, int number) {
+    const auto anchors = document.questionAnchors.value(page);
+    for (const PdfTextAnchor& anchor : anchors)
+        if (anchor.text.toInt() == number)
+            return &anchor;
+    return nullptr;
+}
+
+QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, int page,
+                                             int number) {
+    const PdfTextAnchor* question = questionAnchorFor(document, page, number);
+    if (!question)
+        return {};
+    const auto labels = document.optionLabelAnchors.value(page);
+    QHash<QString, QRectF> best;
+    qreal bestY = std::numeric_limits<qreal>::max();
+    for (const PdfTextAnchor& candidate : labels) {
+        if (candidate.bounds.top() <= question->bounds.bottom())
+            continue;
+        // 一行 A/B/C/D 的标签应当在近似相同的 y 位置。先以每个 A 为候选行，
+        // 选择题号之后最靠上的完整一行，避免拿到本页下一题的选项标签。
+        if (candidate.text != QStringLiteral("a"))
+            continue;
+        QHash<QString, QRectF> row{{QStringLiteral("a"), candidate.bounds}};
+        for (const PdfTextAnchor& other : labels) {
+            if (other.bounds.top() <= question->bounds.bottom() ||
+                qAbs(other.bounds.center().y() - candidate.bounds.center().y()) > 0.018)
+                continue;
+            if (QStringLiteral("abcd").contains(other.text) && !row.contains(other.text))
+                row.insert(other.text, other.bounds);
+        }
+        if (row.size() == 4 && candidate.bounds.top() < bestY) {
+            best = row;
+            bestY = candidate.bounds.top();
+        }
+    }
+    return best;
+}
+
+QHash<QString, QJsonObject> extractFormulaOptionImages(const ExtractedDocument& document,
+                                                        int page, int number,
+                                                        QHash<QString, QByteArray>* assets) {
+    const QHash<QString, QRectF> labels = optionRowForQuestion(document, page, number);
+    if (labels.size() != 4 || !document.pageImages.contains(page))
+        return {};
+    QImage source = QImage::fromData(document.pageImages.value(page), "PNG");
+    if (source.isNull())
+        return {};
+    const QStringList ids{QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("c"),
+                          QStringLiteral("d")};
+    QList<qreal> centers;
+    for (const QString& id : ids)
+        centers.append(labels.value(id).center().x());
+    for (int index = 1; index < centers.size(); ++index)
+        if (centers.at(index) <= centers.at(index - 1))
+            return {};
+
+    QHash<QString, QJsonObject> result;
+    const qreal rowY = labels.value(QStringLiteral("a")).center().y();
+    for (int index = 0; index < ids.size(); ++index) {
+        const qreal spacingLeft = index > 0 ? centers.at(index) - centers.at(index - 1)
+                                            : centers.at(1) - centers.at(0);
+        const qreal spacingRight = index + 1 < centers.size()
+            ? centers.at(index + 1) - centers.at(index) : centers.at(index) - centers.at(index - 1);
+        const qreal left = index > 0 ? (centers.at(index - 1) + centers.at(index)) / 2.0
+                                     : centers.at(index) - spacingRight * 0.48;
+        const qreal right = index + 1 < centers.size()
+            ? (centers.at(index) + centers.at(index + 1)) / 2.0
+            : centers.at(index) + spacingLeft * 0.48;
+        // 分数位于标签正上方。高度刻意很窄，只带公式和 A/B/C/D 标签，不会把
+        // 题干或相邻题目卷进选项；整个过程完全以 PDF 文字层坐标定位，不做 OCR。
+        const QRect crop(qBound(0, qFloor(left * source.width()), source.width() - 1),
+                         qBound(0, qFloor((rowY - 0.065) * source.height()), source.height() - 1),
+                         qMax(1, qCeil((right - left) * source.width())),
+                         qMax(1, qCeil(0.09 * source.height())));
+        const QImage optionImage = source.copy(crop.intersected(source.rect()));
+        if (optionImage.isNull())
+            return {};
+        QByteArray png;
+        QBuffer buffer(&png);
+        if (!buffer.open(QIODevice::WriteOnly) || !optionImage.save(&buffer, "PNG"))
+            return {};
+        const QString path = QStringLiteral("assets/%1-p%2-q%3-%4.png")
+            .arg(assetBaseName(document.sourcePath)).arg(page).arg(number).arg(ids.at(index));
+        assets->insert(path, png);
+        result.insert(ids.at(index), QJsonObject{{"path", path}, {"alt", QStringLiteral("选项%1")
+            .arg(ids.at(index).toUpper())}});
+    }
+    return result;
 }
 
 // 把任意选项标记归一化成小写字母 a/b/c…。支持：字母 A-I/a-i（含全角）、圈码
@@ -449,7 +576,8 @@ int nextMaterialLine(const QList<MaterialMarker>& materials, int afterLine, int 
 QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceLine>& lines,
                           const QuestionAnchor& anchor, int blockEnd, const QString& stableId,
                           const QString& materialId, const QHash<int, QString>& answerKey,
-                          const QHash<int, QString>& solutionKey, QString* reviewReason) {
+                          const QHash<int, QString>& solutionKey,
+                          QHash<QString, QByteArray>* generatedAssets, QString* reviewReason) {
     QStringList stemLines;
     QList<QPair<QString, QString>> options;
     QString rawAnswer;
@@ -537,13 +665,20 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
 
     const QString visualText = stemLines.join(QChar('\n'));
     const int sourcePage = anchor.line < lines.size() ? lines.at(anchor.line).page : 0;
+    const bool hasVisualOptionLabels = sourcePage > 0 &&
+        optionRowForQuestion(document, sourcePage, anchor.number).size() == 4;
     const bool hasVisualContext = sourcePage > 0 && document.pageImages.contains(sourcePage) &&
         (visualText.contains(QStringLiteral("图")) || visualText.contains(QStringLiteral("表")) ||
          visualText.contains(QStringLiteral("统计")) || visualText.contains(QStringLiteral("问号")));
-    if (hasVisualContext && options.size() < 2) {
+    const bool hasVisualOptions = hasVisualContext ||
+        (options.size() < 2 && hasVisualOptionLabels && isFormulaImageQuestion(visualText));
+    QHash<QString, QJsonObject> optionImages;
+    if (hasVisualOptions && options.size() < 2) {
         // 选项 A/B/C/D 完全画在原卷图片里时，PDF 文字层往往只留下题干甚至
         // 什么也不留。我们不冒险切四张小图：整页视觉题图仍在题干中，选项用
         // 稳定的“图A”占位，既能作答、判分，也不会把一题拆成五张易错图片。
+        if (isFormulaImageQuestion(visualText))
+            optionImages = extractFormulaOptionImages(document, sourcePage, anchor.number, generatedAssets);
         options.clear();
         for (const QChar label : QStringLiteral("abcd")) {
             const QString id(label);
@@ -557,7 +692,10 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
         if (optionIds.contains(option.first))
             continue;
         optionIds.insert(option.first);
-        jsonOptions.append(QJsonObject{{"id", option.first}, {"text", option.second}});
+        QJsonObject jsonOption{{"id", option.first}, {"text", option.second}};
+        if (optionImages.contains(option.first))
+            jsonOption.insert("image", optionImages.value(option.first));
+        jsonOptions.append(jsonOption);
     }
     QJsonArray answerIds;
     for (const QChar choice : answer) {
@@ -605,7 +743,7 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
     // 原件视觉上下文，而非 OCR 猜测的文字，因此即使 PDF 可选中文本也不会漏图。
     if (hasVisualContext) {
         const QString path = QStringLiteral("assets/%1-p%2.png")
-            .arg(QFileInfo(document.sourcePath).completeBaseName()).arg(sourcePage);
+            .arg(assetBaseName(document.sourcePath)).arg(sourcePage);
         question.insert("stemImage", QJsonObject{{"path", path}, {"alt", "原卷图表"}});
     }
     if (!reasons.isEmpty()) {
@@ -646,6 +784,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
 
         // 材料头可能出现在任意阶段，整体扫描而非只扫到第一个答案区头前。
         QList<MaterialMarker> materialMarkers;
+        QSet<int> materialHeaderLinesClaimedBySectionMarker;
         int materialOrdinal = 0;
         static const QRegularExpression rangePattern(
             QStringLiteral(R"((\d{1,4})\s*(?:[-—~～]|至|到)\s*(\d{1,4})\s*题)"));
@@ -680,8 +819,21 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
         // 材料扫描：材料头与“根据材料回答N-M题”的范围头一起出现，范围头可能与
         // 材料头同段。这里复用既有的范围正则与归属逻辑。
         for (int line = 0; line < lines.size(); ++line) {
-            if (!isMaterialHeader(lines.at(line).text))
+            int contentLine = line;
+            if (isMaterialSectionMarker(lines.at(line).text)) {
+                // “（二）”常单独占行；它本身不该粘到上一道题的 D 选项。只有
+                // 后面的首个非空行确为资料头时，才把它作为下一份材料的起点。
+                int next = line + 1;
+                while (next < lines.size() && lines.at(next).text.trimmed().isEmpty()) ++next;
+                if (next >= lines.size() || !isMaterialHeader(lines.at(next).text))
+                    continue;
+                contentLine = next;
+                materialHeaderLinesClaimedBySectionMarker.insert(contentLine);
+            } else if (!isMaterialHeader(lines.at(line).text)) {
                 continue;
+            } else if (materialHeaderLinesClaimedBySectionMarker.contains(line)) {
+                continue;
+            }
             int firstQuestionLine = -1;
             for (const auto& anchor : anchors) {
                 if (anchor.line > line) {
@@ -703,20 +855,37 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
                 if (firstNumber > lastNumber)
                     qSwap(firstNumber, lastNumber);
             }
+            // 阅读理解的材料常没有“完成 N-M 题”字样。遇到下一大题标题时，将
+            // 归属截到标题前最后一道题，避免 76 之类独立数量题被误挂到前文。
+            if (firstNumber == 0) {
+                int sectionLine = -1;
+                for (int cursor = firstQuestionLine + 1; cursor < lines.size(); ++cursor)
+                    if (isTopLevelSectionHeading(lines.at(cursor).text)) {
+                        sectionLine = cursor;
+                        break;
+                    }
+                if (sectionLine >= 0) {
+                    for (const auto& anchor : anchors)
+                        if (anchor.line >= firstQuestionLine && anchor.line < sectionLine) {
+                            if (firstNumber == 0) firstNumber = anchor.number;
+                            lastNumber = anchor.number;
+                        }
+                }
+            }
             const QString id =
                 QStringLiteral("r%1-m%2").arg(documentOrdinal).arg(++materialOrdinal);
-            materialMarkers.append({line, firstQuestionLine, firstNumber, lastNumber, id});
+            materialMarkers.append({line, contentLine, firstQuestionLine, firstNumber, lastNumber, id});
             QStringList body;
-            for (int cursor = line + 1; cursor < firstQuestionLine; ++cursor)
+            for (int cursor = contentLine + 1; cursor < firstQuestionLine; ++cursor)
                 if (!lines.at(cursor).text.trimmed().isEmpty())
                     body.append(lines.at(cursor).text);
             if (body.isEmpty())
-                body.append(lines.at(line).text);
+                body.append(lines.at(contentLine).text);
             QJsonObject source{{"document", QFileInfo(document.sourcePath).fileName()}};
             if (lines.at(line).page > 0)
                 source.insert("page", lines.at(line).page);
             QJsonObject material{{"id", id}, {"catalogId", "generated"},
-                                 {"title", lines.at(line).text.left(200)},
+                                 {"title", lines.at(contentLine).text.left(200)},
                                  {"body", body.join(QChar('\n')).trimmed()}, {"source", source}};
             const int firstPage = lines.at(line).page;
             const int lastPage = lines.at(firstQuestionLine).page;
@@ -730,7 +899,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
                 for (int page = firstPage; page <= lastPage; ++page) {
                     if (!document.pageImages.contains(page)) continue;
                     const QString path = QStringLiteral("assets/%1-p%2.png")
-                        .arg(QFileInfo(document.sourcePath).completeBaseName()).arg(page);
+                        .arg(assetBaseName(document.sourcePath)).arg(page);
                     images.append(QJsonObject{{"path", path}, {"alt", "原卷资料图表"}});
                     result.assets.insert(path, document.pageImages.value(page));
                 }
@@ -782,7 +951,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
                 materialIdForQuestion(materialMarkers, anchor.line, anchor.number);
             QString reviewReason;
             QJsonObject question = parseQuestion(document, lines, anchor, blockEnd, id, materialId,
-                                                 answers, solutions, &reviewReason);
+                                                 answers, solutions, &result.assets, &reviewReason);
             const QJsonObject stemImage = question.value("stemImage").toObject();
             const QString assetPath = stemImage.value("path").toString();
             if (!assetPath.isEmpty()) {

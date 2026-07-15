@@ -9,8 +9,11 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
+#include <QMetaObject>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QUuid>
+#include <QtConcurrent/QtConcurrentRun>
 
 namespace quizpane::studio {
 namespace {
@@ -203,69 +206,70 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
     paused_ = false;
     active_ = true;
 
-    QList<ExtractedDocument> documents;
-    ExtractorRegistry registry;
-    int completed = 0;
-    for (const SourceMaterialGroup& source : sources) {
-        const QString path = source.questionPath;
-        publish(WorkflowStage::Extracting,
-                QStringLiteral("正在本地提取：%1").arg(QFileInfo(path).fileName()));
-        ExtractedDocument document = registry.extract(QFileInfo(path).absoluteFilePath());
-        if (!document.error.isEmpty()) {
-            failWorkflow(QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error));
-            return;
+    publish(WorkflowStage::Extracting,
+            QStringLiteral("正在本地读取 %1 份资料…").arg(sources.size()));
+    // PDF 渲染、OCR 和规则扫描都会触发大量 CPU/磁盘工作。放到工作线程后，主窗口
+    // 的“运行中”动画能持续刷新，完成结果再排回 GUI 线程，避免跨线程操作控件。
+    const QPointer<GenerationWorkflow> owner(this);
+    [[maybe_unused]] const auto backgroundTask = QtConcurrent::run([owner, sources] {
+        QList<ExtractedDocument> documents;
+        ExtractorRegistry registry;
+        QString failure;
+        for (const SourceMaterialGroup& source : sources) {
+            const QString path = source.questionPath;
+            ExtractedDocument document = registry.extract(QFileInfo(path).absoluteFilePath());
+            if (!document.error.isEmpty()) {
+                failure = QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error);
+                break;
+            }
+            if (!source.answerPath.isEmpty()) {
+                const ExtractedDocument answers = registry.extract(
+                    QFileInfo(source.answerPath).absoluteFilePath());
+                if (!answers.error.isEmpty()) {
+                    failure = QStringLiteral("%1：%2")
+                        .arg(QFileInfo(source.answerPath).fileName(), answers.error);
+                    break;
+                }
+                document.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
+            }
+            documents.append(document);
         }
-        if (!document.warnings.isEmpty())
-            publish(WorkflowStage::Extracting,
-                    QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(),
-                                                   document.warnings.join(QStringLiteral("；"))));
-        if (!source.answerPath.isEmpty()) {
-            const ExtractedDocument answers = registry.extract(
-                QFileInfo(source.answerPath).absoluteFilePath());
-            if (!answers.error.isEmpty()) {
-                failWorkflow(QStringLiteral("%1：%2")
-                    .arg(QFileInfo(source.answerPath).fileName(), answers.error));
+        const RuleBasedGenerationResult result = failure.isEmpty()
+            ? RuleBasedBankGenerator{}.generate(documents) : RuleBasedGenerationResult{};
+        if (!owner)
+            return;
+        QMetaObject::invokeMethod(owner.data(), [owner, result, failure, sourceCount = sources.size()] {
+            if (!owner || !owner->active_)
+                return; // 用户已经取消或关闭了任务。
+            GenerationWorkflow* self = owner.data();
+            self->checkpoint_.sourceBlockCount = sourceCount;
+            self->checkpoint_.completedSourceBlocks.clear();
+            for (int index = 0; index < sourceCount; ++index)
+                self->checkpoint_.completedSourceBlocks.append(index);
+            if (!failure.isEmpty()) {
+                self->active_ = false;
+                self->publish(WorkflowStage::Failed, failure);
+                emit self->failed(failure);
                 return;
             }
-            // 规则生成器本来就支持“答案汇总”区。把独立答案文件接入该区，既不会
-            // 伪造题目，也能按题号将答案和解析归回题目文件。
-            document.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
-        }
-        diagnostic::event(QStringLiteral("extractor"), QStringLiteral("success"),
-            {{QStringLiteral("file"), QFileInfo(path).fileName()},
-             {QStringLiteral("path"), QFileInfo(path).absoluteFilePath()},
-             {QStringLiteral("characters"), document.plainText.size()},
-             {QStringLiteral("ocr"), document.usedOcr}});
-#ifdef QUIZPANE_VERBOSE_DIAGNOSTICS
-        diagnostic::payload(QStringLiteral("extractor"), QStringLiteral("content"),
-                            QFileInfo(path).fileName(), document.plainText, 64 * 1024);
-#endif
-        documents.append(document);
-        ++completed;
-        checkpoint_.sourceBlockCount = sources.size();
-        checkpoint_.completedSourceBlocks.append(completed - 1);
-    }
-
-    publish(WorkflowStage::Chunking, QStringLiteral("正在按题号、选项、答案和材料规则解析"));
-    const RuleBasedGenerationResult result = RuleBasedBankGenerator{}.generate(documents);
-    if (result.questions.isEmpty() && result.needsReviewQuestions.isEmpty()) {
-        active_ = false;
-        const QString detail = result.warnings.isEmpty()
-                                   ? QStringLiteral("规则引擎没有识别到题目")
-                                   : result.warnings.join(QStringLiteral("；"));
-        publish(WorkflowStage::Failed, detail);
-        emit failed(detail);
-        return;
-    }
-
-    active_ = false;
-    const QString detail = QStringLiteral("规则解析完成：%1 道可直接使用，%2 道待复核")
-                               .arg(result.questions.size())
-                               .arg(result.needsReviewQuestions.size());
-    publish(WorkflowStage::Done, detail);
-    emit questionsReady({result.materials, result.questions,
-                         result.needsReviewQuestions, result.warnings});
-    emit finished();
+            self->publish(WorkflowStage::Chunking, QStringLiteral("正在按题号、选项、答案和材料规则解析"));
+            if (result.questions.isEmpty() && result.needsReviewQuestions.isEmpty()) {
+                self->active_ = false;
+                const QString detail = result.warnings.isEmpty()
+                    ? QStringLiteral("规则引擎没有识别到题目") : result.warnings.join(QStringLiteral("；"));
+                self->publish(WorkflowStage::Failed, detail);
+                emit self->failed(detail);
+                return;
+            }
+            self->active_ = false;
+            const QString detail = QStringLiteral("规则解析完成：%1 道可直接使用，%2 道待复核")
+                .arg(result.questions.size()).arg(result.needsReviewQuestions.size());
+            self->publish(WorkflowStage::Done, detail);
+            emit self->questionsReady({result.materials, result.questions,
+                                       result.needsReviewQuestions, result.warnings});
+            emit self->finished();
+        }, Qt::QueuedConnection);
+    });
 }
 
 void GenerationWorkflow::pause() {

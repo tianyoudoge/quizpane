@@ -20,7 +20,7 @@ target_include_directories(question_maker_engine PUBLIC
     src
 )
 target_link_libraries(question_maker_engine PUBLIC
-    quizpane_core miniz Qt6::Core Qt6::Core5Compat Qt6::Gui Qt6::Network Qt6::Pdf
+    quizpane_core miniz Qt6::Core Qt6::Core5Compat Qt6::Gui Qt6::Network Qt6::Pdf Qt6::Concurrent
 )
 quizpane_optimize_target(question_maker_engine)
 if(QUIZPANE_ENABLE_TESSERACT_OCR)

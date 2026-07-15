@@ -155,8 +155,13 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
             const auto option = sourceOptions.at(index).toObject();
             for (const auto& answerId : answerIds)
                 if (option.value("id").toString() == answerId.toString()) correct = static_cast<int>(index);
-            options.append(QJsonObject{{"index", index}, {"label", QString(QChar(char16_t(u'A' + index)))},
-                {"contentHtml", paragraph(option.value("text").toString())}});
+            QJsonObject hostedOption{{"index", index},
+                                     {"label", QString(QChar(char16_t(u'A' + index)))},
+                                     {"contentHtml", paragraph(option.value("text").toString())}};
+            const QString imageUrl = assetUrl(option.value("image").toObject());
+            if (!imageUrl.isEmpty())
+                hostedOption.insert("imageUrl", imageUrl);
+            options.append(hostedOption);
         }
         QString content = paragraph(source.value("stem").toString());
         const QString stemImageUrl = assetUrl(source.value("stemImage").toObject());

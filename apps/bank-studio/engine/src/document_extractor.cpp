@@ -173,6 +173,43 @@ QImage renderPdfPage(QPdfDocument* document, int page) {
     return document->render(page, pixels);
 }
 
+QRectF normalizedSelectionBounds(QPdfDocument* document, int page, int start, int length) {
+    if (length <= 0)
+        return {};
+    const QSizeF pageSize = document->pagePointSize(page);
+    if (pageSize.width() <= 0.0 || pageSize.height() <= 0.0)
+        return {};
+    const QRectF bounds = document->getSelectionAtIndex(page, start, length).boundingRectangle();
+    if (bounds.isEmpty())
+        return {};
+    return {bounds.x() / pageSize.width(), bounds.y() / pageSize.height(),
+            bounds.width() / pageSize.width(), bounds.height() / pageSize.height()};
+}
+
+void collectPdfTextAnchors(QPdfDocument* document, int page, const QString& text,
+                           ExtractedDocument* result) {
+    static const QRegularExpression questionMarker(
+        QStringLiteral(R"((?:^|\n)\s*(\d{1,4})\s*[、.．])"));
+    static const QRegularExpression optionMarker(
+        QStringLiteral(R"((?<![A-Za-z0-9])([A-D])\s*[、.．])"));
+    auto questions = questionMarker.globalMatch(text);
+    while (questions.hasNext()) {
+        const auto match = questions.next();
+        const QRectF bounds = normalizedSelectionBounds(
+            document, page, match.capturedStart(1), match.capturedLength(1));
+        if (!bounds.isEmpty())
+            result->questionAnchors[page + 1].append({match.captured(1), bounds});
+    }
+    auto options = optionMarker.globalMatch(text);
+    while (options.hasNext()) {
+        const auto match = options.next();
+        const QRectF bounds = normalizedSelectionBounds(
+            document, page, match.capturedStart(1), match.capturedLength(1));
+        if (!bounds.isEmpty())
+            result->optionLabelAnchors[page + 1].append({match.captured(1).toLower(), bounds});
+    }
+}
+
 #ifdef QUIZPANE_HAS_TESSERACT_OCR
 QString bundledTessdataPath() {
     const QDir appDir(QCoreApplication::applicationDirPath());
@@ -292,6 +329,8 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
     QStringList pages;
     for (int page = 0; page < document.pageCount(); ++page) {
         QString text = document.getAllText(page).text().trimmed();
+        if (!text.isEmpty())
+            collectPdfTextAnchors(&document, page, text, &result);
         if (text.isEmpty()) {
             const QImage image = renderPdfPage(&document, page);
             if (hasVisibleInk(image)) {

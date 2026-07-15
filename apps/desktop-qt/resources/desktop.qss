@@ -27,6 +27,7 @@ QRadioButton#answerOption::indicator { width: 0; height: 0; }
 QRadioButton#answerOption:checked { background: rgba(180,188,198,38); color: #ffffff; }
 QCheckBox#answerOption { color: #c8cdd3; background: rgba(255,255,255,10); border-radius: 7px; padding: 8px; }
 QCheckBox#answerOption:checked { background: rgba(180,188,198,38); color: #ffffff; }
+QLabel#answerOptionImage { background: rgba(255,255,255,10); border-radius: 7px; padding: 4px 8px 8px 8px; }
 QCheckBox#includeAnswered { color: #aeb4bb; }
 QLabel[correct="true"] { color: #9fb6a7; font-weight: 600; }
 QLabel[correct="false"] { color: #c49f9d; font-weight: 600; }

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(QuizPane VERSION 0.2.7 LANGUAGES C CXX)
+project(QuizPane VERSION 0.2.8 LANGUAGES C CXX)
 
 if(WIN32)
     # 禁止 Windows SDK 注入 min/max 宏，避免破坏 std::min/std::max 和
@@ -90,7 +90,7 @@ if(QUIZPANE_PORTABLE_CPU_BASELINE)
     endif()
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network Concurrent)
 if(QUIZPANE_BUILD_BANK_STUDIO)
     # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
     # （QStringConverter 内置编码不含 GB18030），其余模块不需要它。

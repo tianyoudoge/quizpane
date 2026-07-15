@@ -71,6 +71,7 @@ private:
     QLabel* modelSummary_ = nullptr;
     QLabel* phaseLabel_ = nullptr;
     QLabel* phaseDetail_ = nullptr;
+    QLabel* activitySpinner_ = nullptr;
     QLabel* inputTokens_ = nullptr;
     QLabel* outputTokens_ = nullptr;
     QLabel* totalTokens_ = nullptr;
@@ -88,6 +89,8 @@ private:
     QPushButton* startButton_ = nullptr;
     QNetworkAccessManager* networkManager_ = nullptr;
     GenerationWorkflow* workflow_ = nullptr;
+    QTimer* activityTimer_ = nullptr;
+    int spinnerFrame_ = 0;
     QStringList sourcePaths_;
     QHash<QString, QString> answerPathsByQuestion_;
     QHash<QString, SourceRowWidget*> sourceRows_;

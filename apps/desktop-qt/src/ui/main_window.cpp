@@ -825,6 +825,21 @@ void MainWindow::showQuestion(int index) {
                     else if (checked) chooseAnswer(static_cast<int>(optionIndex));
                 });
         optionsLayout_->addWidget(button);
+        const QString imageUrl = option.value("imageUrl").toString();
+        if (!imageUrl.isEmpty()) {
+            auto* image = new QLabel;
+            image->setObjectName(QStringLiteral("answerOptionImage"));
+            image->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            image->setIndent(34);
+            QPixmap pixmap(QUrl(imageUrl).toLocalFile());
+            if (!pixmap.isNull()) {
+                image->setPixmap(pixmap.scaledToWidth(220, Qt::SmoothTransformation));
+                image->setToolTip(QStringLiteral("选项 %1 的原卷图片").arg(option.value("label").toString()));
+                optionsLayout_->addWidget(image);
+            } else {
+                image->deleteLater();
+            }
+        }
     }
     previousQuestionButton_->setEnabled(currentQuestionIndex_ > 0);
     nextQuestionButton_->setEnabled(currentQuestionIndex_ + 1 < questions_.size());

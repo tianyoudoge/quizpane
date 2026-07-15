@@ -4,9 +4,11 @@
 #include "quizpane/studio/rule_based_generator.hpp"
 #include "quizpane/zip_archive.hpp"
 
+#include <QBuffer>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -90,6 +92,33 @@ int main(int argc, char** argv) {
         imageQuestion.value("answer").toObject().value("optionIds").toArray().first().toString() !=
             QStringLiteral("c") || imageQuestion.value("stemImage").toObject().isEmpty())
         return 101;
+
+    // 公式在 PDF 里常没有文字层，只有 A/B/C/D 标签。此时要将相应的小图挂在
+    // 选项上（而非把整页塞进题干），定位只使用文字标签坐标，不依赖 OCR。
+    ExtractedDocument formulaImages;
+    formulaImages.sourcePath = QStringLiteral("formula-options.pdf");
+    formulaImages.hasPageBoundaries = true;
+    formulaImages.plainText = QStringLiteral(
+        "76. 随机抽取后，甲事件的可能性是乙事件的多少倍？\nA、 B、 C、 D、\n正确答案：C\n");
+    formulaImages.questionAnchors.insert(1, {{QStringLiteral("76"), QRectF(0.1, 0.2, 0.02, 0.02)}});
+    formulaImages.optionLabelAnchors.insert(1, {
+        {QStringLiteral("a"), QRectF(0.18, 0.55, 0.02, 0.02)},
+        {QStringLiteral("b"), QRectF(0.38, 0.55, 0.02, 0.02)},
+        {QStringLiteral("c"), QRectF(0.58, 0.55, 0.02, 0.02)},
+        {QStringLiteral("d"), QRectF(0.78, 0.55, 0.02, 0.02)}});
+    QImage formulaPage(800, 1200, QImage::Format_ARGB32_Premultiplied);
+    formulaPage.fill(Qt::white);
+    QByteArray formulaPng;
+    QBuffer formulaBuffer(&formulaPng);
+    if (!formulaBuffer.open(QIODevice::WriteOnly) || !formulaPage.save(&formulaBuffer, "PNG")) return 102;
+    formulaImages.pageImages.insert(1, formulaPng);
+    const auto formulaResult = RuleBasedBankGenerator{}.generate({formulaImages});
+    if (formulaResult.questions.size() != 1 || !formulaResult.needsReviewQuestions.isEmpty() ||
+        formulaResult.assets.size() != 4 ||
+        formulaResult.questions.first().toObject().value("options").toArray().at(0).toObject()
+            .value("image").toObject().value("path").toString().isEmpty() ||
+        !quizpane::validateBank(bankFor(formulaResult), &validationError))
+        return 102;
 
     ExtractedDocument inlineDocument;
     inlineDocument.sourcePath = QStringLiteral("inline.md");

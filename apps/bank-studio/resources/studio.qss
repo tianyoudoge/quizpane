@@ -9,6 +9,7 @@ QLabel#sideStep[active="true"] { color: #ffffff; background: #252a31; }
 QLabel#sectionTitle, QLabel#phaseTitle, QLabel#sourceRowTitle { color: #e0e3e7; font-size: 15px; font-weight: 650; }
 QLabel#metricValue, QLabel#pairedAnswerBadge { color: #b7bec7; font-weight: 650; }
 QLabel#notice { background: #20252b; color: #cfd4da; padding: 12px; border-radius: 8px; border: 1px solid #343a42; }
+QLabel#activitySpinner { color: #77bdf2; font-weight: 650; padding: 3px 0; }
 QFrame#dropZone { background: #15191e; border: 1px dashed #59616b; border-radius: 10px; }
 QFrame#panel, QFrame#metricCard, QFrame#sourceRow { background: #15191e; border: 1px solid #252a31; border-radius: 9px; }
 QPushButton { background: #20252b; color: #cfd4da; border: 1px solid #343a42; border-radius: 7px; padding: 8px 13px; }

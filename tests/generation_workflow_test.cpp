@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QNetworkAccessManager>
+#include <QTimer>
 #include <QTemporaryDir>
 
 int main(int argc, char** argv) {
@@ -37,6 +38,13 @@ int main(int argc, char** argv) {
         {questionPath, answerPath}};
     workflow.startRuleBased(sources);
 
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &app, &QCoreApplication::quit);
+    QObject::connect(&workflow, &quizpane::studio::GenerationWorkflow::finished,
+                     &app, &QCoreApplication::quit);
+    timeout.start(5000);
+    app.exec();
     if (!finished) return 4;
     if (ready.questions.size() != 1 || !ready.needsReviewQuestions.isEmpty()) return 4;
     const QJsonObject question = ready.questions.first().toObject();

@@ -3,8 +3,16 @@
 #include <QString>
 #include <QStringList>
 #include <QHash>
+#include <QRectF>
 
 namespace quizpane::studio {
+
+// PDF 文字层中的题号/选项标签坐标。坐标已经归一化到 0..1，因而规则生成器可
+// 以同一套逻辑裁切任意渲染分辨率的页面，而不必 OCR 图片里的数学符号。
+struct PdfTextAnchor {
+    QString text;
+    QRectF bounds;
+};
 
 // 单个文件的提取结果。error 非空表示提取失败或该格式尚不支持，
 // plainText 此时应为空，调用方据此把该文件标记为跳过，而不是把
@@ -24,6 +32,10 @@ struct ExtractedDocument {
     // 文字 PDF 也可能把统计图、图形推理题嵌为位图。保留渲染后的页图，规则
     // 生成器会把需要视觉上下文的题目作为题库资源带走，而不是只在整页无文字时 OCR。
     QHash<int, QByteArray> pageImages;
+    // 对文字型 PDF，保留题号与 A/B/C/D 标签的版面位置。它只用于“文字层没有
+    // 选项内容、但选项本身是图或公式”的安全小图裁切。
+    QHash<int, QList<PdfTextAnchor>> questionAnchors;
+    QHash<int, QList<PdfTextAnchor>> optionLabelAnchors;
 };
 
 // 单一文档格式的提取器。supports() 只看扩展名，不打开文件，方便

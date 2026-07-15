@@ -165,7 +165,7 @@ if command -v dpkg-deb >/dev/null 2>&1; then
   ln -s ../opt/quizpane/bin/题库制作器 "$DEB_ROOT/usr/bin/题库制作器"
   cat > "$DEB_ROOT/DEBIAN/control" <<EOF
 Package: quizpane
-Version: ${PROJECT_VERSION:-0.2.7}
+Version: ${PROJECT_VERSION:-0.2.8}
 Section: education
 Priority: optional
 Architecture: $ARCH
