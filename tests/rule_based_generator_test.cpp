@@ -76,6 +76,25 @@ int main(int argc, char** argv) {
         visualResult.assets.isEmpty())
         return 99;
 
+    // “（一）”独占一行时，资料标题在下一行；资料文字可在上一页而统计图紧挨
+    // 116 在下一页。两页图都必须留给 material，不能被 116 当作自己的题图。
+    ExtractedDocument crossPageMaterial;
+    crossPageMaterial.sourcePath = QStringLiteral("cross-page.pdf");
+    crossPageMaterial.hasPageBoundaries = true;
+    crossPageMaterial.pageImages.insert(1, QByteArrayLiteral("page-one"));
+    crossPageMaterial.pageImages.insert(2, QByteArrayLiteral("page-two"));
+    crossPageMaterial.plainText = QStringLiteral(
+        "（一）\n根据下列统计资料回答问题。\n2009 年固定资产投资数据。\f"
+        "116. 2004 年全年投资额为：\nA. 100\nB. 200\n答案：A\n");
+    const auto crossPageResult = RuleBasedBankGenerator{}.generate({crossPageMaterial});
+    if (crossPageResult.materials.size() != 1 || crossPageResult.questions.size() != 1 ||
+        crossPageResult.materials.first().toObject().value("images").toArray().size() != 2 ||
+        crossPageResult.assets.size() != 2 ||
+        crossPageResult.questions.first().toObject().value("materialId").toString() !=
+            crossPageResult.materials.first().toObject().value("id").toString() ||
+        crossPageResult.questions.first().toObject().contains("stemImage"))
+        return 106;
+
     ExtractedDocument imageOptions;
     imageOptions.sourcePath = QStringLiteral("image-options.pdf");
     imageOptions.hasPageBoundaries = true;

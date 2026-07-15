@@ -884,9 +884,9 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
             const int firstPage = lines.at(line).page;
             const int lastPage = lines.at(firstQuestionLine).page;
             if (firstPage > 0 && lastPage >= firstPage &&
-                (lines.at(line).text.contains(QStringLiteral("资料")) ||
-                 lines.at(line).text.contains(QStringLiteral("图")) ||
-                 lines.at(line).text.contains(QStringLiteral("表")))) {
+                (lines.at(contentLine).text.contains(QStringLiteral("资料")) ||
+                 lines.at(contentLine).text.contains(QStringLiteral("图")) ||
+                 lines.at(contentLine).text.contains(QStringLiteral("表")))) {
                 QJsonArray images;
                 // 资料文字与表格经常跨页；把材料头到第一道子题之间的视觉页都
                 // 带上，避免“标题在上一页、统计图在下一页”再次丢图。
