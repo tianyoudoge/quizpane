@@ -13,6 +13,7 @@
 class QLabel;
 class QLayout;
 class QAction;
+class QButtonGroup;
 class QMenu;
 class QFrame;
 class QShowEvent;
@@ -141,6 +142,7 @@ private:
     QWidget* questionContent_ = nullptr;
     QVBoxLayout* questionContentLayout_ = nullptr;
     QVBoxLayout* optionsLayout_ = nullptr;
+    QButtonGroup* optionButtonGroup_ = nullptr;
     ui::MaterialCard* practiceMaterialCard_ = nullptr;
     ui::MaterialCard* solutionMaterialCard_ = nullptr;
     QVBoxLayout* solutionContentLayout_ = nullptr;

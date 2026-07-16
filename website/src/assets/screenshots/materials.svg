@@ -1,12 +1,34 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600">
-  <rect width="960" height="600" fill="#1b1e24"/>
-  <rect x="24" y="24" width="912" height="552" rx="12" fill="#202329" stroke="#2c2f37" stroke-width="2"/>
-  <rect x="60" y="70" width="420" height="16" rx="8" fill="#3a3f4a"/>
-  <rect x="60" y="120" width="560" height="200" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <polyline points="90,290 150,240 210,260 270,200 330,220 390,170 450,190 510,150 570,180 630,140"
-            fill="none" stroke="#6f9bd8" stroke-width="3"/>
-  <rect x="660" y="120" width="240" height="200" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <rect x="60" y="350" width="840" height="110" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <text x="480" y="500" text-anchor="middle" fill="#6f9bd8" font-family="sans-serif" font-size="22" font-weight="700">资料题与图表保留 · 占位图</text>
-  <text x="480" y="530" text-anchor="middle" fill="#9aa0ac" font-family="sans-serif" font-size="15">发布前请替换为真实产品截图</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 760" width="640" height="760">
+  <rect width="640" height="760" rx="28" fill="#25272d"/>
+  <rect x="1" y="1" width="638" height="758" rx="27" fill="none" stroke="#3b3e47" stroke-width="2"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif">
+    <text x="28" y="48" fill="#f3f4f6" font-size="22" font-weight="700">2011 北京卷 · 官网演示题库</text>
+    <text x="28" y="92" fill="#c7cad2" font-size="18">第 36 / 135 题 · 已作答 0 题</text>
+    <rect x="22" y="116" width="596" height="360" rx="16" fill="#30333a"/>
+    <text x="42" y="153" fill="#f4f5f7" font-size="19" font-weight="700">（一）阅读以下文字，完成各题。</text>
+    <g fill="#eceef2" font-size="18">
+      <text x="42" y="193">进一步做好下岗失业人员</text>
+      <rect x="305" y="169" width="52" height="31" rx="8" fill="#7164e8" fill-opacity=".25" stroke="#8f83ff"/>
+      <text x="312" y="192">【甲】</text>
+      <text x="366" y="193">再就业，解决资源型</text>
+      <text x="42" y="226">企业历史遗留问题，</text>
+      <rect x="232" y="202" width="52" height="31" rx="8" fill="#7164e8" fill-opacity=".25" stroke="#8f83ff"/>
+      <text x="239" y="225">【乙】</text>
+      <text x="293" y="226">资源枯竭企业平稳退出</text>
+      <text x="42" y="259">和社会安定。对资源已经枯竭的城市，要</text>
+      <rect x="450" y="235" width="52" height="31" rx="8" fill="#7164e8" fill-opacity=".25" stroke="#8f83ff"/>
+      <text x="457" y="258">【丙】</text>
+      <text x="42" y="292">有针对性地扶持接续替代产业发展。</text>
+      <text x="42" y="337">材料按卡片宽度自动换行；【甲】【乙】【丙】、</text>
+      <text x="42" y="370">〔填空〕及原卷下划线均完整保留，材料图</text>
+      <text x="42" y="403">可点击打开浮层查看原始尺寸。</text>
+    </g>
+    <rect x="22" y="500" width="596" height="88" rx="16" fill="#30333a"/>
+    <text x="42" y="536" fill="#f2f3f5" font-size="19">根据公文处理法规的要求，A 处的规范写法</text>
+    <text x="42" y="568" fill="#f2f3f5" font-size="19">应为：</text>
+    <rect x="22" y="608" width="596" height="54" rx="14" fill="#30333a"/>
+    <circle cx="51" cy="635" r="16" fill="#777b86" fill-opacity=".45"/><text x="44" y="642" fill="#f2f3f5" font-size="19">A</text>
+    <text x="80" y="642" fill="#f2f3f5" font-size="17">国务院《关于促进资源型城市……》</text>
+    <text x="320" y="722" fill="#8e94a1" font-size="15" text-anchor="middle">QuizPane 演示题库界面</text>
+  </g>
 </svg>

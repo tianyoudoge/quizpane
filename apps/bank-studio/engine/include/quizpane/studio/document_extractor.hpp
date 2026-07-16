@@ -36,6 +36,9 @@ struct ExtractedDocument {
     // 选项内容、但选项本身是图或公式”的安全小图裁切。
     QHash<int, QList<PdfTextAnchor>> questionAnchors;
     QHash<int, QList<PdfTextAnchor>> optionLabelAnchors;
+    // 每页文字行的坐标。规则生成器用它把阅读材料裁成原卷片段，保留 PDF
+    // 文字层表达不了的下划线、填空横线和嵌入式图片横线。
+    QHash<int, QList<PdfTextAnchor>> lineAnchors;
 };
 
 // 单一文档格式的提取器。supports() 只看扩展名，不打开文件，方便

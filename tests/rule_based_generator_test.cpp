@@ -60,6 +60,57 @@ int main(int argc, char** argv) {
     if (!quizpane::validateBank(bankFor(result), &validationError))
         return 4;
 
+    // PDF 文字层会漏掉独立绘制的下划线；资料解析必须保留【甲】等原题编号，
+    // 并将纯横线补成可渲染 token，随材料携带裁切后的原卷版式附件。
+    ExtractedDocument fillLayout;
+    fillLayout.sourcePath = QStringLiteral("fill-layout.pdf");
+    fillLayout.hasPageBoundaries = true;
+    fillLayout.plainText = QStringLiteral(
+        "材料一：阅读下面文字\n这是【甲】需要填写的 。\n根据材料回答1-1题。\n"
+        "1. 请选择正确答案。\nA. 甲\nB. 乙\n答案：A\n");
+    fillLayout.lineAnchors.insert(1, {
+        {QStringLiteral("材料一：阅读下面文字"), QRectF(0.1, 0.45, 0.4, 0.03)},
+        {QStringLiteral("1. 请选择正确答案。"), QRectF(0.1, 0.75, 0.4, 0.03)}});
+    fillLayout.questionAnchors.insert(1, {
+        {QStringLiteral("1"), QRectF(0.1, 0.75, 0.02, 0.02)}});
+    QImage fillPage(800, 1200, QImage::Format_ARGB32_Premultiplied);
+    fillPage.fill(Qt::white);
+    QByteArray fillPng;
+    QBuffer fillBuffer(&fillPng);
+    if (!fillBuffer.open(QIODevice::WriteOnly) || !fillPage.save(&fillBuffer, "PNG")) return 90;
+    fillLayout.pageImages.insert(1, fillPng);
+    const auto fillResult = RuleBasedBankGenerator{}.generate({fillLayout});
+    if (fillResult.materials.size() != 1 || fillResult.assets.isEmpty() ||
+        fillResult.materials.first().toObject().value("images").toArray().isEmpty() ||
+        !fillResult.materials.first().toObject().value("body").toString().contains(
+            QStringLiteral("【甲】")) ||
+        !fillResult.materials.first().toObject().value("body").toString().contains(
+            QStringLiteral("〔填空〕")))
+        return 91;
+
+    // 题号锚点可能因“44、第…”这类版式而取不到。裁切必须改用完整题干的
+    // 行锚点；否则宁可没有截图，也不能把第 44 题的题干裁进材料图。
+    ExtractedDocument safeCrop;
+    safeCrop.sourcePath = QStringLiteral("safe-crop.pdf");
+    safeCrop.hasPageBoundaries = true;
+    safeCrop.plainText = QStringLiteral("阅读以下文字，完成各题。\n材料正文。\n"
+                                         "44、第 1 段意在说明：\nA、甲\nB、乙\n答案：A\n");
+    safeCrop.lineAnchors.insert(1, {
+        {QStringLiteral("阅读以下文字，完成各题。"), QRectF(0.1, 0.20, 0.5, 0.03)},
+        {QStringLiteral("44、第 1 段意在说明："), QRectF(0.1, 0.65, 0.5, 0.03)}});
+    safeCrop.pageImages.insert(1, fillPng);
+    const auto safeCropResult = RuleBasedBankGenerator{}.generate({safeCrop});
+    if (safeCropResult.materials.size() != 1)
+        return 92;
+    const QString safeCropPath = safeCropResult.materials.first().toObject().value("images")
+        .toArray().first().toObject().value("path").toString();
+    const QImage safeCropImage = QImage::fromData(safeCropResult.assets.value(safeCropPath), "PNG");
+    // 源页 1200px，高度上界为题干 y=0.65 减边距，截图不能延伸到题干行。
+    if (safeCropImage.isNull())
+        return 93;
+    if (safeCropImage.height() >= 1000)
+        return 94;
+
     // 真实试卷常以“（一）阅读以下文字”而不是“材料一”标记资料题；文字
     // PDF 的图表还必须作为题库 assets 保留，不能因为该页有文字层就被丢弃。
     ExtractedDocument visualMaterial;
@@ -95,6 +146,36 @@ int main(int argc, char** argv) {
         crossPageResult.questions.first().toObject().contains("stemImage"))
         return 106;
 
+    // “根据下列材料”与“根据下列统计资料”都是独立资料头；相邻资料组不能
+    // 合并，否则后组图表会丢失，前组最后一道题的 D 选项也会吞入新资料标题。
+    ExtractedDocument adjacentMaterials;
+    adjacentMaterials.sourcePath = QStringLiteral("adjacent-materials.txt");
+    adjacentMaterials.plainText = QStringLiteral(
+        "（一）\n根据下列统计资料回答问题。\n第一份资料。\n"
+        "1. 第一题\nA. 甲\nB. 乙\n答案：A\n"
+        "（二）\n根据下列材料完成各题。\n第二份资料。\n"
+        "2. 第二题\nA. 丙\nB. 丁\n答案：B\n");
+    const auto adjacentResult = RuleBasedBankGenerator{}.generate({adjacentMaterials});
+    if (adjacentResult.materials.size() != 2 || adjacentResult.questions.size() != 2 ||
+        adjacentResult.questions.at(0).toObject().value("materialId").toString() ==
+            adjacentResult.questions.at(1).toObject().value("materialId").toString() ||
+        adjacentResult.questions.at(0).toObject().value("options").toArray().at(1).toObject()
+            .value("text").toString() != QStringLiteral("乙"))
+        return 107;
+
+    // “如图/表”只是文字题干的一部分时，文字层已经有完整选项，不能把整页 PDF
+    // 误当题干图片。否则阅读材料页会在每一道子题下重复显示。
+    ExtractedDocument textualVisualStem;
+    textualVisualStem.sourcePath = QStringLiteral("textual-visual-stem.pdf");
+    textualVisualStem.hasPageBoundaries = true;
+    textualVisualStem.pageImages.insert(1, QByteArrayLiteral("page-image"));
+    textualVisualStem.plainText = QStringLiteral(
+        "1. 如图所示，哪一种现象正确？\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n答案：A\n");
+    const auto textualVisualStemResult = RuleBasedBankGenerator{}.generate({textualVisualStem});
+    if (textualVisualStemResult.questions.size() != 1 ||
+        textualVisualStemResult.questions.first().toObject().contains("stemImage"))
+        return 107;
+
     ExtractedDocument imageOptions;
     imageOptions.sourcePath = QStringLiteral("image-options.pdf");
     imageOptions.hasPageBoundaries = true;
@@ -112,8 +193,9 @@ int main(int argc, char** argv) {
             QStringLiteral("c") || imageQuestion.value("stemImage").toObject().isEmpty())
         return 101;
 
-    // 图形、公式等选项在 PDF 里可能没有文字层，只有 A/B/C/D 标签。此时要将
-    // 相应的小图挂在选项上（而非把整页塞进题干），定位只使用文字标签坐标。
+    // 图形、公式等选项在 PDF 里可能没有文字层，只有 A/B/C/D 标签。PDF 的
+    // 文字坐标和实际绘制位置可能不一致，因此保留“本题到下一题前”的完整题图，
+    // 不生成可能夹带题号或相邻题目的四张错误小图。
     ExtractedDocument formulaImages;
     formulaImages.sourcePath = QStringLiteral("formula-options.pdf");
     formulaImages.hasPageBoundaries = true;
@@ -133,10 +215,73 @@ int main(int argc, char** argv) {
     formulaImages.pageImages.insert(1, formulaPng);
     const auto formulaResult = RuleBasedBankGenerator{}.generate({formulaImages});
     if (formulaResult.questions.size() != 1 || !formulaResult.needsReviewQuestions.isEmpty()) return 102;
-    if (formulaResult.assets.size() != 4) return 103;
-    if (formulaResult.questions.first().toObject().value("options").toArray().at(0).toObject()
-            .value("image").toObject().value("path").toString().isEmpty()) return 104;
+    if (formulaResult.assets.size() != 1) return 103;
+    const QJsonObject formulaQuestion = formulaResult.questions.first().toObject();
+    const QString formulaVisualPath =
+        formulaQuestion.value("stemImage").toObject().value("path").toString();
+    const QImage formulaVisualImage =
+        QImage::fromData(formulaResult.assets.value(formulaVisualPath), "PNG");
+    if (formulaVisualPath.isEmpty() || formulaVisualImage.isNull() ||
+        formulaVisualImage.height() >= 200 ||
+        formulaQuestion.value("options").toArray().at(0).toObject().contains("image")) return 104;
     if (!quizpane::validateBank(bankFor(formulaResult), &validationError)) return 105;
+
+    // 有些图形题的 A/B/C/D 是矢量字，根本没有文字层锚点。此时必须截出本题
+    // 的完整图阵和四个选项，且下边界止于下一题，不能退化成整张试卷页面。
+    ExtractedDocument visualFallback;
+    visualFallback.sourcePath = QStringLiteral("visual-fallback.pdf");
+    visualFallback.hasPageBoundaries = true;
+    visualFallback.plainText = QStringLiteral(
+        "86、请从所给的四个选项中，选择最合适的一项填在问号处。\n"
+        "87、请从所给的四个选项中，选择最合适的一项填在问号处。\n"
+        "答案：A\n");
+    visualFallback.questionAnchors.insert(1, {
+        {QStringLiteral("86"), QRectF(0.1, 0.28, 0.03, 0.02)},
+        {QStringLiteral("87"), QRectF(0.1, 0.70, 0.03, 0.02)}});
+    visualFallback.pageImages.insert(1, fillPng);
+    const auto visualFallbackResult = RuleBasedBankGenerator{}.generate({visualFallback});
+    QJsonObject fallbackQuestion;
+    for (const QJsonValue& value : visualFallbackResult.questions) {
+        const QJsonObject question = value.toObject();
+        if (question.value("stem").toString().contains(QStringLiteral("问号"))) {
+            fallbackQuestion = question;
+            break;
+        }
+    }
+    if (fallbackQuestion.isEmpty()) return 108;
+    const QString fallbackPath = fallbackQuestion.value("stemImage").toObject().value("path").toString();
+    const QImage fallbackImage = QImage::fromData(visualFallbackResult.assets.value(fallbackPath), "PNG");
+    if (fallbackPath.isEmpty() || fallbackImage.isNull() || fallbackImage.height() >= 500)
+        return 109;
+
+    // 图形题可能在页尾只有题干，四个图形选项落到下一页、下一题之前。输出应把
+    // 两段局部裁图纵向拼接，不能只截第一页，也不能把下一题题干带进来。
+    ExtractedDocument crossPageVisual;
+    crossPageVisual.sourcePath = QStringLiteral("cross-page-visual.pdf");
+    crossPageVisual.hasPageBoundaries = true;
+    crossPageVisual.plainText = QStringLiteral(
+        "89、选项中包含 4 个图形，请找出例外。\n正确答案：A\f"
+        "90、下一道图形题。\nA、甲\nB、乙\nC、丙\nD、丁\n正确答案：B\n");
+    crossPageVisual.questionAnchors.insert(1, {
+        {QStringLiteral("89"), QRectF(0.1, 0.70, 0.03, 0.02)}});
+    crossPageVisual.questionAnchors.insert(2, {
+        {QStringLiteral("90"), QRectF(0.1, 0.35, 0.03, 0.02)}});
+    crossPageVisual.pageImages.insert(1, fillPng);
+    crossPageVisual.pageImages.insert(2, fillPng);
+    const auto crossPageVisualResult = RuleBasedBankGenerator{}.generate({crossPageVisual});
+    QJsonObject crossPageVisualQuestion;
+    for (const QJsonValue& value : crossPageVisualResult.questions) {
+        const QJsonObject question = value.toObject();
+        if (question.value("id").toString().contains(QStringLiteral("q89-")))
+            crossPageVisualQuestion = question;
+    }
+    const QString crossPageVisualPath =
+        crossPageVisualQuestion.value("stemImage").toObject().value("path").toString();
+    const QImage crossPageVisualImage =
+        QImage::fromData(crossPageVisualResult.assets.value(crossPageVisualPath), "PNG");
+    if (crossPageVisualPath.isEmpty() || crossPageVisualImage.isNull() ||
+        crossPageVisualImage.height() < 600)
+        return 110;
 
     ExtractedDocument inlineDocument;
     inlineDocument.sourcePath = QStringLiteral("inline.md");
@@ -487,6 +632,42 @@ int main(int argc, char** argv) {
             return 51;
         if (!quizpane::validateBank(bankFor(sectionMultiResult), &validationError))
             return 52;
+    }
+
+    // 场景 L：真题可能只用“（多选题）”标整段；题干中的（1）…（4）是条件，
+    // 后续另有 A/B/C/D，不能抢占选项；答案解析开头的“2、A 项错误”也不能
+    // 覆盖结尾明确写出的“故正确答案为 C”。
+    ExtractedDocument beijingRegression;
+    beijingRegression.sourcePath = QStringLiteral("beijing-regression.txt");
+    beijingRegression.plainText = QStringLiteral(
+        "（多选题）\n"
+        "根据下列统计资料回答问题。\n"
+        "434.5 亿元，增长 49%。\n2096.4 亿元，增长 2.8%。\n"
+        "1. 下列哪些正确\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n"
+        "二、单项选择题\n"
+        "2. 根据条件选择答案\n（1）条件甲\n（2）条件乙\n（3）条件丙\n（4）条件丁\n"
+        "A. 真选项甲\nB. 真选项乙\nC. 真选项丙\nD. 真选项丁\n"
+        "答案及解析\n"
+        "1、A 项正确，其余略。\n故正确答案为 B、D。\n"
+        "2、A 项错误，其余略。\n434.5 亿元只是计算中间值。\n故正确答案为 C。\n");
+    const auto beijingResult = RuleBasedBankGenerator{}.generate({beijingRegression});
+    if (beijingResult.questions.size() != 2 || !beijingResult.needsReviewQuestions.isEmpty())
+        return 53;
+    {
+        const QJsonObject multi = beijingResult.questions.at(0).toObject();
+        const QJsonObject conditioned = beijingResult.questions.at(1).toObject();
+        if (multi.value("type").toString() != QStringLiteral("multiple_choice") ||
+            multi.value("answer").toObject().value("optionIds").toArray().size() != 2)
+            return 54;
+        if (conditioned.value("answer").toObject().value("optionIds").toArray().first().toString() !=
+            QStringLiteral("c"))
+            return 55;
+        const QJsonArray conditionedOptions = conditioned.value("options").toArray();
+        if (conditionedOptions.size() != 4 ||
+            conditionedOptions.at(0).toObject().value("text").toString() !=
+                QStringLiteral("真选项甲") ||
+            !conditioned.value("stem").toString().contains(QStringLiteral("（4）条件丁")))
+            return 56;
     }
 
     // 规则候选最终仍进入现有声明式 ZIP，不产生本机代码。这里复用上面以内存

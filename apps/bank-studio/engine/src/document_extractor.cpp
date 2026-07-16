@@ -208,6 +208,25 @@ void collectPdfTextAnchors(QPdfDocument* document, int page, const QString& text
         if (!bounds.isEmpty())
             result->optionLabelAnchors[page + 1].append({match.captured(1).toLower(), bounds});
     }
+
+    // QPdfDocument 的纯文字 API 不会告诉我们字体下划线或独立绘制的填空横线。
+    // 仍记录每一行的版面位置，让后续材料生成可以裁出对应的原卷视觉片段。
+    int lineStart = 0;
+    while (lineStart < text.size()) {
+        const int lineEnd = text.indexOf(u'\n', lineStart);
+        const int end = lineEnd < 0 ? text.size() : lineEnd;
+        const QString line = text.mid(lineStart, end - lineStart).trimmed();
+        if (!line.isEmpty()) {
+            const int leading = text.mid(lineStart, end - lineStart).indexOf(line);
+            const QRectF bounds = normalizedSelectionBounds(
+                document, page, lineStart + qMax(0, leading), line.size());
+            if (!bounds.isEmpty())
+                result->lineAnchors[page + 1].append({line, bounds});
+        }
+        if (lineEnd < 0)
+            break;
+        lineStart = lineEnd + 1;
+    }
 }
 
 #ifdef QUIZPANE_HAS_TESSERACT_OCR

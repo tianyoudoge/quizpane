@@ -1,13 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600">
-  <rect width="960" height="600" fill="#1b1e24"/>
-  <rect x="280" y="60" width="400" height="480" rx="16" fill="#202329" stroke="#2c2f37" stroke-width="2"/>
-  <rect x="300" y="90" width="360" height="30" rx="6" fill="#171a1f"/>
-  <rect x="300" y="140" width="360" height="16" rx="8" fill="#3a3f4a"/>
-  <rect x="300" y="170" width="300" height="12" rx="6" fill="#2c2f37"/>
-  <rect x="300" y="210" width="360" height="46" rx="8" fill="#171a1f" stroke="#6f9bd8" stroke-width="2"/>
-  <rect x="300" y="266" width="360" height="46" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <rect x="300" y="322" width="360" height="46" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <rect x="300" y="378" width="360" height="46" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <rect x="300" y="450" width="120" height="36" rx="18" fill="#6f9bd8"/>
-  <text x="480" y="560" text-anchor="middle" fill="#6f9bd8" font-family="sans-serif" font-size="22" font-weight="700">小窗刷题 · 占位图</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 760" width="640" height="760">
+  <rect width="640" height="760" rx="28" fill="#25272d"/>
+  <rect x="1" y="1" width="638" height="758" rx="27" fill="none" stroke="#3b3e47" stroke-width="2"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif">
+    <text x="28" y="48" fill="#f3f4f6" font-size="22" font-weight="700">2011 北京卷 · 官网演示题库</text>
+    <text x="500" y="48" fill="#a7acb7" font-size="20">☰　↙　⌖　×</text>
+    <text x="28" y="92" fill="#c7cad2" font-size="18">第 15 / 135 题 · 已作答 1 题</text>
+    <rect x="22" y="122" width="596" height="94" rx="16" fill="#30333a"/>
+    <text x="42" y="161" fill="#f2f3f5" font-size="20">在我国，各级人民检察院属于：</text>
+    <text x="42" y="195" fill="#aeb3bd" font-size="16">题干保持为文字，不使用整页截图</text>
+    <g font-size="20" fill="#f2f3f5">
+      <rect x="22" y="244" width="596" height="62" rx="15" fill="#30333a"/><circle cx="53" cy="275" r="18" fill="#7d818c" fill-opacity=".4"/><text x="46" y="282">A</text><text x="88" y="282">立法机关</text>
+      <rect x="22" y="320" width="596" height="62" rx="15" fill="#30333a"/><circle cx="53" cy="351" r="18" fill="#7d818c" fill-opacity=".4"/><text x="46" y="358">B</text><text x="88" y="358">执法机关</text>
+      <rect x="22" y="396" width="596" height="62" rx="15" fill="#30333a"/><circle cx="53" cy="427" r="18" fill="#7d818c" fill-opacity=".4"/><text x="46" y="434">C</text><text x="88" y="434">司法机关</text>
+      <rect x="22" y="472" width="596" height="62" rx="15" fill="#4b4568" stroke="#8f83ff" stroke-width="2"/><circle cx="53" cy="503" r="18" fill="#8f83ff" fill-opacity=".4"/><text x="46" y="510">D</text><text x="88" y="510">法律监督机关</text>
+    </g>
+    <path d="M38 678l22-14-8 25-5-10z" fill="none" stroke="#c4c8d0" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M586 664v28m-10-14h20" stroke="#c4c8d0" stroke-width="3" stroke-linecap="round"/>
+    <text x="320" y="722" fill="#8e94a1" font-size="15" text-anchor="middle">可上下拉伸并恢复，小窗状态不锁死</text>
+  </g>
 </svg>

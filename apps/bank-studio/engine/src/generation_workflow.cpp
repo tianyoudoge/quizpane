@@ -271,7 +271,8 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                 .arg(result.questions.size()).arg(result.needsReviewQuestions.size());
             self->publish(WorkflowStage::Done, detail);
             emit self->questionsReady({result.materials, result.questions,
-                                       result.needsReviewQuestions, result.warnings});
+                                       result.needsReviewQuestions, result.warnings,
+                                       result.assets});
             emit self->finished();
         }, Qt::QueuedConnection);
     });

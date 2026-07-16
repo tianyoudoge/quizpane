@@ -14,7 +14,7 @@ website/
     content.json          # 页面文案与下载平台配置（唯一数据源）
     assets/
       icons/               # SVG 图标（logo、favicon、平台图标）
-      screenshots/         # 功能轮播用的截图，当前是占位 SVG
+      screenshots/         # 官网演示题库的产品截图与界面演示图
   scripts/
     build-site.mjs         # 构建脚本，见下文
   dist/                    # 构建产物，不提交到 Git（.gitignore 已排除）
@@ -58,11 +58,12 @@ node website/scripts/build-site.mjs
   必须与 GitHub Release 里实际的 asset 文件名一致（当前对应 README 里列出的
   `QuizPane-macos-arm64.dmg`、`QuizPane-macos-x86_64.dmg`、
   `QuizPane-windows-x64.exe`、`QuizPane-linux-x86_64.deb`）。
-- **截图**：`src/assets/screenshots/*.svg` 目前是标注了"占位图"的 SVG 占位符，
-  发布前必须换成 `docs/官网静态页与Release代理部署方案.md` 第 3 节描述的真实
-  产品截图（建议输出 `.webp`，同时改 `content.json` 里的 `shot` 路径和
-  `index.html` 里的 hero 图路径）。发布前请确认试卷内容的展示与传播授权。
-- **图标**：`src/assets/icons/*.svg` 是简化的占位图形，可替换为品牌统一的图标。
+- **截图**：`src/assets/screenshots/` 已放入北京卷官网演示题库的导入截图，以及
+  资料换行、公式选项和小窗答题演示图；替换文件后同步修改 `content.json` 的
+  `shot` 路径和 `index.html` 的 hero 图路径。发布前请确认试卷内容的展示与
+  传播授权。
+- **图标**：导航、联系区和右下角赞赏浮窗使用产品图标
+  `src/assets/icons/quizpane-app-icon.png`。
 
 ## 发布到服务器
 

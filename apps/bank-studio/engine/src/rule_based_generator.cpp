@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QImage>
 #include <QJsonObject>
+#include <QPainter>
 #include <QRegularExpression>
 #include <QSet>
 
@@ -37,7 +38,7 @@ struct MaterialMarker {
 
 const QRegularExpression& questionPattern() {
     static const QRegularExpression value(QStringLiteral(
-        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）])\s*(.*)$)"));
+        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?(\d{1,4})\s*(?:题|[．、:：\)）]|\.(?!\d))\s*(.*)$)"));
     return value;
 }
 
@@ -61,7 +62,7 @@ bool isAnswerSectionHeader(const QString& text) {
 
 bool isMaterialHeader(const QString& text) {
     static const QRegularExpression pattern(QStringLiteral(
-        R"(^\s*(?:[（(][一二三四五六七八九十\d]+[）)]\s*)?(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*\s*[:：]?|阅读(?:下列|以下)(?:材料|文字)|根据(?:下列|以下)(?:统计)?资料|原文\s*[:：])\s*.*$)"));
+        R"(^\s*(?:[（(][一二三四五六七八九十\d]+[）)]\s*)?(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*\s*[:：]?|阅读(?:下列|以下)(?:材料|文字)|根据(?:下列|以下)(?:统计)?(?:资料|材料)|原文\s*[:：])\s*.*$)"));
     return pattern.match(text).hasMatch();
 }
 
@@ -83,11 +84,13 @@ bool isTopLevelSectionHeading(const QString& text) {
 // 把整段多选/不定项打回复核。不定项与多选在作答结构上等价（≥2 选项、≥1 答案），
 // 统一映射为 multiple_choice，不新增题型，兼容现有 schema/校验器/前端。
 bool isMultiAnswerSectionHeading(const QString& text) {
-    if (!isTopLevelSectionHeading(text))
-        return false;
     static const QRegularExpression pattern(
         QStringLiteral(R"(多选|多项选|不定项|多项选择|多项选择题)"));
-    return pattern.match(text).hasMatch();
+    if (!pattern.match(text).hasMatch())
+        return false;
+    static const QRegularExpression parenthesized(
+        QStringLiteral(R"(^\s*[（(][^）)]*(?:多选|多项选|不定项)[^）)]*[）)]\s*$)"));
+    return isTopLevelSectionHeading(text) || parenthesized.match(text).hasMatch();
 }
 
 QString assetBaseName(const QString& sourcePath) {
@@ -108,16 +111,87 @@ QRectF questionBoundsFor(const ExtractedDocument& document, int page, int number
     return {};
 }
 
+QRectF lineBoundsFor(const ExtractedDocument& document, int page, const QString& text) {
+    const QString wanted = text.trimmed();
+    for (const PdfTextAnchor& anchor : document.lineAnchors.value(page))
+        if (anchor.text == wanted)
+            return anchor.bounds;
+    return {};
+}
+
+QString restoreDroppedBlankLines(QString value) {
+    // 【甲】/【乙】/【丙】是原题用来指代三个填词位置的编号，必须原样保留；
+    // 它们不是待输入框。只有 PDF 文字层丢掉的空白横线才补成可渲染的占位。
+    // 很多 PDF 把空白横线作为单独的矢量/图片对象，文字层只留下“的 。”。
+    // 仅在汉字与紧随的中文标点之间补占位，避免把正常的段落空格误判成填空。
+    static const QRegularExpression droppedUnderline(
+        QStringLiteral(R"((\p{Han})[ \t]+([，。；、]))"));
+    value.replace(droppedUnderline, QStringLiteral("\\1〔填空〕\\2"));
+    return value;
+}
+
+QJsonArray extractMaterialLayoutImages(const ExtractedDocument& document, int firstPage,
+                                       int lastPage, const QString& firstLine,
+                                       const QString& firstQuestionLine,
+                                       const QString& materialId,
+                                       QHash<QString, QByteArray>* assets) {
+    QJsonArray images;
+    if (firstPage <= 0 || lastPage < firstPage)
+        return images;
+    for (int page = firstPage; page <= lastPage; ++page) {
+        const QImage source = QImage::fromData(document.pageImages.value(page), "PNG");
+        if (source.isNull())
+            continue;
+        qreal top = page == firstPage
+            ? qMax<qreal>(0.0, lineBoundsFor(document, page, firstLine).top() - 0.012)
+            : 0.015;
+        qreal bottom = 0.985;
+        if (page == lastPage) {
+            // 以完整题干首行作为终点，不能只依赖题号锚点：有些卷子题号形式为
+            // “44、第…”，QPdf 的数字选择范围会失效。找不到完整题干锚点时宁可
+            // 不产出本页截图，也绝不能把题目裁进资料图。
+            const QRectF questionBounds = lineBoundsFor(document, page, firstQuestionLine);
+            if (questionBounds.isEmpty())
+                continue;
+            bottom = qMin<qreal>(bottom, questionBounds.top() - 0.012);
+        }
+        if (bottom <= top + 0.02)
+            continue;
+        const QRect crop(qFloor(source.width() * 0.04), qFloor(source.height() * top),
+                         qCeil(source.width() * 0.92),
+                         qCeil(source.height() * (bottom - top)));
+        const QImage snippet = source.copy(crop.intersected(source.rect()));
+        QByteArray png;
+        QBuffer buffer(&png);
+        if (snippet.isNull() || !buffer.open(QIODevice::WriteOnly) || !snippet.save(&buffer, "PNG"))
+            continue;
+        const QString path = QStringLiteral("assets/%1-%2-p%3.png")
+            .arg(assetBaseName(document.sourcePath), materialId).arg(page);
+        assets->insert(path, png);
+        images.append(QJsonObject{{"path", path}, {"alt", "原卷材料版式（含下划线和填空）"}});
+    }
+    return images;
+}
+
 QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, int page,
                                              int number) {
     const QRectF questionBounds = questionBoundsFor(document, page, number);
     if (questionBounds.isEmpty())
         return {};
+    // A/B/C/D 可能被 PDF 文字层提取到下一题的选项行。它们虽然同样位于当前
+    // 题号之后，却绝不能拿来裁当前题的图片；例如第 76 题会把第 77 题的文字
+    // 和题号混进四个分数选项。先把候选行限制在本题与下一题题号之间。
+    qreal nextQuestionTop = 1.0;
+    for (const PdfTextAnchor& anchor : document.questionAnchors.value(page)) {
+        if (anchor.bounds.top() > questionBounds.bottom())
+            nextQuestionTop = qMin(nextQuestionTop, anchor.bounds.top());
+    }
     const auto labels = document.optionLabelAnchors.value(page);
     QHash<QString, QRectF> best;
     qreal bestY = std::numeric_limits<qreal>::max();
     for (const PdfTextAnchor& candidate : labels) {
-        if (candidate.bounds.top() <= questionBounds.bottom())
+        if (candidate.bounds.top() <= questionBounds.bottom() ||
+            candidate.bounds.top() >= nextQuestionTop)
             continue;
         // 一行 A/B/C/D 的标签应当在近似相同的 y 位置。先以每个 A 为候选行，
         // 选择题号之后最靠上的完整一行，避免拿到本页下一题的选项标签。
@@ -126,6 +200,7 @@ QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, i
         QHash<QString, QRectF> row{{QStringLiteral("a"), candidate.bounds}};
         for (const PdfTextAnchor& other : labels) {
             if (other.bounds.top() <= questionBounds.bottom() ||
+                other.bounds.top() >= nextQuestionTop ||
                 qAbs(other.bounds.center().y() - candidate.bounds.center().y()) > 0.018)
                 continue;
             if (QStringLiteral("abcd").contains(other.text) && !row.contains(other.text))
@@ -188,6 +263,139 @@ QHash<QString, QJsonObject> extractOptionImages(const ExtractedDocument& documen
             .arg(ids.at(index).toUpper())}});
     }
     return result;
+}
+
+QRectF nextQuestionBoundsFor(const ExtractedDocument& document, int page, int number) {
+    const QRectF current = questionBoundsFor(document, page, number);
+    if (current.isEmpty())
+        return {};
+    QRectF next;
+    for (const PdfTextAnchor& anchor : document.questionAnchors.value(page)) {
+        if (anchor.bounds.top() <= current.bottom())
+            continue;
+        if (next.isEmpty() || anchor.bounds.top() < next.top())
+            next = anchor.bounds;
+    }
+    return next;
+}
+
+QJsonObject extractQuestionVisualImage(const ExtractedDocument& document, int page, int number,
+                                       const QString& questionLine,
+                                       QHash<QString, QByteArray>* assets) {
+    if (!document.pageImages.contains(page))
+        return {};
+    const QImage source = QImage::fromData(document.pageImages.value(page), "PNG");
+    const QRectF questionBounds = questionBoundsFor(document, page, number);
+    if (source.isNull() || questionBounds.isEmpty())
+        return {};
+    // 图形题的 A/B/C/D 常是矢量字而非文字层，不能从不存在的字母坐标硬切。
+    // 此时保留“本题题干 + 图阵 + 四个图形选项”的完整视觉区，并以下一题题号
+    // 为不可越过的下边界，绝不回退为整页截图。
+    const QRectF nextBounds = nextQuestionBoundsFor(document, page, number);
+    const QRectF fullQuestionLineBounds = lineBoundsFor(document, page, questionLine);
+    const QRectF visualStartBounds =
+        fullQuestionLineBounds.isEmpty() ? questionBounds : fullQuestionLineBounds;
+    // 题干已有结构化文字，截图从题干行下方开始，只保留题目所需的图阵/公式/
+    // 图形选项。这样既不会重复截入题干，也不会带入上一题的 A/B/C/D 标签。
+    qreal top = qMin<qreal>(0.985, visualStartBounds.bottom() + 0.003);
+    const int continuationPage = page + 1;
+    const QRectF continuationNextBounds = nextBounds.isEmpty()
+        ? questionBoundsFor(document, continuationPage, number + 1) : QRectF{};
+    const bool spansNextPage = nextBounds.isEmpty() && !continuationNextBounds.isEmpty() &&
+        document.pageImages.contains(continuationPage);
+    qreal bottom = !nextBounds.isEmpty()
+        // 只在下一题题号上方保留极小安全边距。此前 1.4% 页高的边距会把
+        // 紧贴下一题的分数选项分母和 A/B/C/D 标签一起切掉。
+        ? qMax(top, nextBounds.top() - 0.003)
+        : spansNextPage ? 0.985 : qMin<qreal>(0.985, questionBounds.top() + 0.34);
+    // 分数/公式选项的 A/B/C/D 文字锚点可靠时，直接框住这一整行视觉选项，
+    // 不再把题干续行一起带入（北京卷第 76 题）。
+    const QHash<QString, QRectF> optionRow = optionRowForQuestion(document, page, number);
+    qreal cropLeft = 0.05;
+    qreal cropRight = 0.95;
+    if (optionRow.size() == 4) {
+        const qreal rowY = optionRow.value(QStringLiteral("a")).center().y();
+        // 文字标签基线正好位于分数下方；约 2.8% 页高足以覆盖分子/分母，
+        // 下方只留 1% 页高，避免把紧随其后的第 77 题题干卷入。
+        top = qMax<qreal>(0.0, rowY - 0.028);
+        const qreal optionBottom = qMin<qreal>(0.995, rowY + 0.008);
+        bottom = !nextBounds.isEmpty()
+            ? qMin(optionBottom, nextBounds.top() - 0.001) : optionBottom;
+        const qreal firstCenter = optionRow.value(QStringLiteral("a")).center().x();
+        const qreal lastCenter = optionRow.value(QStringLiteral("d")).center().x();
+        const qreal spacing = (lastCenter - firstCenter) / 3.0;
+        cropLeft = qMax<qreal>(0.0, optionRow.value(QStringLiteral("a")).left());
+        cropRight = qMin<qreal>(1.0,
+            optionRow.value(QStringLiteral("d")).right() + spacing * 0.55);
+    }
+    if (bottom <= top + 0.035)
+        return {};
+    const QRect crop(qFloor(source.width() * cropLeft), qFloor(source.height() * top),
+                     qCeil(source.width() * (cropRight - cropLeft)),
+                     qCeil(source.height() * (bottom - top)));
+    const auto trimTransparentMargins = [](const QImage& image) {
+        if (image.isNull()) return QImage{};
+        const QImage argb = image.convertToFormat(QImage::Format_ARGB32);
+        int left = argb.width(), topEdge = argb.height(), right = -1, bottomEdge = -1;
+        for (int y = 0; y < argb.height(); ++y) {
+            const QRgb* row = reinterpret_cast<const QRgb*>(argb.constScanLine(y));
+            for (int x = 0; x < argb.width(); ++x) {
+                if (qAlpha(row[x]) <= 8) continue;
+                left = qMin(left, x);
+                right = qMax(right, x);
+                topEdge = qMin(topEdge, y);
+                bottomEdge = qMax(bottomEdge, y);
+            }
+        }
+        if (right < left || bottomEdge < topEdge) return QImage{};
+        constexpr int padding = 4;
+        const QRect content(qMax(0, left - padding), qMax(0, topEdge - padding),
+                            qMin(argb.width() - 1, right + padding) - qMax(0, left - padding) + 1,
+                            qMin(argb.height() - 1, bottomEdge + padding) -
+                                qMax(0, topEdge - padding) + 1);
+        return argb.copy(content);
+    };
+    QImage snippet = trimTransparentMargins(source.copy(crop.intersected(source.rect())));
+    if (spansNextPage && !snippet.isNull()) {
+        const QImage continuationSource =
+            QImage::fromData(document.pageImages.value(continuationPage), "PNG");
+        const qreal continuationTop = 0.015;
+        const qreal continuationBottom =
+            qMax(continuationTop, continuationNextBounds.top() - 0.003);
+        if (!continuationSource.isNull() && continuationBottom > continuationTop + 0.01) {
+            const QRect continuationCrop(
+                qFloor(continuationSource.width() * 0.05),
+                qFloor(continuationSource.height() * continuationTop),
+                qCeil(continuationSource.width() * 0.90),
+                qCeil(continuationSource.height() *
+                      (continuationBottom - continuationTop)));
+            const QImage continuation = trimTransparentMargins(continuationSource.copy(
+                continuationCrop.intersected(continuationSource.rect())));
+            if (!continuation.isNull()) {
+                if (snippet.isNull()) {
+                    snippet = continuation;
+                } else {
+                QImage combined(qMax(snippet.width(), continuation.width()),
+                                snippet.height() + continuation.height(),
+                                QImage::Format_ARGB32_Premultiplied);
+                combined.fill(Qt::transparent);
+                QPainter painter(&combined);
+                painter.drawImage(0, 0, snippet);
+                painter.drawImage(0, snippet.height(), continuation);
+                painter.end();
+                snippet = combined;
+                }
+            }
+        }
+    }
+    QByteArray png;
+    QBuffer buffer(&png);
+    if (snippet.isNull() || !buffer.open(QIODevice::WriteOnly) || !snippet.save(&buffer, "PNG"))
+        return {};
+    const QString path = QStringLiteral("assets/%1-p%2-q%3.png")
+        .arg(assetBaseName(document.sourcePath)).arg(page).arg(number);
+    assets->insert(path, png);
+    return {{"path", path}, {"alt", "原卷题图（含图形选项）"}};
 }
 
 // 把任意选项标记归一化成小写字母 a/b/c…。支持：字母 A-I/a-i（含全角）、圈码
@@ -395,7 +603,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
     // 答案 token：字母 A-F（大小写）、圈码 ①-⑩、或带括号/带点的数字。捕获后
     // 统一经 normalizeAnswer 归一化，兼容选项是圈码或数字括号的答案区。
     const QString answerToken(QStringLiteral(
-        R"([A-Fa-f]{1,6}|[①②③④⑤⑥⑦⑧⑨⑩]{1,6}|[（(\[{「『]\s*[1-9]\s*[)）\]}」』]|[1-9]\s*[)）\]」』])"));
+        R"([A-Fa-f](?:\s*[,，、;；/|+]\s*[A-Fa-f]){0,5}|[A-Fa-f]{1,6}|[①②③④⑤⑥⑦⑧⑨⑩]{1,6}|[（(\[{「『]\s*[1-9]\s*[)）\]}」』]|[1-9]\s*[)）\]」』])"));
     const QString pairPattern =
         QStringLiteral(R"((?:^|[\s,，;；])(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）-])?\s*(?:【?答案】?\s*[:：]?)?\s*()") +
         answerToken +
@@ -404,7 +612,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
     static const QRegularExpression range(
         QStringLiteral(R"((\d{1,4})\s*(?:[-—~～]|至|到)\s*(\d{1,4})\s*[:：]?\s*([A-Fa-f①②③④⑤⑥⑦⑧⑨⑩]+))"));
     static const QRegularExpression answerRecord(
-        QStringLiteral(R"(^\s*(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）])\s*)"));
+        QStringLiteral(R"(^\s*(?:第\s*)?(\d{1,4})\s*(?:题|[．、:：\)）]|\.(?!\d))\s*)"));
     const QString narrativePattern =
         QStringLiteral(R"((?:故\s*)?(?:(?:正确|参考|标准)\s*)?答案\s*(?:为|是|[:：])\s*()") +
         answerToken +
@@ -439,6 +647,10 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             const auto match = matches.next();
             const int number = match.captured(1).toInt();
             const QString answer = normalizeAnswer(match.captured(2));
+            const QString trailing = line.mid(match.capturedEnd()).trimmed();
+            if (trailing.startsWith(QStringLiteral("项")) ||
+                trailing.startsWith(QStringLiteral("选项")))
+                continue;
             if (number > 0 && !answer.isEmpty() && !answers.contains(number))
                 answers.insert(number, answer);
         }
@@ -525,7 +737,8 @@ QHash<int, QString> globalSolutions(const QList<SourceLine>& lines, int sectionS
 // - ≥2 个 marker：即使 marker 前有题干文字也切分，前缀文本经 *prefix 回传给
 //   parseQuestion 合并进题干（覆盖“1. 题干 A.甲 B.乙 C.丙 D.丁”单行写法）。
 // - 1 个 marker 且在行首：原纯选项行行为。
-QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefix = nullptr) {
+QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefix = nullptr,
+                                             bool allowNumericLabels = true) {
     // 各 marker 捕获其 label 原文，后续统一归一化。捕获组按出现顺序：
     // 1=字母, 2=圈码, 3=括号数字 (1), 4=尾括号数字 1)。
     // 括号兼容全角/半角与各种书写习惯：（ ( [ { 「 『 … ） ) ] } 」 』。
@@ -538,8 +751,13 @@ QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefi
         R"(|(?<![A-Za-z0-9])([1-9])\s*[)）\]」』]\s*)"));               // 1) 形式
     QList<QRegularExpressionMatch> markers;
     auto iterator = marker.globalMatch(line);
-    while (iterator.hasNext())
-        markers.append(iterator.next());
+    while (iterator.hasNext()) {
+        const auto match = iterator.next();
+        if (!allowNumericLabels && match.captured(1).isEmpty() &&
+            match.captured(2).isEmpty() && match.captured(3).isEmpty())
+            continue;
+        markers.append(match);
+    }
     if (markers.isEmpty())
         return {};
     const QString lead = line.left(markers.first().capturedStart());
@@ -633,10 +851,18 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
     QStringList solutionLines;
     bool inSolution = false;
     bool afterOptions = false;
+    static const QRegularExpression explicitLetterOption(QStringLiteral(
+        R"((?:^|\s)[A-Fa-f]\s*[\.．、:：\)）])"));
+    bool hasExplicitLetterOptions =
+        explicitLetterOption.match(anchor.firstStemLine).hasMatch();
+    for (int index = anchor.line + 1; index < blockEnd && !hasExplicitLetterOptions; ++index)
+        hasExplicitLetterOptions = explicitLetterOption.match(lines.at(index).text).hasMatch();
+    const bool allowNumericOptionLabels = !hasExplicitLetterOptions;
     QString firstPrefix;
     if (!anchor.firstStemLine.isEmpty()) {
         // 题号行可能同行带选项：1. 题干 A.甲 B.乙…。先抽选项，剩余文本作为题干。
-        const auto firstOptions = optionsOnLine(anchor.firstStemLine, &firstPrefix);
+        const auto firstOptions =
+            optionsOnLine(anchor.firstStemLine, &firstPrefix, allowNumericOptionLabels);
         if (!firstOptions.isEmpty())
             options += firstOptions;
         const QString tailAnswer = trailingAnswer(anchor.firstStemLine);
@@ -695,7 +921,8 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
             if (rawAnswer.isEmpty() && !tailAnswer.isEmpty())
                 rawAnswer = tailAnswer;
         }
-        const auto parsedOptions = optionsOnLine(lineForOptions, nullptr);
+        const auto parsedOptions =
+            optionsOnLine(lineForOptions, nullptr, allowNumericOptionLabels);
         if (!parsedOptions.isEmpty()) {
             options += parsedOptions;
             afterOptions = true;
@@ -736,7 +963,11 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
     const int sourcePage = anchor.line < lines.size() ? lines.at(anchor.line).page : 0;
     const bool hasVisualOptionLabels = sourcePage > 0 &&
         optionRowForQuestion(document, sourcePage, anchor.number).size() == 4;
-    const bool hasVisualContext = sourcePage > 0 && document.pageImages.contains(sourcePage) &&
+    // 只有未能从文字层拆出至少两个选项时，才允许整页视觉上下文参与回退。否则
+    // “如图/表”等普通题干会把整页试卷误挂到题干下；资料题尤其会把整段材料重复
+    // 显示成图片。
+    const bool hasVisualContext = options.size() < 2 && sourcePage > 0 &&
+        document.pageImages.contains(sourcePage) &&
         (visualText.contains(QStringLiteral("图")) || visualText.contains(QStringLiteral("表")) ||
          visualText.contains(QStringLiteral("统计")) || visualText.contains(QStringLiteral("问号")));
     const bool needsVisualOptions = options.size() < 2 &&
@@ -744,13 +975,11 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
     QHash<QString, QJsonObject> optionImages;
     bool attachStemImage = hasVisualContext;
     if (needsVisualOptions) {
-        // 文字层只留下 A/B/C/D、但没有选项内容时，优先用这四个标签的版面位置
-        // 裁切各自的原卷图片。它适用于分数、图形、表格小图等，不按题型猜测。
-        if (hasVisualOptionLabels)
-            optionImages = extractOptionImages(document, sourcePage, anchor.number, generatedAssets);
-        // 找不到一整行可安全裁切的图片时，退回整页题图 + 图 A/B/C/D 占位；这样
-        // “题目有图、但没有可用选项”的题仍能作答，也不会把空选项直接入库。
-        attachStemImage = optionImages.size() != 4;
+        // PDF 文字层给出的 A/B/C/D 坐标并不总和页面绘制坐标一致。第 76 题
+        // 就会把题号和第 77 题文字误裁成四张选项图。只要选项正文无法可靠
+        // 提取，就统一保留“本题到下一题之前”的完整原卷题图；宁可让四个
+        // 作答按钮只显示图 A/B/C/D，也不能生成看似精细但内容错误的小图。
+        attachStemImage = true;
         options.clear();
         for (const QChar label : QStringLiteral("abcd")) {
             const QString id(label);
@@ -829,12 +1058,20 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
                          {"source", source}};
     if (!materialId.isEmpty())
         question.insert("materialId", materialId);
-    // 图形推理、统计资料和明确提到图/表的题保留 PDF 页的可视内容。页图是
-    // 原件视觉上下文，而非 OCR 猜测的文字，因此即使 PDF 可选中文本也不会漏图。
+    // 图形推理、统计资料和明确提到图/表的题保留原卷可视内容。无可靠选项文字
+    // 锚点时，使用“本题到下一题前”的裁切图，而不是把整页试卷挂到题干下。
     if (attachStemImage) {
-        const QString path = QStringLiteral("assets/%1-p%2.png")
-            .arg(assetBaseName(document.sourcePath)).arg(sourcePage);
-        question.insert("stemImage", QJsonObject{{"path", path}, {"alt", "原卷图表"}});
+        const QJsonObject visualImage = extractQuestionVisualImage(
+            document, sourcePage, anchor.number, lines.at(anchor.line).text, generatedAssets);
+        if (!visualImage.isEmpty())
+            question.insert("stemImage", visualImage);
+        else {
+            // 只有测试夹具或损坏 PDF 缺少题号坐标时才保留历史整页回退；真实
+            // PDF 一旦有题号锚点必走上面的局部裁切，不能把相邻题目带进来。
+            const QString path = QStringLiteral("assets/%1-p%2.png")
+                .arg(assetBaseName(document.sourcePath)).arg(sourcePage);
+            question.insert("stemImage", QJsonObject{{"path", path}, {"alt", "原卷图表"}});
+        }
     }
     if (!reasons.isEmpty()) {
         *reviewReason = reasons.join(QStringLiteral("；"));
@@ -974,18 +1211,24 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
             QJsonObject source{{"document", QFileInfo(document.sourcePath).fileName()}};
             if (lines.at(line).page > 0)
                 source.insert("page", lines.at(line).page);
+            const QString materialBody = restoreDroppedBlankLines(body.join(QChar('\n')).trimmed());
             QJsonObject material{{"id", id}, {"catalogId", "generated"},
                                  {"title", lines.at(contentLine).text.left(200)},
-                                 {"body", body.join(QChar('\n')).trimmed()}, {"source", source}};
+                                 {"body", materialBody}, {"source", source}};
             const int firstPage = lines.at(line).page;
             const int lastPage = lines.at(firstQuestionLine).page;
-            if (firstPage > 0 && lastPage >= firstPage &&
+            // 对 PDF 阅读材料保存裁切后的原卷版式。文字层无法表示下划线样式、
+            // 空白横线和嵌入式图片横线；这一层视觉附件确保它们不再丢失，同时
+            // 只裁材料范围，绝不把整页试卷错挂到子题题干。
+            QJsonArray images = extractMaterialLayoutImages(
+                document, firstPage, lastPage, lines.at(line).text,
+                lines.at(firstQuestionLine).text, id, &result.assets);
+            // 文本锚点不可用的旧式/扫描夹具仍保留原有整页视觉回退；正式 PDF
+            // 优先走上面的裁切路径，避免把无关题目混进阅读材料。
+            if (images.isEmpty() &&
                 (lines.at(contentLine).text.contains(QStringLiteral("资料")) ||
                  lines.at(contentLine).text.contains(QStringLiteral("图")) ||
                  lines.at(contentLine).text.contains(QStringLiteral("表")))) {
-                QJsonArray images;
-                // 资料文字与表格经常跨页；把材料头到第一道子题之间的视觉页都
-                // 带上，避免“标题在上一页、统计图在下一页”再次丢图。
                 for (int page = firstPage; page <= lastPage; ++page) {
                     if (!document.pageImages.contains(page)) continue;
                     const QString path = QStringLiteral("assets/%1-p%2.png")
@@ -993,8 +1236,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
                     images.append(QJsonObject{{"path", path}, {"alt", "原卷资料图表"}});
                     result.assets.insert(path, document.pageImages.value(page));
                 }
-                if (!images.isEmpty()) material.insert("images", images);
             }
+            if (!images.isEmpty()) material.insert("images", images);
             result.materials.append(material);
         }
 
@@ -1029,7 +1272,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
         QList<QPair<int, bool>> sectionHeadings; // 行号 → 是否多答案
         for (int index = 0; index < lines.size(); ++index) {
             const QString text = lines.at(index).text;
-            if (isTopLevelSectionHeading(text))
+            if (isTopLevelSectionHeading(text) || isMultiAnswerSectionHeading(text))
                 sectionHeadings.append({index, isMultiAnswerSectionHeading(text)});
         }
 
@@ -1064,7 +1307,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
                                                  allowMultipleAnswers);
             const QJsonObject stemImage = question.value("stemImage").toObject();
             const QString assetPath = stemImage.value("path").toString();
-            if (!assetPath.isEmpty()) {
+            if (!assetPath.isEmpty() && !result.assets.contains(assetPath)) {
                 const int page = question.value("source").toObject().value("page").toInt();
                 if (document.pageImages.contains(page))
                     result.assets.insert(assetPath, document.pageImages.value(page));

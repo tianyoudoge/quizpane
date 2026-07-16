@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 #include <QSet>
 #include <QUuid>
 #include <QUrl>
@@ -30,6 +31,10 @@ QJsonObject findManifest(const QString& entry) {
 }
 QString paragraph(const QString& text) {
     QString escaped = text.toHtmlEscaped();
+    // 规则导入器用这些保留 token 表达 PDF 文字层看不见的填空横线；在宿主端
+    // 统一转成真正可见的下划线，既不把占位混成普通空格，也不会影响普通题干。
+    escaped.replace(QStringLiteral("〔填空〕"),
+                    QStringLiteral("<span style=\"display:inline-block; min-width:4em; border-bottom:1px solid #c8cdd3;\">&nbsp;</span>"));
     escaped.replace('\n', QStringLiteral("<br>"));
     return QStringLiteral("<p>%1</p>").arg(escaped);
 }
@@ -199,12 +204,13 @@ QJsonArray DeclarativeProvider::hostMaterials() const {
         seen.insert(materialId);
         const QJsonObject material = materialsById_.value(materialId);
         QString content = paragraph(material.value("body").toString());
+        QJsonArray imageUrls;
         for (const auto& image : material.value("images").toArray()) {
             const QString url = assetUrl(image.toObject());
-            if (!url.isEmpty()) content += QStringLiteral("<p><img src=\"%1\" width=\"340\"></p>").arg(url);
+            if (!url.isEmpty()) imageUrls.append(url);
         }
         result.append(QJsonObject{{"id", materialId}, {"title", material.value("title")},
-            {"contentHtml", content}});
+            {"contentHtml", content}, {"imageUrls", imageUrls}});
     }
     return result;
 }

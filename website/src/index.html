@@ -6,7 +6,7 @@
 <title>QuizPane · 把 PDF 真题变成能刷的题库</title>
 <meta name="description" content="本地优先的小窗刷题工具。导入题目 PDF 和答案 PDF，离线整理成题库，隐蔽小窗作答，PDF 图表和图片选项都不丢失。" />
 <meta name="theme-color" content="#14161a" />
-<link rel="icon" href="assets/icons/favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="assets/icons/quizpane-app-icon.png" type="image/png" />
 <link rel="stylesheet" href="main.css" />
 </head>
 <body>
@@ -15,7 +15,7 @@
 <header class="topbar">
   <div class="topbar-inner">
     <a class="brand" href="#top">
-      <img src="assets/icons/logo.svg" alt="" width="24" height="24" />
+      <img class="brand-logo" src="assets/icons/quizpane-app-icon.png" alt="QuizPane 产品图标" width="36" height="36" />
       <span>QuizPane</span>
     </a>
     <nav class="topnav" aria-label="页面导航">
@@ -23,6 +23,7 @@
       <a href="#workflow">工作流</a>
       <a href="#download">下载</a>
       <a href="#privacy">隐私与开源</a>
+      <a href="#contact">联系</a>
     </nav>
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav">
       <span class="sr-only">打开菜单</span>
@@ -34,6 +35,7 @@
     <a href="#workflow">工作流</a>
     <a href="#download">下载</a>
     <a href="#privacy">隐私与开源</a>
+    <a href="#contact">联系</a>
   </nav>
 </header>
 
@@ -41,6 +43,7 @@
   <section id="top" class="hero">
     <div class="hero-inner">
       <div class="hero-copy">
+        <div class="product-chip"><img src="assets/icons/quizpane-app-icon.png" alt="" width="42" height="42" /><span>QuizPane · 本地优先</span></div>
         <h1 data-bind="hero.headline"></h1>
         <p class="hero-sub" data-bind="hero.subhead"></p>
         <div class="hero-actions">
@@ -49,7 +52,7 @@
         </div>
       </div>
       <div class="hero-shot">
-        <img id="hero-image" src="assets/screenshots/floating.svg" alt="QuizPane 小窗刷题界面截图" width="960" height="600" loading="eager" />
+        <img id="hero-image" src="assets/screenshots/floating.svg" alt="QuizPane 小窗刷题界面截图" width="640" height="760" loading="eager" />
       </div>
     </div>
   </section>
@@ -88,14 +91,35 @@
       <span data-bind="privacy.repoLabel"></span>
     </a>
   </section>
+
+  <section id="contact" class="contact">
+    <div class="contact-heading">
+      <img src="assets/icons/quizpane-app-icon.png" alt="" width="72" height="72" />
+      <div>
+        <h2 data-bind="contact.title"></h2>
+        <p data-bind="contact.note"></p>
+      </div>
+    </div>
+    <div class="contact-grid" id="contact-grid"></div>
+  </section>
 </main>
 
 <footer class="site-footer">
   <div class="footer-inner">
     <span id="footer-note"></span>
+    <span id="footer-copyright"></span>
     <nav class="footer-links" id="footer-links" aria-label="页脚链接"></nav>
   </div>
 </footer>
+
+<aside class="support-float" aria-label="支持 QuizPane">
+  <img src="assets/icons/quizpane-app-icon.png" alt="" width="44" height="44" />
+  <div class="support-copy">
+    <strong>赞赏支持</strong>
+    <span>喜欢 QuizPane？请我喝杯咖啡</span>
+  </div>
+  <a href="mailto:xutianyoubupt@foxmail.com?subject=QuizPane%20%E8%B5%9E%E8%B5%8F%E6%94%B6%E6%AC%BE%E7%A0%81" aria-label="邮件获取 QuizPane 赞赏收款码">获取收款码</a>
+</aside>
 
 <script src="main.js" defer></script>
 </body>

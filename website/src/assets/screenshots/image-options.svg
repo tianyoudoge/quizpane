@@ -1,12 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600">
-  <rect width="960" height="600" fill="#1b1e24"/>
-  <rect x="24" y="24" width="912" height="552" rx="12" fill="#202329" stroke="#2c2f37" stroke-width="2"/>
-  <rect x="60" y="70" width="380" height="16" rx="8" fill="#3a3f4a"/>
-  <rect x="60" y="120" width="840" height="90" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <rect x="60" y="230" width="195" height="150" rx="8" fill="#171a1f" stroke="#6f9bd8" stroke-width="2"/>
-  <rect x="270" y="230" width="195" height="150" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <rect x="480" y="230" width="195" height="150" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <rect x="690" y="230" width="210" height="150" rx="8" fill="#171a1f" stroke="#2c2f37" stroke-width="1"/>
-  <text x="480" y="500" text-anchor="middle" fill="#6f9bd8" font-family="sans-serif" font-size="22" font-weight="700">图片 / 公式选项 · 占位图</text>
-  <text x="480" y="530" text-anchor="middle" fill="#9aa0ac" font-family="sans-serif" font-size="15">发布前请替换为真实产品截图</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 760" width="640" height="760">
+  <rect width="640" height="760" rx="28" fill="#25272d"/>
+  <rect x="1" y="1" width="638" height="758" rx="27" fill="none" stroke="#3b3e47" stroke-width="2"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif">
+    <text x="28" y="48" fill="#f3f4f6" font-size="22" font-weight="700">2011 北京卷 · 官网演示题库</text>
+    <text x="612" y="48" fill="#a7acb7" font-size="22" text-anchor="end">×</text>
+    <text x="28" y="92" fill="#c7cad2" font-size="18">第 76 / 135 题 · 已作答 0 题</text>
+    <rect x="22" y="118" width="596" height="160" rx="16" fill="#30333a"/>
+    <text x="42" y="155" fill="#f2f3f5" font-size="20">10 个完全一样的杯子，其中 6 个杯子各装有</text>
+    <text x="42" y="188" fill="#f2f3f5" font-size="20">10 克纯酒精，4 个杯子装有 10 克纯水。随机</text>
+    <text x="42" y="221" fill="#f2f3f5" font-size="20">拿出 4 杯混合，得到 50% 酒精溶液的可能性</text>
+    <text x="42" y="254" fill="#f2f3f5" font-size="20">是得到 75% 酒精溶液可能性的多少倍：</text>
+    <text x="28" y="318" fill="#bfc3cc" font-size="17">公式选项按 PDF 原行局部裁切，不带入题干或下一题</text>
+    <rect x="22" y="342" width="596" height="142" rx="16" fill="#f7f7f5"/>
+    <g fill="#1e2025" font-family="Georgia,'Times New Roman',serif" text-anchor="middle">
+      <text x="94" y="382" font-family="-apple-system,'PingFang SC',sans-serif" font-size="18">A</text>
+      <text x="94" y="425" font-size="30">3</text><line x1="77" y1="433" x2="111" y2="433" stroke="#1e2025" stroke-width="2"/><text x="94" y="465" font-size="30">2</text>
+      <text x="244" y="382" font-family="-apple-system,'PingFang SC',sans-serif" font-size="18">B</text>
+      <text x="244" y="425" font-size="30">4</text><line x1="227" y1="433" x2="261" y2="433" stroke="#1e2025" stroke-width="2"/><text x="244" y="465" font-size="30">3</text>
+      <text x="394" y="382" font-family="-apple-system,'PingFang SC',sans-serif" font-size="18">C</text>
+      <text x="394" y="425" font-size="30">6</text><line x1="377" y1="433" x2="411" y2="433" stroke="#1e2025" stroke-width="2"/><text x="394" y="465" font-size="30">5</text>
+      <text x="544" y="382" font-family="-apple-system,'PingFang SC',sans-serif" font-size="18">D</text>
+      <text x="544" y="425" font-size="30">9</text><line x1="527" y1="433" x2="561" y2="433" stroke="#1e2025" stroke-width="2"/><text x="544" y="465" font-size="30">8</text>
+    </g>
+    <g font-size="20" fill="#f2f3f5">
+      <rect x="22" y="510" width="596" height="52" rx="14" fill="#30333a"/><circle cx="50" cy="536" r="15" fill="#777b86" fill-opacity=".45"/><text x="44" y="543">A</text><text x="75" y="543">图 A</text>
+      <rect x="22" y="574" width="596" height="52" rx="14" fill="#30333a"/><circle cx="50" cy="600" r="15" fill="#777b86" fill-opacity=".45"/><text x="44" y="607">B</text><text x="75" y="607">图 B</text>
+      <rect x="22" y="638" width="596" height="52" rx="14" fill="#30333a"/><circle cx="50" cy="664" r="15" fill="#777b86" fill-opacity=".45"/><text x="44" y="671">C</text><text x="75" y="671">图 C</text>
+    </g>
+    <text x="320" y="730" fill="#8e94a1" font-size="15" text-anchor="middle">QuizPane 演示题库界面</text>
+  </g>
 </svg>

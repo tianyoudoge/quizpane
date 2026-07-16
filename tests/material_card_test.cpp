@@ -2,8 +2,10 @@
 
 #include <QApplication>
 #include <QLabel>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QTemporaryDir>
 
 // MaterialCard 是纯 UI 状态机：QT_QPA_PLATFORM=offscreen 下用真实 QApplication
 // 驱动，断言可见性、折叠状态和"同一材料内切子题不重绘"的行为。不涉及网络或
@@ -17,8 +19,17 @@ int main(int argc, char** argv) {
     if (card.isVisible()) return 1;
 
     // 材料一，第一次展示：默认展开、可见、记录 materialId。
+    QTemporaryDir images;
+    QPixmap sourceImage(640, 480);
+    sourceImage.fill(Qt::red);
+    const QString sourceImagePath = images.filePath(QStringLiteral("material.png"));
+    if (!sourceImage.save(sourceImagePath)) return 13;
+    card.resize(220, 300);
+    card.show();
     card.showMaterial(QStringLiteral("material-001"), QStringLiteral("阅读材料一"),
-                      QStringLiteral("<p>材料一正文</p>"));
+                      QStringLiteral("<p>材料一正文</p>"),
+                      QJsonArray{QUrl::fromLocalFile(sourceImagePath).toString()});
+    app.processEvents();
     if (!card.isVisible() || card.currentMaterialId() != QStringLiteral("material-001")) return 2;
     auto* bodyScroll = card.findChild<QScrollArea*>(QStringLiteral("materialCardBodyScroll"));
     auto* toggleButton = card.findChild<QPushButton*>(QStringLiteral("materialCardToggle"));
@@ -26,6 +37,9 @@ int main(int argc, char** argv) {
     if (!bodyScroll || !toggleButton || !bodyLabel) return 3;
     if (!bodyScroll->isVisible()) return 4;  // 默认展开
     if (bodyLabel->text() != QStringLiteral("<p>材料一正文</p>")) return 5;
+    if (bodyLabel->width() > bodyScroll->viewport()->width()) return 14;
+    auto* imagePreview = card.findChild<QPushButton*>(QStringLiteral("materialImagePreview"));
+    if (!imagePreview || imagePreview->iconSize().width() > bodyScroll->viewport()->width()) return 15;
 
     // 用户手动折叠。
     toggleButton->click();

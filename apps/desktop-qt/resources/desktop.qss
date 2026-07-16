@@ -17,17 +17,19 @@ QLabel#solutionText { color: #aebbb5; background: rgba(28,36,33,48); border-radi
 QWidget#materialCard { background: rgba(255,255,255,9); border-radius: 7px; }
 QLabel#materialCardTitle { color: #b7bec7; font-weight: 600; }
 QLabel#materialCardBody { color: #a9b0b8; }
+QPushButton#materialImagePreview { background: rgba(0,0,0,20); border: 1px solid rgba(255,255,255,18); border-radius: 5px; padding: 0; min-width: 0; }
+QPushButton#materialImagePreview:hover { border-color: rgba(184,204,222,150); background: rgba(255,255,255,16); }
+QLabel#materialImagePreviewHint { color: #a9b0b8; }
 QPushButton { background: rgba(255,255,255,12); color: #c8cdd3; border: 1px solid rgba(255,255,255,14); border-radius: 7px; padding: 5px 8px; }
 QPushButton:hover { background: rgba(255,255,255,22); }
 QPushButton#smallButton { padding: 5px 7px; min-width: 48px; }
 QPushButton#navIconButton, QPushButton#headerIconButton, QPushButton#pinButton, QPushButton#closeButton, QPushButton#materialCardToggle { background: transparent; border: none; padding: 0; }
 QPushButton:disabled { background: transparent; color: rgba(170,176,184,70); }
-QRadioButton#answerOption { color: #c8cdd3; background: rgba(255,255,255,10); border-radius: 7px; padding: 8px; }
-QRadioButton#answerOption::indicator { width: 0; height: 0; }
-QRadioButton#answerOption:checked { background: rgba(180,188,198,38); color: #ffffff; }
-QCheckBox#answerOption { color: #c8cdd3; background: rgba(255,255,255,10); border-radius: 7px; padding: 8px; }
-QCheckBox#answerOption:checked { background: rgba(180,188,198,38); color: #ffffff; }
-QLabel#answerOptionImage { background: rgba(255,255,255,10); border-radius: 7px; padding: 4px 8px 8px 8px; }
+QFrame#answerOptionCard { background: rgba(255,255,255,10); border-radius: 7px; }
+QFrame#answerOptionCard[checked="true"] { background: rgba(180,188,198,38); }
+QPushButton#answerOption { color: #c8cdd3; background: transparent; border: none; padding: 0; text-align: left; }
+QPushButton#answerOption:checked { color: #ffffff; }
+QLabel#answerOptionImage { background: transparent; padding: 0; }
 QCheckBox#includeAnswered { color: #aeb4bb; }
 QLabel[correct="true"] { color: #9fb6a7; font-weight: 600; }
 QLabel[correct="false"] { color: #c49f9d; font-weight: 600; }

@@ -1,11 +1,15 @@
 #pragma once
 
 #include <QString>
+#include <QJsonArray>
+#include <QPixmap>
+#include <QVector>
 #include <QWidget>
 
 class QLabel;
 class QPushButton;
 class QScrollArea;
+class QVBoxLayout;
 
 namespace quizpane::ui {
 
@@ -21,20 +25,33 @@ public:
     // 不同（包括从空变为非空）时更新内容并展开。调用方应在每次切题时无脑调用，
     // 由这里自行判断是否需要重绘。
     void showMaterial(const QString& materialId, const QString& title,
-                      const QString& contentHtml);
+                      const QString& contentHtml, const QJsonArray& imageUrls = {});
     void hideMaterial();
     QString currentMaterialId() const { return materialId_; }
 
 private:
     void toggleCollapsed();
     void applyCollapsedState();
+    void rebuildImagePreviews(const QJsonArray& imageUrls);
+    void updateBodyWidth();
+    void openImagePreview(const QString& imageUrl) const;
+
+protected:
+    void resizeEvent(QResizeEvent* event) override;
 
     QString materialId_;
     bool collapsed_ = false;
     QLabel* titleLabel_ = nullptr;
     QPushButton* toggleButton_ = nullptr;
     QScrollArea* bodyScroll_ = nullptr;
+    QWidget* bodyContent_ = nullptr;
+    QVBoxLayout* bodyLayout_ = nullptr;
     QLabel* bodyLabel_ = nullptr;
+    struct ImagePreview {
+        QPushButton* button = nullptr;
+        QPixmap pixmap;
+    };
+    QVector<ImagePreview> imagePreviews_;
 };
 
 }  // namespace quizpane::ui

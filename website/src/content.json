@@ -23,7 +23,7 @@
       "id": "import",
       "title": "PDF 导入与答案配对",
       "detail": "题目 PDF、答案 PDF 一起加进题库制作器；规则整理可离线完成。",
-      "shot": "assets/screenshots/import.svg"
+      "shot": "assets/screenshots/import.webp"
     },
     {
       "id": "materials",
@@ -102,9 +102,31 @@
     ],
     "repoLabel": "查看 GitHub 仓库"
   },
+  "contact": {
+    "title": "使用中遇到问题？直接联系我",
+    "note": "Bug、功能建议、题库兼容问题，或想加入 QQ 群、微信群、小红书群，都欢迎联系。",
+    "items": [
+      {
+        "label": "GitHub Issue",
+        "detail": "公开反馈 Bug、功能建议与兼容性问题",
+        "url": "https://github.com/tianyoudoge/quizpane/issues/new/choose"
+      },
+      {
+        "label": "电子邮件",
+        "detail": "xutianyoubupt@foxmail.com",
+        "url": "mailto:xutianyoubupt@foxmail.com"
+      },
+      {
+        "label": "加入交流社群",
+        "detail": "QQ群 / 微信群 / 小红书群，请邮件获取最新入口",
+        "url": "mailto:xutianyoubupt@foxmail.com?subject=QuizPane%20%E5%8A%A0%E5%85%A5%E4%BA%A4%E6%B5%81%E7%A4%BE%E7%BE%A4"
+      }
+    ]
+  },
   "footer": {
     "version": "QuizPane",
     "note": "本地优先的刷题工具",
+    "copyright": "© 2026 xutianyoubupt@foxmail.com · All rights reserved.",
     "links": [
       { "label": "GitHub", "url": "https://github.com/tianyoudoge/quizpane" },
       { "label": "最新版 Release", "url": "https://github.com/tianyoudoge/quizpane/releases/latest" }

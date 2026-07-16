@@ -44,6 +44,10 @@
 #include <QSettings>
 #include <QProcess>
 #include <QTreeWidget>
+
+#include <algorithm>
+#include <limits>
+#include <utility>
 #include <QTemporaryDir>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -702,7 +706,15 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
 }
 
 void StudioWindow::packageProvider() {
-    QJsonArray selected;
+    QList<QJsonObject> selectedObjects;
+    QHash<QString, int> sourceOrder;
+    int sourceOrdinal = 0;
+    const auto rememberSourceOrder = [&](const QJsonArray& questions) {
+        for (const auto& value : questions)
+            sourceOrder.insert(value.toObject().value("id").toString(), sourceOrdinal++);
+    };
+    rememberSourceOrder(generatedQuestions_);
+    rememberSourceOrder(reviewQuestions_);
     QSet<QString> usedMaterialIds;
     for (int topIndex = 0; topIndex < reviewTree_->topLevelItemCount(); ++topIndex) {
         QTreeWidgetItem* group = reviewTree_->topLevelItem(topIndex);
@@ -711,17 +723,25 @@ void StudioWindow::packageProvider() {
             if (child->checkState(0) == Qt::Unchecked) continue;
             const QJsonObject question = child->data(0, Qt::UserRole).toJsonObject();
             if (question.isEmpty()) continue;
-            selected.append(question);
+            selectedObjects.append(question);
             const QString materialId = question.value("materialId").toString();
             if (!materialId.isEmpty()) usedMaterialIds.insert(materialId);
         }
     }
-    if (selected.isEmpty()) {
+    if (selectedObjects.isEmpty()) {
         diagnostic::event(QStringLiteral("studio"), QStringLiteral("package-rejected"),
             {{QStringLiteral("reason"), QStringLiteral("no-selected-questions")}});
         QMessageBox::warning(this, QStringLiteral("无法生成"), QStringLiteral("至少需要采纳一道题。"));
         return;
     }
+    std::stable_sort(selectedObjects.begin(), selectedObjects.end(),
+        [&sourceOrder](const QJsonObject& left, const QJsonObject& right) {
+            return sourceOrder.value(left.value("id").toString(), std::numeric_limits<int>::max()) <
+                   sourceOrder.value(right.value("id").toString(), std::numeric_limits<int>::max());
+        });
+    QJsonArray selected;
+    for (const QJsonObject& question : std::as_const(selectedObjects))
+        selected.append(question);
     QString title = bankName_->text().trimmed();
     if (title.isEmpty()) title = QStringLiteral("我的题库");
     int questionCount = 0;

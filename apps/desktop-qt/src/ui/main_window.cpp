@@ -10,6 +10,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QCoreApplication>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -757,7 +758,7 @@ void MainWindow::startAttempt(const QString& categoryId, const QString& title,
     questionLabel_->setText(QStringLiteral("请稍候…"));
     clearLayout(optionsLayout_);
     lockedPracticeViewportHeight_ = 0;
-    questionScroll_->setFixedHeight(qMin(180, answerViewportMaximumHeight()));
+    questionScroll_->setMinimumHeight(layout_metrics::kMinimumPracticeViewportHeight);
     pages_->setCurrentWidget(practicePage_);
     QString error;
     if (!provider_.request(
@@ -801,45 +802,67 @@ void MainWindow::showQuestion(int index) {
     } else {
         const QJsonObject material = materialsById_.value(materialId);
         practiceMaterialCard_->showMaterial(materialId, material.value("title").toString(),
-                                            material.value("contentHtml").toString());
+                                            material.value("contentHtml").toString(),
+                                            material.value("imageUrls").toArray());
     }
     questionLabel_->setText(QStringLiteral("<div style=\"color:#d5d1c5\">%1</div>")
         .arg(question.value("contentHtml").toString()));
     clearLayout(optionsLayout_);
     const QJsonArray options = question.value("options").toArray();
     const bool multiple = question.value("type").toString() == QStringLiteral("multiple_choice");
+    delete optionButtonGroup_;
+    optionButtonGroup_ = multiple ? nullptr : new QButtonGroup(this);
+    if (optionButtonGroup_)
+        optionButtonGroup_->setExclusive(true);
     for (qsizetype optionIndex = 0; optionIndex < options.size(); ++optionIndex) {
         const QJsonObject option = options.at(optionIndex).toObject();
-        auto* button = multiple ? static_cast<QAbstractButton*>(new QCheckBox(QStringLiteral("%1. %2")
-            .arg(option.value("label").toString(), plainText(option.value("contentHtml").toString()))))
-            : static_cast<QAbstractButton*>(new QRadioButton(QStringLiteral("%1. %2")
+        // 不使用原生 RadioButton/CheckBox：macOS 会在指示器位置绘制半透明圆形
+        // 选中浮层，而我们这里的选项字母已经是按钮文本的一部分，二者会产生错位。
+        // QButtonGroup 继续负责单选互斥，多选则保留独立可切换行为。
+        auto* button = static_cast<QAbstractButton*>(new QPushButton(QStringLiteral("%1. %2")
             .arg(option.value("label").toString(), plainText(option.value("contentHtml").toString()))));
+        button->setCheckable(true);
         button->setObjectName(QStringLiteral("answerOption"));
         button->setChecked(multiple ? multiAnswers_.value(currentQuestionIndex_).contains(optionIndex)
                                     : answers_.value(currentQuestionIndex_, -1) == optionIndex);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+        if (optionButtonGroup_)
+            optionButtonGroup_->addButton(button);
         connect(button, &QAbstractButton::toggled, this,
                 [this, optionIndex](bool checked) {
                     if (questions_.at(currentQuestionIndex_).toObject().value("type").toString() ==
                         QStringLiteral("multiple_choice")) chooseAnswer(static_cast<int>(optionIndex), checked);
                     else if (checked) chooseAnswer(static_cast<int>(optionIndex));
                 });
-        optionsLayout_->addWidget(button);
+        auto* optionCard = new QFrame;
+        optionCard->setObjectName(QStringLiteral("answerOptionCard"));
+        optionCard->setProperty("checked", button->isChecked());
+        auto* optionLayout = new QVBoxLayout(optionCard);
+        optionLayout->setContentsMargins(8, 7, 8, 8);
+        optionLayout->setSpacing(4);
+        optionLayout->addWidget(button);
+        connect(button, &QAbstractButton::toggled, optionCard,
+                [optionCard](bool checked) {
+                    optionCard->setProperty("checked", checked);
+                    optionCard->style()->unpolish(optionCard);
+                    optionCard->style()->polish(optionCard);
+                });
         const QString imageUrl = option.value("imageUrl").toString();
         if (!imageUrl.isEmpty()) {
             auto* image = new QLabel;
             image->setObjectName(QStringLiteral("answerOptionImage"));
             image->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-            image->setIndent(34);
+            image->setAttribute(Qt::WA_TransparentForMouseEvents);
             QPixmap pixmap(QUrl(imageUrl).toLocalFile());
             if (!pixmap.isNull()) {
                 image->setPixmap(pixmap.scaledToWidth(220, Qt::SmoothTransformation));
                 image->setToolTip(QStringLiteral("选项 %1 的原卷图片").arg(option.value("label").toString()));
-                optionsLayout_->addWidget(image);
+                optionLayout->addWidget(image);
             } else {
                 image->deleteLater();
             }
         }
+        optionsLayout_->addWidget(optionCard);
     }
     previousQuestionButton_->setEnabled(currentQuestionIndex_ > 0);
     nextQuestionButton_->setEnabled(currentQuestionIndex_ + 1 < questions_.size());
@@ -988,7 +1011,8 @@ void MainWindow::showSolution(int index) {
     } else {
         const QJsonObject material = materialsById_.value(materialId);
         solutionMaterialCard_->showMaterial(materialId, material.value("title").toString(),
-                                            material.value("contentHtml").toString());
+                                            material.value("contentHtml").toString(),
+                                            material.value("imageUrls").toArray());
     }
     QString optionsHtml;
     for (const auto& optionValue : solution.value("options").toArray()) {
@@ -1232,10 +1256,7 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
         practiceControlBar_->height() + practice->spacing() * 2;
     const int viewportHeight = qMax(layout_metrics::kMinimumPracticeViewportHeight,
                                     event->size().height() - fixedHeight);
-    if (questionScroll_->height() != viewportHeight) {
-        lockedPracticeViewportHeight_ = viewportHeight;
-        questionScroll_->setFixedHeight(viewportHeight);
-    }
+    lockedPracticeViewportHeight_ = viewportHeight;
 }
 
 // ===== 题库安装、加载和切换 =====
@@ -1691,17 +1712,20 @@ void MainWindow::lockCompactPracticeHeight() {
     const int contentHeight = questionContentLayout_->sizeHint().height() + 4;
     lockedPracticeViewportHeight_ = qBound(150, contentHeight,
                                            answerViewportMaximumHeight());
-    questionScroll_->setFixedHeight(lockedPracticeViewportHeight_);
+    questionScroll_->setMinimumHeight(layout_metrics::kMinimumPracticeViewportHeight);
     questionScroll_->verticalScrollBar()->setSingleStep(24);
 
-    practicePage_->layout()->invalidate();
-    practicePage_->layout()->activate();
-    const int pageHeight = practicePage_->layout()->sizeHint().height();
     const auto* root = qobject_cast<QVBoxLayout*>(card_->layout());
+    const auto* practice = qobject_cast<QVBoxLayout*>(practicePage_->layout());
+    if (!root || !practice) return;
     const QMargins margins = root->contentsMargins();
-    const int totalHeight = margins.top() + margins.bottom() +
-                            headerBar_->height() + resizeHandle_->height() +
-                            root->spacing() * 2 + pageHeight;
+    const QMargins pageMargins = practice->contentsMargins();
+    const int fixedHeight = margins.top() + margins.bottom() +
+        headerBar_->height() + resizeHandle_->height() + root->spacing() * 2 +
+        pageMargins.top() + pageMargins.bottom() +
+        practiceProgressLabel_->sizeHint().height() +
+        practiceControlBar_->height() + practice->spacing() * 2;
+    const int totalHeight = fixedHeight + lockedPracticeViewportHeight_;
     const QPoint oldTopRight = frameGeometry().topRight();
     resize(width(), totalHeight);
     if (isVisible()) move(oldTopRight.x() - width() + 1, oldTopRight.y());

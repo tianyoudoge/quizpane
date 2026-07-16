@@ -229,8 +229,29 @@
     });
   }
 
+  function renderContact(contact) {
+    const grid = $("#contact-grid");
+    grid.innerHTML = "";
+    contact.items.forEach((item) => {
+      const link = document.createElement("a");
+      link.className = "contact-card";
+      link.href = item.url;
+      if (item.url.startsWith("http")) {
+        link.target = "_blank";
+        link.rel = "noopener";
+      }
+      const title = document.createElement("strong");
+      title.textContent = item.label;
+      const detail = document.createElement("span");
+      detail.textContent = item.detail;
+      link.append(title, detail);
+      grid.append(link);
+    });
+  }
+
   function renderFooter(footer) {
     $("#footer-note").textContent = `${footer.version} · ${footer.note}`;
+    $("#footer-copyright").textContent = footer.copyright;
     const nav = $("#footer-links");
     nav.innerHTML = "";
     footer.links.forEach((link) => {
@@ -280,6 +301,7 @@
     renderCarousel(content.carousel);
     renderWorkflow(content.workflow);
     renderPrivacy(content.privacy);
+    renderContact(content.contact);
     renderFooter(content.footer);
     setupMobileNav();
     setupCarousel();
