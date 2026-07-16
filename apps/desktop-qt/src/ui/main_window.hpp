@@ -24,7 +24,10 @@ class QTimer;
 class QVBoxLayout;
 class QSystemTrayIcon;
 
-namespace quizpane::ui { class MaterialCard; }
+namespace quizpane::ui {
+class MaterialCard;
+class QuestionNavigator;
+}
 
 namespace quizpane {
 
@@ -71,6 +74,8 @@ private:
     void updateMaterialsCache(const QJsonArray& materials);
     void showQuestion(int index);
     void chooseAnswer(int choice, bool checked = true);
+    void toggleQuestionNavigator();
+    void refreshQuestionNavigator();
     QJsonArray answerPayload() const;
     void submitAttempt();
     void confirmSubmitAttempt();
@@ -149,7 +154,9 @@ private:
     QWidget* practiceControlBar_ = nullptr;
     QPushButton* previousQuestionButton_ = nullptr;
     QPushButton* nextQuestionButton_ = nullptr;
+    QPushButton* questionListButton_ = nullptr;
     QPushButton* submitButton_ = nullptr;
+    ui::QuestionNavigator* questionNavigator_ = nullptr;
     QFrame* submitConfirmationBubble_ = nullptr;
     QLabel* submitConfirmationLabel_ = nullptr;
     QLabel* resultSummaryLabel_ = nullptr;

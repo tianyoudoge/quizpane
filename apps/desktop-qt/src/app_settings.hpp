@@ -26,8 +26,10 @@ inline constexpr int kWindowMargin = 14;
 inline constexpr int kControlSpacing = 7;
 inline constexpr int kIconPixels = 15;
 inline constexpr int kIconButtonPixels = 26;
+inline constexpr int kNavIconPixels = 19;
+inline constexpr int kNavIconButtonPixels = 34;
 inline constexpr int kHeaderHeight = 28;
-inline constexpr int kControlBarHeight = 30;
+inline constexpr int kControlBarHeight = 38;
 inline constexpr int kMinimumPracticeViewportHeight = 120;
 inline constexpr int kSubmitBubbleInset = 7;
 }

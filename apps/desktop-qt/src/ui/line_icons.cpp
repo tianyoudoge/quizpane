@@ -65,6 +65,17 @@ QIcon makeLineIcon(LineIcon type) {
             painter.drawLine(QPointF(10, y), QPointF(18, y));
         }
         break;
+    case LineIcon::QuestionList:
+        path.moveTo(5, 3.5); path.lineTo(15, 3.5); path.lineTo(19, 7.5);
+        path.lineTo(19, 20.5); path.lineTo(5, 20.5); path.closeSubpath();
+        painter.drawPath(path);
+        painter.drawLine(QPointF(15, 3.5), QPointF(15, 7.5));
+        painter.drawLine(QPointF(15, 7.5), QPointF(19, 7.5));
+        for (int y : {10, 14, 18}) {
+            painter.drawRect(QRectF(8, y - 1, 2, 2));
+            painter.drawLine(QPointF(12, y), QPointF(16, y));
+        }
+        break;
     case LineIcon::Menu:
         painter.drawLine(QPointF(5, 7), QPointF(19, 7));
         painter.drawLine(QPointF(5, 12), QPointF(19, 12));

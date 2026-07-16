@@ -7,6 +7,7 @@
 #include "quizpane/provider_response_router.hpp"
 #include "line_icons.hpp"
 #include "material_card.hpp"
+#include "question_navigator.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -18,6 +19,7 @@
 #include <QFileInfo>
 #include <QFrame>
 #include <QGridLayout>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QIcon>
@@ -276,31 +278,42 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     questionNav->setContentsMargins(0, 0, 0, 0);
     previousQuestionButton_ = new QPushButton;
     nextQuestionButton_ = new QPushButton;
+    questionListButton_ = new QPushButton;
     submitButton_ = new QPushButton;
     previousQuestionButton_->setIcon(makeLineIcon(LineIcon::Previous));
     nextQuestionButton_->setIcon(makeLineIcon(LineIcon::Next));
+    questionListButton_->setIcon(makeLineIcon(LineIcon::QuestionList));
     submitButton_->setIcon(makeLineIcon(LineIcon::Submit));
-    for (auto* button : {previousQuestionButton_, nextQuestionButton_, submitButton_})
+    for (auto* button : {previousQuestionButton_, nextQuestionButton_, questionListButton_, submitButton_})
         button->setObjectName(QStringLiteral("navIconButton"));
     previousQuestionButton_->setAccessibleName(QStringLiteral("上一题"));
     previousQuestionButton_->setToolTip(QStringLiteral("上一题"));
     nextQuestionButton_->setAccessibleName(QStringLiteral("下一题"));
     nextQuestionButton_->setToolTip(QStringLiteral("下一题"));
+    questionListButton_->setAccessibleName(QStringLiteral("选题清单"));
+    questionListButton_->setToolTip(QStringLiteral("选题清单"));
     submitButton_->setAccessibleName(QStringLiteral("交卷"));
     submitButton_->setToolTip(QStringLiteral("交卷"));
     questionNav->addWidget(previousQuestionButton_);
     questionNav->addWidget(nextQuestionButton_);
+    questionNav->addWidget(questionListButton_);
     questionNav->addStretch();
     questionNav->addWidget(submitButton_);
     connect(previousQuestionButton_, &QPushButton::clicked, this,
             [this] { showQuestion(currentQuestionIndex_ - 1); });
     connect(nextQuestionButton_, &QPushButton::clicked, this,
             [this] { showQuestion(currentQuestionIndex_ + 1); });
+    connect(questionListButton_, &QPushButton::clicked,
+            this, &MainWindow::toggleQuestionNavigator);
     connect(submitButton_, &QPushButton::clicked, this, &MainWindow::submitAttempt);
     practiceLayout->addWidget(practiceTitleLabel_);
     practiceLayout->addWidget(practiceProgressLabel_);
     practiceLayout->addWidget(questionScroll_);
     practiceLayout->addWidget(practiceControlBar_);
+
+    questionNavigator_ = new ui::QuestionNavigator(this);
+    connect(questionNavigator_, &ui::QuestionNavigator::questionSelected,
+            this, &MainWindow::showQuestion);
 
     // 非模态确认气泡是答题页的覆盖层，不进入主布局，因此出现时不会撑高窗口。
     submitConfirmationBubble_ = new QFrame(practicePage_);
@@ -421,6 +434,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     resizeHandle_->setVisible(false);
     layout->addWidget(resizeHandle_);
     connect(pages_, &QStackedWidget::currentChanged, this, [this] {
+        if (questionNavigator_) questionNavigator_->hide();
         resizeHandle_->setVisible(pages_->currentWidget() == practicePage_);
         QTimer::singleShot(0, this, &MainWindow::adjustWindowForCurrentPage);
     });
@@ -869,6 +883,7 @@ void MainWindow::showQuestion(int index) {
     questionScroll_->verticalScrollBar()->setValue(0);
     if (lockedPracticeViewportHeight_ == 0)
         QTimer::singleShot(0, this, &MainWindow::lockCompactPracticeHeight);
+    refreshQuestionNavigator();
     saveDraft();
 }
 
@@ -885,6 +900,7 @@ void MainWindow::chooseAnswer(int choice, bool checked) {
     practiceProgressLabel_->setText(QStringLiteral("第 %1 / %2 题 · 已作答 %3 题")
         .arg(currentQuestionIndex_ + 1).arg(questions_.size())
         .arg(std::count_if(answers_.cbegin(), answers_.cend(), [](int value) { return value >= 0; })));
+    refreshQuestionNavigator();
     const QJsonObject question = questions_.at(currentQuestionIndex_).toObject();
     QJsonValue savedChoice = QString::number(choice);
     if (multiple) { QJsonArray values; for (int value : multiAnswers_[currentQuestionIndex_]) values.append(QString::number(value)); savedChoice = values; }
@@ -920,6 +936,40 @@ void MainWindow::chooseAnswer(int choice, bool checked) {
                 submitAttempt();
         });
     }
+}
+
+void MainWindow::refreshQuestionNavigator() {
+    if (!questionNavigator_) return;
+    QSet<int> answered;
+    for (int index = 0; index < answers_.size(); ++index) {
+        if (answers_.at(index) >= 0) answered.insert(index);
+    }
+    questionNavigator_->setState(static_cast<int>(questions_.size()), answered,
+                                 currentQuestionIndex_);
+}
+
+void MainWindow::toggleQuestionNavigator() {
+    if (!questionNavigator_ || questions_.isEmpty()) return;
+    if (questionNavigator_->isVisible()) {
+        questionNavigator_->hide();
+        return;
+    }
+    refreshQuestionNavigator();
+    questionNavigator_->resize(300, qBound(150, questionNavigator_->sizeHint().height(), 320));
+    const QPoint anchor = questionListButton_->mapToGlobal(
+        QPoint(questionListButton_->width(), 0));
+    QScreen* screen = QGuiApplication::screenAt(anchor);
+    const QRect area = screen ? screen->availableGeometry()
+                              : QRect(anchor - QPoint(320, 340), QSize(640, 680));
+    int x = anchor.x() - questionNavigator_->width();
+    int y = anchor.y() - questionNavigator_->height() - 8;
+    if (y < area.top())
+        y = questionListButton_->mapToGlobal(QPoint(0, questionListButton_->height())).y() + 8;
+    x = qBound(area.left() + 4, x, area.right() - questionNavigator_->width() - 4);
+    y = qBound(area.top() + 4, y, area.bottom() - questionNavigator_->height() - 4);
+    questionNavigator_->move(x, y);
+    questionNavigator_->show();
+    questionNavigator_->raise();
 }
 
 QJsonArray MainWindow::answerPayload() const {
@@ -1317,6 +1367,7 @@ void MainWindow::loadProvider(const QString& path) {
     solutionMaterialCard_->hideMaterial();
     answers_.clear();
     multiAnswers_.clear();
+    if (questionNavigator_) questionNavigator_->hide();
     QString error;
     if (!provider_.load(path, &error)) {
         diagnostic::event(QStringLiteral("ui"), QStringLiteral("load-provider-failed"),
@@ -1626,6 +1677,8 @@ void MainWindow::applyUiSize(UiSize size) {
     constexpr int spacing = layout_metrics::kControlSpacing;
     constexpr int iconPixels = layout_metrics::kIconPixels;
     constexpr int iconButtonPixels = layout_metrics::kIconButtonPixels;
+    constexpr int navIconPixels = layout_metrics::kNavIconPixels;
+    constexpr int navIconButtonPixels = layout_metrics::kNavIconButtonPixels;
     if (size == UiSize::Small) {
         property = QStringLiteral("small");
         windowSize = QSize(320, 460);
@@ -1649,15 +1702,17 @@ void MainWindow::applyUiSize(UiSize size) {
     headerBar_->setFixedHeight(layout_metrics::kHeaderHeight);
     practiceControlBar_->setFixedHeight(layout_metrics::kControlBarHeight);
     solutionControlBar_->setFixedHeight(layout_metrics::kControlBarHeight);
-    const QSize iconSize(iconPixels, iconPixels);
     for (auto* button : card_->findChildren<QPushButton*>()) {
         const QString name = button->objectName();
         if (name != QStringLiteral("navIconButton") &&
             name != QStringLiteral("headerIconButton") &&
             name != QStringLiteral("pinButton") &&
             name != QStringLiteral("closeButton")) continue;
-        button->setIconSize(iconSize);
-        button->setFixedSize(iconButtonPixels, iconButtonPixels);
+        const bool bottomNavigation = name == QStringLiteral("navIconButton");
+        const int pixels = bottomNavigation ? navIconPixels : iconPixels;
+        const int buttonPixels = bottomNavigation ? navIconButtonPixels : iconButtonPixels;
+        button->setIconSize(QSize(pixels, pixels));
+        button->setFixedSize(buttonPixels, buttonPixels);
     }
     if (qrLabel_->isVisible() && !qrContent_.isEmpty())
         setQrContent(qrContent_);

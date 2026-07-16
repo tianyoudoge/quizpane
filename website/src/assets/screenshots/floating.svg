@@ -14,8 +14,10 @@
       <rect x="22" y="396" width="596" height="62" rx="15" fill="#30333a"/><circle cx="53" cy="427" r="18" fill="#7d818c" fill-opacity=".4"/><text x="46" y="434">C</text><text x="88" y="434">司法机关</text>
       <rect x="22" y="472" width="596" height="62" rx="15" fill="#4b4568" stroke="#8f83ff" stroke-width="2"/><circle cx="53" cy="503" r="18" fill="#8f83ff" fill-opacity=".4"/><text x="46" y="510">D</text><text x="88" y="510">法律监督机关</text>
     </g>
-    <path d="M38 678l22-14-8 25-5-10z" fill="none" stroke="#c4c8d0" stroke-width="3" stroke-linejoin="round"/>
-    <path d="M586 664v28m-10-14h20" stroke="#c4c8d0" stroke-width="3" stroke-linecap="round"/>
-    <text x="320" y="722" fill="#8e94a1" font-size="15" text-anchor="middle">可上下拉伸并恢复，小窗状态不锁死</text>
+    <path d="M58 660l-12 12 12 12" fill="none" stroke="#c4c8d0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M103 660l12 12-12 12" fill="none" stroke="#c4c8d0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M146 657h18l7 7v24h-25zM164 657v8h7M152 672h13M152 679h13" fill="none" stroke="#c4c8d0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M574 658h22v29h-22zM580 667h10M580 675h10" fill="none" stroke="#c4c8d0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="320" y="726" fill="#8e94a1" font-size="15" text-anchor="middle">底栏图标放大 · 试卷按钮打开选题清单</text>
   </g>
 </svg>

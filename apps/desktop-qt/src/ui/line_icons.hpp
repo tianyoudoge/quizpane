@@ -14,6 +14,7 @@ enum class LineIcon {
     Resize,
     Close,
     Catalog,
+    QuestionList,
     Menu,
     ChevronUp,
     ChevronDown

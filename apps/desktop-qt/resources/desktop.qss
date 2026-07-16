@@ -25,6 +25,14 @@ QPushButton:hover { background: rgba(255,255,255,22); }
 QPushButton#smallButton { padding: 5px 7px; min-width: 48px; }
 QPushButton#navIconButton, QPushButton#headerIconButton, QPushButton#pinButton, QPushButton#closeButton, QPushButton#materialCardToggle { background: transparent; border: none; padding: 0; }
 QPushButton:disabled { background: transparent; color: rgba(170,176,184,70); }
+QFrame#questionNavigatorPopup { background: rgba(25,28,33,252); border: 1px solid rgba(255,255,255,24); border-radius: 10px; }
+QLabel#questionNavigatorTitle { color: #e0e3e7; font-weight: 650; font-size: 13px; }
+QLabel#questionNavigatorSummary { color: #969da6; font-size: 11px; }
+QScrollArea#questionNavigatorScroll, QScrollArea#questionNavigatorScroll > QWidget > QWidget { background: transparent; border: none; }
+QPushButton#questionNumberButton { background: transparent; color: #c8cdd3; border: 1px solid rgba(255,255,255,28); border-radius: 7px; padding: 0; }
+QPushButton#questionNumberButton:hover { background: rgba(255,255,255,20); }
+QPushButton#questionNumberButton[answered="true"] { background: rgba(180,188,198,52); border-color: rgba(210,216,224,34); color: #e5e8ec; }
+QPushButton#questionNumberButton[current="true"] { border: 1px solid rgba(181,194,211,185); color: #ffffff; }
 QFrame#answerOptionCard { background: rgba(255,255,255,10); border-radius: 7px; }
 QFrame#answerOptionCard[checked="true"] { background: rgba(180,188,198,38); }
 QPushButton#answerOption { color: #c8cdd3; background: transparent; border: none; padding: 0; text-align: left; }

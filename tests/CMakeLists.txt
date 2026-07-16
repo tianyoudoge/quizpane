@@ -85,6 +85,13 @@ add_executable(material_card_test
 target_link_libraries(material_card_test PRIVATE Qt6::Widgets)
 add_test(NAME material_card_test COMMAND material_card_test)
 
+add_executable(question_navigator_test
+    question_navigator_test.cpp
+    ../apps/desktop-qt/src/ui/question_navigator.cpp
+)
+target_link_libraries(question_navigator_test PRIVATE Qt6::Widgets)
+add_test(NAME question_navigator_test COMMAND question_navigator_test)
+
 if(TARGET question_maker_engine)
     add_executable(document_extractor_test document_extractor_test.cpp)
     target_link_libraries(document_extractor_test PRIVATE
