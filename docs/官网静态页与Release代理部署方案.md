@@ -1,6 +1,6 @@
 # QuizPane 官网静态页与 Release 下载代理方案
 
-> 状态：待确认，不包含产品网站或服务器代码实现。
+> 状态：页面与下载代理服务待实现；Ubuntu 部署脚本已准备，见 [`deploy/README.md`](../deploy/README.md)。
 
 ## 1. 目标与边界
 
@@ -77,6 +77,8 @@ deploy/
 ```
 
 静态页建议使用 Vite + 原生 TypeScript（或完全无框架）；页面内容存放为本地 JSON/Markdown，版本信息通过 `/api/releases/latest` 动态读取。
+
+仓库现已提供部署基础设施：`deploy/scripts/bootstrap-ubuntu.sh` 初始化 Ubuntu、Nginx、systemd 和密钥文件；`deploy/scripts/install-artifacts.sh` 在页面与代理制品完成后原子发布。两者均不导入 PDF 或采集宣传图。
 
 ## 5. Release 代理缓存架构
 

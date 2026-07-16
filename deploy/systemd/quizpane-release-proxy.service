@@ -1,0 +1,30 @@
+[Unit]
+Description=QuizPane GitHub Release cache proxy
+Documentation=https://github.com/tianyoudoge/quizpane
+Wants=network-online.target
+After=network-online.target
+ConditionPathIsExecutable=/opt/quizpane/release-proxy/current/quizpane-release-proxy
+
+[Service]
+Type=simple
+User=quizpane
+Group=quizpane
+UMask=0027
+EnvironmentFile=/etc/quizpane/release-proxy.env
+WorkingDirectory=/opt/quizpane/release-proxy/current
+ExecStart=/opt/quizpane/release-proxy/current/quizpane-release-proxy
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/quizpane /var/lib/quizpane
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
