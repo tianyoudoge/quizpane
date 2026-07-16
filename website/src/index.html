@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QuizPane · 把 PDF 真题变成能刷的题库</title>
+<meta name="description" content="本地优先的小窗刷题工具。导入题目 PDF 和答案 PDF，离线整理成题库，隐蔽小窗作答，PDF 图表和图片选项都不丢失。" />
+<meta name="theme-color" content="#14161a" />
+<link rel="icon" href="assets/icons/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="main.css" />
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="#top">
+      <img src="assets/icons/logo.svg" alt="" width="24" height="24" />
+      <span>QuizPane</span>
+    </a>
+    <nav class="topnav" aria-label="页面导航">
+      <a href="#features">能力</a>
+      <a href="#workflow">工作流</a>
+      <a href="#download">下载</a>
+      <a href="#privacy">隐私与开源</a>
+    </nav>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav">
+      <span class="sr-only">打开菜单</span>
+      <span aria-hidden="true"></span>
+    </button>
+  </div>
+  <nav id="mobile-nav" class="mobile-nav" aria-label="移动端导航" hidden>
+    <a href="#features">能力</a>
+    <a href="#workflow">工作流</a>
+    <a href="#download">下载</a>
+    <a href="#privacy">隐私与开源</a>
+  </nav>
+</header>
+
+<main id="main">
+  <section id="top" class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <h1 data-bind="hero.headline"></h1>
+        <p class="hero-sub" data-bind="hero.subhead"></p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" id="hero-download" href="#download" data-bind="hero.primaryCta"></a>
+          <a class="btn btn-ghost" href="#features" data-bind="hero.secondaryCta"></a>
+        </div>
+      </div>
+      <div class="hero-shot">
+        <img id="hero-image" src="assets/screenshots/floating.svg" alt="QuizPane 小窗刷题界面截图" width="960" height="600" loading="eager" />
+      </div>
+    </div>
+  </section>
+
+  <section id="features" class="trust" aria-label="核心能力">
+    <ul class="trust-grid" id="trust-list"></ul>
+  </section>
+
+  <section class="carousel-section" aria-label="功能展示">
+    <div class="carousel" id="carousel" role="region" aria-roledescription="轮播" aria-label="功能展示轮播">
+      <div class="carousel-track" id="carousel-track" tabindex="0"></div>
+      <div class="carousel-controls">
+        <button type="button" class="carousel-btn" id="carousel-prev" aria-label="上一张">‹</button>
+        <div class="carousel-dots" id="carousel-dots" role="tablist" aria-label="轮播位置"></div>
+        <button type="button" class="carousel-btn" id="carousel-next" aria-label="下一张">›</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="workflow" class="workflow">
+    <h2 data-bind="workflow.title"></h2>
+    <ol class="workflow-steps" id="workflow-steps"></ol>
+  </section>
+
+  <section id="download" class="downloads">
+    <h2 data-bind="downloads.title"></h2>
+    <p class="downloads-note" data-bind="downloads.note"></p>
+    <p class="downloads-meta" id="release-meta">正在获取最新版本…</p>
+    <div class="download-grid" id="download-grid"></div>
+  </section>
+
+  <section id="privacy" class="privacy">
+    <h2 data-bind="privacy.title"></h2>
+    <ul class="privacy-points" id="privacy-points"></ul>
+    <a class="btn btn-ghost" id="privacy-repo-link" href="https://github.com/tianyoudoge/quizpane" target="_blank" rel="noopener">
+      <span data-bind="privacy.repoLabel"></span>
+    </a>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <span id="footer-note"></span>
+    <nav class="footer-links" id="footer-links" aria-label="页脚链接"></nav>
+  </div>
+</footer>
+
+<script src="main.js" defer></script>
+</body>
+</html>

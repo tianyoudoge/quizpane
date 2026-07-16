@@ -1,0 +1,578 @@
+#!/usr/bin/env node
+"use strict";
+
+// QuizPane Release download proxy: polls the GitHub Releases API on an
+// interval, caches release metadata and asset binaries to local disk, and
+// serves them over plain HTTP behind the nginx config in deploy/nginx/. No
+// dependencies beyond Node's standard library and its built-in fetch
+// (Node 18+). Deployed as a single executable file — see
+// deploy/scripts/install-artifacts.sh --proxy-binary and
+// deploy/systemd/quizpane-release-proxy.service.
+//
+// This proxy assumes it runs somewhere that can reach github.com and
+// api.github.com reliably. If the host itself cannot reach GitHub, polling
+// and cache fills will simply keep failing and /healthz will report
+// status "degraded" — the point of the cache is to shield end users from
+// GitHub connectivity, not the proxy host itself.
+
+const http = require("node:http");
+const fs = require("node:fs");
+const fsp = require("node:fs/promises");
+const path = require("node:path");
+const crypto = require("node:crypto");
+
+const CONFIG = loadConfig();
+
+const state = {
+  releasesByTag: new Map(), // tag -> { tag, publishedAt, htmlUrl, assets: Map<name, {size, sha256, downloadUrl}> }
+  orderedTags: [], // newest first, per GitHub API ordering
+  currentTag: null,
+  lastPollAt: null,
+  lastPollOk: false,
+  lastPollError: null,
+  cachedAssets: new Map(), // "tag/asset" -> { size, sha256, cachedAt, lastAccessedAt }
+  inFlightDownloads: new Map(), // "tag/asset" -> Promise<string absolute file path>
+};
+
+function loadConfig() {
+  const env = process.env;
+  const owner = env.GITHUB_OWNER || "";
+  const repo = env.GITHUB_REPOSITORY || "";
+  if (!owner || !repo) {
+    console.error("GITHUB_OWNER and GITHUB_REPOSITORY are required.");
+    process.exit(1);
+  }
+  const cacheDir = path.resolve(env.CACHE_DIR || "./data/releases");
+  const stateDir = path.resolve(env.STATE_DIR || "./data/state");
+  return {
+    owner,
+    repo,
+    token: env.GITHUB_TOKEN || "",
+    listenHost: env.LISTEN_HOST || "127.0.0.1",
+    listenPort: Number.parseInt(env.LISTEN_PORT || "8787", 10),
+    cacheDir,
+    stateDir,
+    cacheMaxBytes: Number.parseInt(env.CACHE_MAX_BYTES || String(30 * 1024 * 1024 * 1024), 10),
+    keepReleases: Math.max(1, Number.parseInt(env.KEEP_RELEASES || "2", 10)),
+    pollIntervalSeconds: Math.max(60, Number.parseInt(env.POLL_INTERVAL_SECONDS || "1800", 10)),
+    preheatAssets: (env.PREHEAT_ASSETS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    logLevel: env.LOG_LEVEL || "info",
+    accessWindowMs: 7 * 24 * 60 * 60 * 1000,
+  };
+}
+
+function log(level, message, extra) {
+  const levels = { error: 0, warn: 1, info: 2, debug: 3 };
+  if ((levels[level] ?? 2) > (levels[CONFIG.logLevel] ?? 2)) return;
+  const line = `[${new Date().toISOString()}] ${level.toUpperCase()} ${message}`;
+  const out = level === "error" || level === "warn" ? console.error : console.log;
+  out(extra !== undefined ? `${line} ${JSON.stringify(extra)}` : line);
+}
+
+async function ensureDirs() {
+  await fsp.mkdir(CONFIG.cacheDir, { recursive: true });
+  await fsp.mkdir(CONFIG.stateDir, { recursive: true });
+}
+
+async function cleanupStaleTempFiles() {
+  const entries = await fsp.readdir(CONFIG.cacheDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name.startsWith(".tmp-")) {
+      await fsp.unlink(path.join(CONFIG.cacheDir, entry.name)).catch(() => {});
+    }
+  }
+}
+
+const STATE_FILE_NAME = "state.json";
+
+async function loadPersistedState() {
+  const file = path.join(CONFIG.stateDir, STATE_FILE_NAME);
+  try {
+    const raw = await fsp.readFile(file, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed.cachedAssets) {
+      state.cachedAssets = new Map(Object.entries(parsed.cachedAssets));
+    }
+    log("info", "Loaded persisted state", { cachedAssetCount: state.cachedAssets.size });
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      log("warn", "Failed to load persisted state, starting fresh", { error: error.message });
+    }
+  }
+}
+
+async function persistState() {
+  const file = path.join(CONFIG.stateDir, STATE_FILE_NAME);
+  const tmp = path.join(CONFIG.stateDir, `.${STATE_FILE_NAME}.tmp-${process.pid}`);
+  const payload = {
+    cachedAssets: Object.fromEntries(state.cachedAssets),
+    currentTag: state.currentTag,
+    lastPollAt: state.lastPollAt,
+  };
+  await fsp.writeFile(tmp, JSON.stringify(payload, null, 2), "utf8");
+  await fsp.rename(tmp, file);
+}
+
+// --- GitHub API ---
+
+async function githubFetch(apiPath) {
+  const headers = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "quizpane-release-proxy",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  if (CONFIG.token) headers.Authorization = `Bearer ${CONFIG.token}`;
+  const response = await fetch(`https://api.github.com${apiPath}`, { headers });
+  if (!response.ok) {
+    throw new Error(`GitHub API ${apiPath} returned ${response.status}`);
+  }
+  return response.json();
+}
+
+function normalizeRelease(raw) {
+  const assets = new Map();
+  for (const asset of raw.assets || []) {
+    if (asset.state !== "uploaded") continue;
+    const digest = typeof asset.digest === "string" && asset.digest.startsWith("sha256:") ? asset.digest.slice(7) : null;
+    assets.set(asset.name, {
+      size: asset.size,
+      sha256: digest,
+      downloadUrl: asset.browser_download_url,
+    });
+  }
+  return {
+    tag: raw.tag_name,
+    publishedAt: raw.published_at,
+    htmlUrl: raw.html_url,
+    assets,
+  };
+}
+
+async function pollReleases() {
+  state.lastPollAt = new Date().toISOString();
+  try {
+    const raw = await githubFetch(`/repos/${CONFIG.owner}/${CONFIG.repo}/releases?per_page=5`);
+    const releases = raw
+      .filter((r) => !r.draft && !r.prerelease)
+      .sort((a, b) => new Date(b.published_at) - new Date(a.published_at))
+      .map(normalizeRelease);
+
+    if (releases.length === 0) {
+      throw new Error("No published releases found");
+    }
+
+    state.releasesByTag = new Map(releases.map((r) => [r.tag, r]));
+    state.orderedTags = releases.map((r) => r.tag);
+    const previousTag = state.currentTag;
+    state.currentTag = releases[0].tag;
+    state.lastPollOk = true;
+    state.lastPollError = null;
+    log("info", "Poll succeeded", { currentTag: state.currentTag, releaseCount: releases.length });
+
+    if (state.currentTag !== previousTag) {
+      preheatCurrentRelease().catch((error) => log("warn", "Preheat failed", { error: error.message }));
+    }
+
+    await persistState();
+    await enforceCacheBudget();
+  } catch (error) {
+    state.lastPollOk = false;
+    state.lastPollError = error.message;
+    log("warn", "Poll failed, continuing to serve cached data", { error: error.message });
+  }
+}
+
+async function preheatCurrentRelease() {
+  const tag = state.currentTag;
+  if (!tag) return;
+  for (const assetName of CONFIG.preheatAssets) {
+    try {
+      await ensureAssetCached(tag, assetName);
+      log("info", "Preheated asset", { tag, assetName });
+    } catch (error) {
+      log("warn", "Failed to preheat asset", { tag, assetName, error: error.message });
+    }
+  }
+}
+
+// --- Cache management ---
+
+function assetKey(tag, assetName) {
+  return `${tag}/${assetName}`;
+}
+
+function lookupAsset(tag, assetName) {
+  const release = state.releasesByTag.get(tag);
+  if (!release) return null;
+  const asset = release.assets.get(assetName);
+  if (!asset) return null;
+  return asset;
+}
+
+function cachePathFor(tag, assetName) {
+  return path.join(CONFIG.cacheDir, tag, assetName);
+}
+
+async function isCachedOnDisk(tag, assetName) {
+  try {
+    const stat = await fsp.stat(cachePathFor(tag, assetName));
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function ensureAssetCached(tag, assetName) {
+  const known = lookupAsset(tag, assetName);
+  if (!known) {
+    const error = new Error("Unknown release asset");
+    error.code = "NOT_FOUND";
+    throw error;
+  }
+
+  const key = assetKey(tag, assetName);
+  if (await isCachedOnDisk(tag, assetName)) {
+    touchAccess(key);
+    return cachePathFor(tag, assetName);
+  }
+
+  if (state.inFlightDownloads.has(key)) {
+    return state.inFlightDownloads.get(key);
+  }
+
+  const downloadPromise = downloadAsset(tag, assetName, known).finally(() => {
+    state.inFlightDownloads.delete(key);
+  });
+  state.inFlightDownloads.set(key, downloadPromise);
+  return downloadPromise;
+}
+
+async function downloadAsset(tag, assetName, known) {
+  const destDir = path.join(CONFIG.cacheDir, tag);
+  await fsp.mkdir(destDir, { recursive: true });
+  const finalPath = cachePathFor(tag, assetName);
+  const tmpPath = path.join(CONFIG.cacheDir, `.tmp-${crypto.randomUUID()}`);
+
+  log("info", "Downloading asset from GitHub", { tag, assetName });
+  const response = await fetch(known.downloadUrl, {
+    headers: { "User-Agent": "quizpane-release-proxy" },
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`Upstream download failed with status ${response.status}`);
+  }
+
+  const hash = crypto.createHash("sha256");
+  let bytesWritten = 0;
+  const fileHandle = await fsp.open(tmpPath, "w");
+  try {
+    for await (const chunk of response.body) {
+      const buffer = Buffer.from(chunk);
+      hash.update(buffer);
+      bytesWritten += buffer.length;
+      await fileHandle.write(buffer);
+    }
+  } finally {
+    await fileHandle.close();
+  }
+
+  const sha256 = hash.digest("hex");
+  if (known.size != null && bytesWritten !== known.size) {
+    await fsp.unlink(tmpPath).catch(() => {});
+    throw new Error(`Size mismatch for ${assetName}: expected ${known.size}, got ${bytesWritten}`);
+  }
+  if (known.sha256 && sha256 !== known.sha256) {
+    await fsp.unlink(tmpPath).catch(() => {});
+    throw new Error(`SHA-256 mismatch for ${assetName}`);
+  }
+
+  await fsp.rename(tmpPath, finalPath);
+  const key = assetKey(tag, assetName);
+  state.cachedAssets.set(key, {
+    size: bytesWritten,
+    sha256,
+    cachedAt: new Date().toISOString(),
+    lastAccessedAt: new Date().toISOString(),
+  });
+  await persistState();
+  log("info", "Cached asset", { tag, assetName, bytesWritten });
+  return finalPath;
+}
+
+function touchAccess(key) {
+  const entry = state.cachedAssets.get(key);
+  if (entry) {
+    entry.lastAccessedAt = new Date().toISOString();
+  }
+}
+
+async function currentCacheBytes() {
+  let total = 0;
+  for (const entry of state.cachedAssets.values()) {
+    total += entry.size || 0;
+  }
+  return total;
+}
+
+async function enforceCacheBudget() {
+  let total = await currentCacheBytes();
+  if (total <= CONFIG.cacheMaxBytes) return;
+
+  const protectedTags = new Set(state.orderedTags.slice(0, CONFIG.keepReleases));
+  const now = Date.now();
+
+  const candidates = [...state.cachedAssets.entries()]
+    .filter(([key]) => {
+      const [tag] = key.split("/");
+      if (protectedTags.has(tag)) return false;
+      const entry = state.cachedAssets.get(key);
+      const lastAccessed = entry.lastAccessedAt ? new Date(entry.lastAccessedAt).getTime() : 0;
+      return now - lastAccessed > CONFIG.accessWindowMs;
+    })
+    .sort((a, b) => new Date(a[1].lastAccessedAt || 0) - new Date(b[1].lastAccessedAt || 0));
+
+  for (const [key, entry] of candidates) {
+    if (total <= CONFIG.cacheMaxBytes) break;
+    const [tag, assetName] = key.split("/");
+    await fsp.unlink(cachePathFor(tag, assetName)).catch(() => {});
+    state.cachedAssets.delete(key);
+    total -= entry.size || 0;
+    log("info", "Evicted cached asset to stay within budget", { tag, assetName });
+  }
+  await persistState();
+}
+
+// --- HTTP server ---
+
+const CONTENT_TYPES = {
+  ".dmg": "application/x-apple-diskimage",
+  ".exe": "application/octet-stream",
+  ".deb": "application/vnd.debian.binary-package",
+  ".tar.gz": "application/gzip",
+  ".tar.xz": "application/x-xz",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+function contentTypeFor(assetName) {
+  for (const [suffix, type] of Object.entries(CONTENT_TYPES)) {
+    if (assetName.endsWith(suffix)) return type;
+  }
+  return "application/octet-stream";
+}
+
+function sendJson(res, status, body) {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+function handleHealthz(_req, res) {
+  const cacheBytes = [...state.cachedAssets.values()].reduce((sum, e) => sum + (e.size || 0), 0);
+  sendJson(res, 200, {
+    status: state.lastPollOk ? "ok" : "degraded",
+    currentTag: state.currentTag,
+    lastPollAt: state.lastPollAt,
+    lastPollOk: state.lastPollOk,
+    lastPollError: state.lastPollError,
+    cacheBytes,
+    cacheLimitBytes: CONFIG.cacheMaxBytes,
+  });
+}
+
+async function handleLatestRelease(_req, res) {
+  if (!state.currentTag) {
+    sendJson(res, 503, { error: "unavailable" });
+    return;
+  }
+  const release = state.releasesByTag.get(state.currentTag);
+  const assets = {};
+  for (const [name, info] of release.assets) {
+    const cached = await isCachedOnDisk(release.tag, name);
+    assets[name] = { size: info.size, sha256: info.sha256, cached };
+  }
+  sendJson(res, 200, {
+    tag: release.tag,
+    publishedAt: release.publishedAt,
+    htmlUrl: release.htmlUrl,
+    assets,
+  });
+}
+
+async function handleDownload(req, res, tag, assetName) {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    sendJson(res, 405, { error: "method not allowed" });
+    return;
+  }
+
+  let filePath;
+  try {
+    filePath = await ensureAssetCached(tag, assetName);
+  } catch (error) {
+    if (error.code === "NOT_FOUND") {
+      sendJson(res, 404, { error: "not found" });
+    } else {
+      log("error", "Download failed", { tag, assetName, error: error.message });
+      sendJson(res, 502, { error: "upstream fetch failed" });
+    }
+    return;
+  }
+
+  touchAccess(assetKey(tag, assetName));
+  const stat = await fsp.stat(filePath);
+  const entry = state.cachedAssets.get(assetKey(tag, assetName));
+  const headers = {
+    "Content-Type": contentTypeFor(assetName),
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "public, max-age=31536000, immutable",
+  };
+  if (entry?.sha256) headers.ETag = `"${entry.sha256}"`;
+
+  const range = parseRange(req.headers.range, stat.size);
+  if (req.headers.range && !range) {
+    res.writeHead(416, { ...headers, "Content-Range": `bytes */${stat.size}` });
+    res.end();
+    return;
+  }
+
+  if (range) {
+    headers["Content-Range"] = `bytes ${range.start}-${range.end}/${stat.size}`;
+    headers["Content-Length"] = range.end - range.start + 1;
+    res.writeHead(206, headers);
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    fs.createReadStream(filePath, { start: range.start, end: range.end }).pipe(res);
+    return;
+  }
+
+  headers["Content-Length"] = stat.size;
+  res.writeHead(200, headers);
+  if (req.method === "HEAD") {
+    res.end();
+    return;
+  }
+  fs.createReadStream(filePath).pipe(res);
+}
+
+function parseRange(headerValue, fileSize) {
+  if (!headerValue) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(headerValue.trim());
+  if (!match) return null;
+  let [, startStr, endStr] = match;
+  if (startStr === "" && endStr === "") return null;
+
+  let start;
+  let end;
+  if (startStr === "") {
+    const suffixLength = Number.parseInt(endStr, 10);
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) return null;
+    start = Math.max(0, fileSize - suffixLength);
+    end = fileSize - 1;
+  } else {
+    start = Number.parseInt(startStr, 10);
+    end = endStr === "" ? fileSize - 1 : Number.parseInt(endStr, 10);
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start < 0 || end >= fileSize) {
+    return null;
+  }
+  return { start, end };
+}
+
+function isLoopback(req) {
+  const addr = req.socket.remoteAddress || "";
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+}
+
+async function handleInternalRefresh(req, res) {
+  if (!isLoopback(req)) {
+    sendJson(res, 403, { error: "forbidden" });
+    return;
+  }
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "method not allowed" });
+    return;
+  }
+  await pollReleases();
+  sendJson(res, 200, {
+    lastPollOk: state.lastPollOk,
+    lastPollError: state.lastPollError,
+    currentTag: state.currentTag,
+  });
+}
+
+function createServer() {
+  return http.createServer((req, res) => {
+    handleRequest(req, res).catch((error) => {
+      log("error", "Unhandled request error", { error: error.message, url: req.url });
+      if (!res.headersSent) {
+        sendJson(res, 500, { error: "internal error" });
+      } else {
+        res.end();
+      }
+    });
+  });
+}
+
+async function handleRequest(req, res) {
+  const url = new URL(req.url, "http://internal");
+
+  if (url.pathname === "/healthz") {
+    handleHealthz(req, res);
+    return;
+  }
+  if (url.pathname === "/api/releases/latest") {
+    await handleLatestRelease(req, res);
+    return;
+  }
+  if (url.pathname === "/internal/refresh") {
+    await handleInternalRefresh(req, res);
+    return;
+  }
+  const downloadMatch = /^\/download\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+  if (downloadMatch) {
+    const tag = decodeURIComponent(downloadMatch[1]);
+    const assetName = decodeURIComponent(downloadMatch[2]);
+    await handleDownload(req, res, tag, assetName);
+    return;
+  }
+
+  sendJson(res, 404, { error: "not found" });
+}
+
+// --- Entry point ---
+
+async function main() {
+  await ensureDirs();
+  await cleanupStaleTempFiles();
+  await loadPersistedState();
+  await pollReleases();
+
+  const server = createServer();
+  server.listen(CONFIG.listenPort, CONFIG.listenHost, () => {
+    log("info", "Listening", { host: CONFIG.listenHost, port: CONFIG.listenPort });
+  });
+
+  const pollTimer = setInterval(() => {
+    pollReleases().catch((error) => log("error", "Poll loop crashed unexpectedly", { error: error.message }));
+  }, CONFIG.pollIntervalSeconds * 1000);
+
+  function shutdown() {
+    log("info", "Shutting down");
+    clearInterval(pollTimer);
+    server.close(() => process.exit(0));
+  }
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+}
+
+main().catch((error) => {
+  console.error("Fatal error during startup:", error);
+  process.exit(1);
+});

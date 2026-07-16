@@ -4,6 +4,7 @@
 /cmake-build-*/
 /out/
 /dist/
+/website/dist/
 CMakeUserPresets.json
 compile_commands.json
 CMakeCache.txt

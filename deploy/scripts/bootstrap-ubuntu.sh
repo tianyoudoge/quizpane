@@ -68,8 +68,6 @@ env_file=/etc/quizpane/release-proxy.env
 if [[ ! -e "$env_file" ]]; then
   install -d -m 0750 /etc/quizpane
   install -m 0600 "$deploy_dir/env/release-proxy.env.example" "$env_file"
-  secret="$(openssl rand -hex 32)"
-  sed -i "s/^WEBHOOK_SECRET=.*/WEBHOOK_SECRET=${secret}/" "$env_file"
   echo "Created $env_file. Add GITHUB_TOKEN before production traffic if desired."
 else
   echo "Keeping existing $env_file."

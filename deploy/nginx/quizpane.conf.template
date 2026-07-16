@@ -74,17 +74,6 @@ server {
         proxy_set_header If-Range $http_if_range;
     }
 
-    location = /webhooks/github {
-        limit_req zone=quizpane_webhook burst=20 nodelay;
-        limit_except POST { deny all; }
-        proxy_pass http://quizpane_release_proxy;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
     location ^~ /assets/ {
         root /srv/quizpane/site/current;
         try_files $uri =404;
