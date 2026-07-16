@@ -3,7 +3,7 @@ Description=QuizPane GitHub Release cache proxy
 Documentation=https://github.com/tianyoudoge/quizpane
 Wants=network-online.target
 After=network-online.target
-ConditionPathIsExecutable=/opt/quizpane/release-proxy/current/quizpane-release-proxy
+ConditionFileIsExecutable=/opt/quizpane/release-proxy/current/quizpane-release-proxy
 
 [Service]
 Type=simple

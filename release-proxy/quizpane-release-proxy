@@ -552,12 +552,19 @@ async function main() {
   await ensureDirs();
   await cleanupStaleTempFiles();
   await loadPersistedState();
-  await pollReleases();
 
+  // Start listening before the first poll completes: systemd/install-artifacts.sh
+  // probe /healthz right after startup, and /healthz already reports a
+  // "degraded" status when no poll has succeeded yet, so there is no need to
+  // block accepting connections on GitHub being reachable.
   const server = createServer();
-  server.listen(CONFIG.listenPort, CONFIG.listenHost, () => {
-    log("info", "Listening", { host: CONFIG.listenHost, port: CONFIG.listenPort });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(CONFIG.listenPort, CONFIG.listenHost, resolve);
   });
+  log("info", "Listening", { host: CONFIG.listenHost, port: CONFIG.listenPort });
+
+  pollReleases().catch((error) => log("error", "Initial poll failed", { error: error.message }));
 
   const pollTimer = setInterval(() => {
     pollReleases().catch((error) => log("error", "Poll loop crashed unexpectedly", { error: error.message }));
