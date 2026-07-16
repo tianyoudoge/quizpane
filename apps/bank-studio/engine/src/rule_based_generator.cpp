@@ -77,6 +77,19 @@ bool isTopLevelSectionHeading(const QString& text) {
     return pattern.match(text).hasMatch();
 }
 
+// 多答案题型大标题：真题常在 section 标题里标一次题型，下面每道题干不再重复。
+// 匹配“二、多项选择题 / 不定项选择题 / 多选 / 多项选择”等。命中即表示该
+// 段题目允许多个正确答案，向下传播给段内每道题，避免“未标注多选却多答案”
+// 把整段多选/不定项打回复核。不定项与多选在作答结构上等价（≥2 选项、≥1 答案），
+// 统一映射为 multiple_choice，不新增题型，兼容现有 schema/校验器/前端。
+bool isMultiAnswerSectionHeading(const QString& text) {
+    if (!isTopLevelSectionHeading(text))
+        return false;
+    static const QRegularExpression pattern(
+        QStringLiteral(R"(多选|多项选|不定项|多项选择|多项选择题)"));
+    return pattern.match(text).hasMatch();
+}
+
 QString assetBaseName(const QString& sourcePath) {
     QString base = QFileInfo(sourcePath).completeBaseName().toLower();
     base.replace(QRegularExpression(QStringLiteral("[^a-z0-9._-]+")), QStringLiteral("-"));
@@ -215,6 +228,37 @@ QString normalizeAnswer(QString answer) {
         ++k;
     }
     return normalized;
+}
+
+// 判断题答案归一化：把常见判断写法映射到合成选项 A(正确)/B(不正确)。覆盖
+// 对/错、正确/错误、√/×、是/否。无法识别返回空。中文卷判断题几乎不用 T/F，
+// 为避免把残片答案（如落单的 "F"）误判成判断题，这里不收 T/F/Y/N 单字母。
+QString booleanAnswerLabel(const QString& raw) {
+    const QString a = raw.normalized(QString::NormalizationForm_KC).trimmed();
+    if (a.isEmpty())
+        return {};
+    const auto containsAny = [&a](const QStringList& list) {
+        for (const QString& token : list)
+            if (a.contains(token))
+                return true;
+        return false;
+    };
+    // 先判否定：否定写法都不含肯定写法，顺序安全（“错误”不含“对/正确/是”）。
+    if (containsAny({QStringLiteral("错误"), QStringLiteral("错"), QStringLiteral("×"),
+                     QStringLiteral("✗"), QStringLiteral("✕"), QStringLiteral("否")}))
+        return QStringLiteral("B");
+    if (containsAny({QStringLiteral("正确"), QStringLiteral("对"), QStringLiteral("√"),
+                     QStringLiteral("是")}))
+        return QStringLiteral("A");
+    return {};
+}
+
+// 判断题题干识别：以空括号“（ ）”结尾（允许内部半角/全角空白）。这类题不列
+// A/B 选项，答案另写 对/错，需要据此合成“正确/不正确”两个选项。
+bool hasBlankJudgmentBrackets(const QString& stem) {
+    static const QRegularExpression pattern(
+        QStringLiteral(R"([（(][\s　]*[)）]\s*$)"));
+    return pattern.match(stem.trimmed()).hasMatch();
 }
 
 QString comparableText(QString value) {
@@ -398,6 +442,19 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             if (number > 0 && !answer.isEmpty() && !answers.contains(number))
                 answers.insert(number, answer);
         }
+        // 判断题答案行：形如 “1.√”“2.×”“1.对”“2.错误”。对/错/√/× 不在选择题答案
+        // token 内，单独匹配并归一化到合成选项 a(正确)/b(不正确)。一行可含多道，
+        // 如 “1.√ 2.×”。
+        static const QRegularExpression booleanRecord(QStringLiteral(
+            R"((?:^|[\s,，;；])(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）])?\s*([√×✓✗✕对错是否正确错误]+))"));
+        auto booleanMatches = booleanRecord.globalMatch(line);
+        while (booleanMatches.hasNext()) {
+            const auto match = booleanMatches.next();
+            const int number = match.captured(1).toInt();
+            const QString label = booleanAnswerLabel(match.captured(2));
+            if (number > 0 && !label.isEmpty() && !answers.contains(number))
+                answers.insert(number, label);
+        }
         // 很多真题解析不是“1. A”式答案汇总，而是在题目解析末尾写“故正确
         // 答案为 C”。用最近一个题号归属这条结论，兼容题目文件与答案文件分离。
         const auto narrative = narrativeAnswer.match(line);
@@ -568,7 +625,8 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
                           const QuestionAnchor& anchor, int blockEnd, const QString& stableId,
                           const QString& materialId, const QHash<int, QString>& answerKey,
                           const QHash<int, QString>& solutionKey,
-                          QHash<QString, QByteArray>* generatedAssets, QString* reviewReason) {
+                          QHash<QString, QByteArray>* generatedAssets, QString* reviewReason,
+                          bool allowMultipleAnswers) {
     QStringList stemLines;
     QList<QPair<QString, QString>> options;
     QString rawAnswer;
@@ -655,6 +713,26 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
         solutionLines.append(solutionKey.value(anchor.number));
 
     const QString visualText = stemLines.join(QChar('\n'));
+    // 判断题：题干以空括号“（ ）”结尾且没有列 A/B 选项。合成“正确/不正确”两个
+    // 选项走现有 true_false 通道（schema、校验器、前端 RadioButton 全兼容），答案
+    // 由 对/错/√/× 归一化到合成选项。rawAnswer 优先，其次全局答案区。
+    bool forcedTrueFalse = false;
+    if (options.isEmpty() && hasBlankJudgmentBrackets(visualText)) {
+        // rawAnswer 是题内原始文本（如“对/√”）；answerKey 来自全局答案区，判断题
+        // 已在 globalAnswers 归一化为合成选项 A/B。两种来源都兼容。
+        QString label = booleanAnswerLabel(rawAnswer);
+        if (label.isEmpty()) {
+            const QString keyed = answerKey.value(anchor.number);
+            if (keyed == QStringLiteral("A") || keyed == QStringLiteral("B"))
+                label = keyed;
+            else
+                label = booleanAnswerLabel(keyed);
+        }
+        options.append({QStringLiteral("a"), QStringLiteral("正确")});
+        options.append({QStringLiteral("b"), QStringLiteral("不正确")});
+        answer = label; // 空表示未识别到判断答案，交由后续复核逻辑处理。
+        forcedTrueFalse = true;
+    }
     const int sourcePage = anchor.line < lines.size() ? lines.at(anchor.line).page : 0;
     const bool hasVisualOptionLabels = sourcePage > 0 &&
         optionRowForQuestion(document, sourcePage, anchor.number).size() == 4;
@@ -708,17 +786,28 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
                                            : QStringLiteral("答案文本无法唯一匹配选项"));
     else if (answerIds.size() != answer.size())
         reasons.append(QStringLiteral("答案引用了不存在的选项"));
-    const bool explicitlyMultiple = stemLines.join(QChar('\n')).contains(QStringLiteral("多选题"));
-    if (answerIds.size() > 1 && !explicitlyMultiple)
+    // 多答案题型信号来源有二：题干显式标注，或所属 section 大标题（真题常只在大
+    // 标题标一次，经 allowMultipleAnswers 传入）。二者任一命中即允许多个正确答案。
+    // 其中“严格多选”（题干明确写“多选/多项选”且非不定项）才要求答案≥2 个；不定项
+    // 与 section 传播允许单答案（不定项少选也得分），避免误报“多选答案少于两个”。
+    const QString stemJoined = stemLines.join(QChar('\n'));
+    const bool indefiniteInStem = stemJoined.contains(QStringLiteral("不定项"));
+    const bool strictMultipleInStem =
+        stemJoined.contains(QRegularExpression(QStringLiteral("多选|多项选")));
+    const bool markedMultipleInStem = strictMultipleInStem || indefiniteInStem;
+    const bool allowsMultiple = markedMultipleInStem || allowMultipleAnswers;
+    if (answerIds.size() > 1 && !allowsMultiple)
         reasons.append(QStringLiteral("题干未标注多选题，却识别到多个答案"));
-    if (explicitlyMultiple && answerIds.size() < 2)
+    if (strictMultipleInStem && !indefiniteInStem && answerIds.size() < 2)
         reasons.append(QStringLiteral("多选题答案少于两个选项"));
     QString type = QStringLiteral("single_choice");
-    // 试卷会在题干明确标注“多选题”。绝不能只因答案提取出多个字母就改成多选，
-    // 否则解析残片（例如 81 题的答案/解析）会触发“多选答案至少两个”的校验错误。
-    if (explicitlyMultiple)
+    // 判断题优先判定：空括号“（ ）”合成 正确/不正确 两个选项的题，直接定型，
+    // 不依赖选项文本里是否同时出现“正确/错误”（“不正确”不含“错误”，旧检测会漏）。
+    if (forcedTrueFalse)
+        type = QStringLiteral("true_false");
+    else if (allowsMultiple && answerIds.size() > 1)
         type = QStringLiteral("multiple_choice");
-    if (jsonOptions.size() == 2) {
+    else if (jsonOptions.size() == 2) {
         const QString first = jsonOptions.at(0).toObject().value("text").toString();
         const QString second = jsonOptions.at(1).toObject().value("text").toString();
         if (((first.contains(QStringLiteral("正确")) && second.contains(QStringLiteral("错误"))) ||
@@ -933,6 +1022,17 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
             continue;
         }
 
+        // 收集所有大标题及其是否为多答案题型（“二、多项选择题/不定项”等）。真题常
+        // 在 section 标题标一次，下面每道题干不再重复；据此给段内每道题传播“允许多
+        // 答案”，避免多选/不定项整段被打回复核。普通大题标题（如“三、判断题”）会
+        // 取消上一段的多答案属性。多选与不定项在作答结构上等价，统一映射 multiple_choice。
+        QList<QPair<int, bool>> sectionHeadings; // 行号 → 是否多答案
+        for (int index = 0; index < lines.size(); ++index) {
+            const QString text = lines.at(index).text;
+            if (isTopLevelSectionHeading(text))
+                sectionHeadings.append({index, isMultiAnswerSectionHeading(text)});
+        }
+
         int questionOrdinal = 0;
         for (int index = 0; index < anchors.size(); ++index) {
             const QuestionAnchor& anchor = anchors.at(index);
@@ -944,6 +1044,14 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
                     break;
                 }
             blockEnd = nextMaterialLine(materialMarkers, anchor.line, blockEnd);
+            // 本题所属 section 是否为多答案题型：取题号行之前最近的一个大标题
+            // 判定（例如“三、判断题”应取消上一段“二、多项选择”的多答案属性）。
+            bool allowMultipleAnswers = false;
+            for (const auto& heading : sectionHeadings)
+                if (heading.first < anchor.line)
+                    allowMultipleAnswers = heading.second;
+                else
+                    break;
             const QString id = QStringLiteral("r%1-q%2-%3")
                                    .arg(documentOrdinal)
                                    .arg(anchor.number)
@@ -952,7 +1060,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
                 materialIdForQuestion(materialMarkers, anchor.line, anchor.number);
             QString reviewReason;
             QJsonObject question = parseQuestion(document, lines, anchor, blockEnd, id, materialId,
-                                                 answers, solutions, &result.assets, &reviewReason);
+                                                 answers, solutions, &result.assets, &reviewReason,
+                                                 allowMultipleAnswers);
             const QJsonObject stemImage = question.value("stemImage").toObject();
             const QString assetPath = stemImage.value("path").toString();
             if (!assetPath.isEmpty()) {

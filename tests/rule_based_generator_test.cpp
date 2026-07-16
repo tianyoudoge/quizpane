@@ -421,6 +421,74 @@ int main(int argc, char** argv) {
             return 43;
     }
 
+    // 场景 J：判断题（无 A/B 选项，题干以空括号“（ ）”结尾，答案用对/错/√/×）。
+    // 应合成“正确/不正确”两个选项走 true_false 通道，答案归一化到合成选项。
+    ExtractedDocument judgment;
+    judgment.sourcePath = QStringLiteral("judgment.txt");
+    judgment.plainText = QStringLiteral(
+        "1. 我国宪法规定公民有受教育的权利和义务。（  ）\n"
+        "2. 地球是宇宙的中心。（  ）\n"
+        "参考答案\n1.√ 2.×\n");
+    const auto judgmentResult = RuleBasedBankGenerator{}.generate({judgment});
+    if (judgmentResult.questions.size() != 2 || !judgmentResult.needsReviewQuestions.isEmpty())
+        return 44;
+    {
+        const auto firstQ = judgmentResult.questions.at(0).toObject();
+        const auto secondQ = judgmentResult.questions.at(1).toObject();
+        if (firstQ.value("type").toString() != QStringLiteral("true_false") ||
+            secondQ.value("type").toString() != QStringLiteral("true_false"))
+            return 45;
+        if (firstQ.value("options").toArray().size() != 2 ||
+            firstQ.value("options").toArray().at(0).toObject().value("text").toString() !=
+                QStringLiteral("正确") ||
+            firstQ.value("options").toArray().at(1).toObject().value("text").toString() !=
+                QStringLiteral("不正确"))
+            return 46;
+        if (firstQ.value("answer").toObject().value("optionIds").toArray().first().toString() !=
+                QStringLiteral("a") ||
+            secondQ.value("answer").toObject().value("optionIds").toArray().first().toString() !=
+                QStringLiteral("b"))
+            return 47;
+        if (!quizpane::validateBank(bankFor(judgmentResult), &validationError))
+            return 48;
+    }
+
+    // 场景 K：多选/不定项仅在大标题标注，题干不重复“多选题”。section 信号应向下
+    // 传播：多答案题判为 multiple_choice 且不打回复核；不定项单答案题判为 single_choice。
+    ExtractedDocument sectionMulti;
+    sectionMulti.sourcePath = QStringLiteral("section-multi.txt");
+    sectionMulti.plainText = QStringLiteral(
+        "一、单项选择题\n"
+        "1. 题干一\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n"
+        "二、多项选择题\n"
+        "2. 下列哪些正确\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n"
+        "三、不定项选择题\n"
+        "3. 不定项题（答案只有一个时也得分）\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n"
+        "参考答案\n1.A 2.ABD 3.A\n");
+    const auto sectionMultiResult = RuleBasedBankGenerator{}.generate({sectionMulti});
+    if (sectionMultiResult.questions.size() != 3 || !sectionMultiResult.needsReviewQuestions.isEmpty())
+        return 49;
+    {
+        const auto findQ = [&](int number) -> QJsonObject {
+            for (const auto& v : sectionMultiResult.questions)
+                if (v.toObject().value("id").toString().contains(
+                        QStringLiteral("q%1-").arg(number)))
+                    return v.toObject();
+            return {};
+        };
+        const QJsonObject q1 = findQ(1);
+        const QJsonObject q2 = findQ(2);
+        const QJsonObject q3 = findQ(3);
+        if (q1.value("type").toString() != QStringLiteral("single_choice") ||
+            q2.value("type").toString() != QStringLiteral("multiple_choice") ||
+            q3.value("type").toString() != QStringLiteral("single_choice"))
+            return 50;
+        if (q2.value("answer").toObject().value("optionIds").toArray().size() != 3)
+            return 51;
+        if (!quizpane::validateBank(bankFor(sectionMultiResult), &validationError))
+            return 52;
+    }
+
     // 规则候选最终仍进入现有声明式 ZIP，不产生本机代码。这里复用上面以内存
     // 构造的稳定样例写包、检查 manifest、重新读 ZIP，再交给运行时加载。
     // 测试因此不再依赖开发机 build/ 目录中的临时文件，干净检出也能完整运行。

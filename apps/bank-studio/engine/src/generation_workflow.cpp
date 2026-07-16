@@ -22,9 +22,14 @@ const QString kSystemPrompt = QStringLiteral(
     "{\"materials\":[...],\"questions\":[...]}。共享文章、图表或案例必须只放在 "
     "materials 中，每份材料包含 id、catalogId、title、body；关联子题用 materialId 引用，"
     "不得把材料正文复制到每道题 stem。没有共享材料时返回空 materials 数组。"
-    "生成 single_choice、multiple_choice 或 true_false；原文标注多选题或答案有多个选项时必须使用 multiple_choice。每题必须包含 id、catalogId、type、stem、"
+    "生成 single_choice、multiple_choice 或 true_false；原文标注多选题、不定项，或答案有多个选项时必须使用 multiple_choice；"
+    "题型只在大标题标注（如“二、多项选择题”）而每道子题不再重复时，也要据此把该段各题判为 multiple_choice。"
+    "判断题（题干以空括号“（ ）”结尾、原文不列 A/B 选项，答案为 对/错/√/×）用 true_false，"
+    "并合成两个选项：id=a 文本“正确”、id=b 文本“不正确”，答案按 对/√→a、错/×→b 归一化。"
+    "每题必须包含 id、catalogId、type、stem、"
     "options、answer、solution；catalogId 固定为 generated；id 和选项 id 只能用小写"
-    "字母、数字、点、下划线或连字符；answer.optionIds 必须恰好引用一个现有选项。"
+    "字母、数字、点、下划线或连字符；single_choice 与 true_false 的 answer.optionIds 恰好引用一个现有选项，"
+    "multiple_choice 至少引用两个现有选项。"
     "忠于原文，不确定时设置 review:{\"needsReview\":true,\"reason\":\"...\","
     "\"confidence\":0.5}，不要编造事实。");
 
