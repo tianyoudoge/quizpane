@@ -11,6 +11,8 @@
 #include <QImage>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPainter>
+#include <QPen>
 #include <QTemporaryDir>
 
 namespace {
@@ -127,20 +129,43 @@ int main(int argc, char** argv) {
         visualResult.assets.isEmpty())
         return 99;
 
-    // “（一）”独占一行时，资料标题在下一行；资料文字可在上一页而统计图紧挨
-    // 116 在下一页。两页图都必须留给 material，不能被 116 当作自己的题图。
+    // 资料分析正文可在上一页而统计图紧挨 116 位于下一页。正文已有结构化文本，
+    // 视觉附件只应保留图表页，不能再把上一页正文重复截图。
     ExtractedDocument crossPageMaterial;
     crossPageMaterial.sourcePath = QStringLiteral("cross-page.pdf");
     crossPageMaterial.hasPageBoundaries = true;
-    crossPageMaterial.pageImages.insert(1, QByteArrayLiteral("page-one"));
-    crossPageMaterial.pageImages.insert(2, QByteArrayLiteral("page-two"));
+    QImage prosePage(800, 1200, QImage::Format_ARGB32_Premultiplied);
+    prosePage.fill(Qt::white);
+    QImage chartPage(800, 1200, QImage::Format_ARGB32_Premultiplied);
+    chartPage.fill(Qt::white);
+    {
+        QPainter painter(&chartPage);
+        painter.setPen(QPen(Qt::black, 3));
+        painter.drawLine(120, 120, 120, 700);
+        painter.drawLine(120, 700, 700, 700);
+    }
+    const auto pngFor = [](const QImage& image) {
+        QByteArray png;
+        QBuffer buffer(&png);
+        if (buffer.open(QIODevice::WriteOnly)) image.save(&buffer, "PNG");
+        return png;
+    };
+    crossPageMaterial.pageImages.insert(1, pngFor(prosePage));
+    crossPageMaterial.pageImages.insert(2, pngFor(chartPage));
     crossPageMaterial.plainText = QStringLiteral(
-        "（一）\n根据下列统计资料回答问题。\n2009 年固定资产投资数据。\f"
+        "五、资料分析，共 20 题\n（一）\n根据下列统计资料回答问题。\n"
+        "2009 年固定资产投资数据。\f"
         "116. 2004 年全年投资额为：\nA. 100\nB. 200\n答案：A\n");
+    crossPageMaterial.lineAnchors.insert(1, {
+        {QStringLiteral("（一）"), QRectF(0.1, 0.10, 0.2, 0.03)}});
+    crossPageMaterial.lineAnchors.insert(2, {
+        {QStringLiteral("116. 2004 年全年投资额为："), QRectF(0.1, 0.75, 0.6, 0.03)}});
+    crossPageMaterial.questionAnchors.insert(2, {
+        {QStringLiteral("116"), QRectF(0.1, 0.75, 0.04, 0.02)}});
     const auto crossPageResult = RuleBasedBankGenerator{}.generate({crossPageMaterial});
     if (crossPageResult.materials.size() != 1 || crossPageResult.questions.size() != 1 ||
-        crossPageResult.materials.first().toObject().value("images").toArray().size() != 2 ||
-        crossPageResult.assets.size() != 2 ||
+        crossPageResult.materials.first().toObject().value("images").toArray().size() != 1 ||
+        crossPageResult.assets.size() != 1 ||
         crossPageResult.questions.first().toObject().value("materialId").toString() !=
             crossPageResult.materials.first().toObject().value("id").toString() ||
         crossPageResult.questions.first().toObject().contains("stemImage"))

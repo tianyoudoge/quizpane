@@ -78,6 +78,25 @@ bool isTopLevelSectionHeading(const QString& text) {
     return pattern.match(text).hasMatch();
 }
 
+bool isDataAnalysisPartHeading(const QString& text) {
+    static const QRegularExpression pattern(QStringLiteral(
+        R"(^\s*(?:第\s*[一二三四五六七八九十\d]+\s*部分|[一二三四五六七八九十]+、)\s*资料分析(?:\s*[，,].*)?\s*$)"));
+    return pattern.match(text).hasMatch();
+}
+
+bool isInsideDataAnalysisPart(const QList<SourceLine>& lines, int line) {
+    static const QRegularExpression partHeading(
+        QStringLiteral(R"(^\s*第\s*[一二三四五六七八九十\d]+\s*部分.*$)"));
+    for (int cursor = line; cursor >= 0; --cursor) {
+        const QString text = lines.at(cursor).text.trimmed();
+        if (isDataAnalysisPartHeading(text))
+            return true;
+        if (partHeading.match(text).hasMatch())
+            return false;
+    }
+    return false;
+}
+
 // 多答案题型大标题：真题常在 section 标题里标一次题型，下面每道题干不再重复。
 // 匹配“二、多项选择题 / 不定项选择题 / 多选 / 多项选择”等。命中即表示该
 // 段题目允许多个正确答案，向下传播给段内每道题，避免“未标注多选却多答案”
@@ -134,6 +153,7 @@ QJsonArray extractMaterialLayoutImages(const ExtractedDocument& document, int fi
                                        int lastPage, const QString& firstLine,
                                        const QString& firstQuestionLine,
                                        const QString& materialId,
+                                       bool chartOnly,
                                        QHash<QString, QByteArray>* assets) {
     QJsonArray images;
     if (firstPage <= 0 || lastPage < firstPage)
@@ -161,6 +181,48 @@ QJsonArray extractMaterialLayoutImages(const ExtractedDocument& document, int fi
                          qCeil(source.width() * 0.92),
                          qCeil(source.height() * (bottom - top)));
         const QImage snippet = source.copy(crop.intersected(source.rect()));
+        if (chartOnly) {
+            // 资料分析正文已经以结构化文本保存；这里只保留真正的统计图或表格。
+            // 表格边框、坐标轴和柱形边缘都会形成明显的长直线，而普通段落文字
+            // 不会。先铺白底，避免 PDF 页面的透明空白被误判成整幅黑色长线。
+            QImage flat(snippet.size(), QImage::Format_RGB32);
+            flat.fill(Qt::white);
+            QPainter painter(&flat);
+            painter.drawImage(0, 0, snippet);
+            painter.end();
+            const QImage gray = flat.convertToFormat(QImage::Format_Grayscale8);
+            const auto hasLongRun = [&](bool horizontal, int required) {
+                const int outer = horizontal ? gray.height() : gray.width();
+                const int inner = horizontal ? gray.width() : gray.height();
+                for (int a = 0; a < outer; ++a) {
+                    int run = 0;
+                    int gaps = 0;
+                    for (int b = 0; b < inner; ++b) {
+                        const int x = horizontal ? b : a;
+                        const int y = horizontal ? a : b;
+                        const bool dark = gray.constScanLine(y)[x] < 175;
+                        if (dark) {
+                            ++run;
+                            gaps = 0;
+                        } else if (run > 0 && gaps < 2) {
+                            ++run;
+                            ++gaps;
+                        } else {
+                            if (run >= required) return true;
+                            run = 0;
+                            gaps = 0;
+                        }
+                    }
+                    if (run >= required) return true;
+                }
+                return false;
+            };
+            const bool hasChartGeometry =
+                hasLongRun(true, qMax(40, gray.width() / 5)) ||
+                hasLongRun(false, qMax(40, gray.height() / 6));
+            if (!hasChartGeometry)
+                continue;
+        }
         QByteArray png;
         QBuffer buffer(&png);
         if (snippet.isNull() || !buffer.open(QIODevice::WriteOnly) || !snippet.save(&buffer, "PNG"))
@@ -168,7 +230,9 @@ QJsonArray extractMaterialLayoutImages(const ExtractedDocument& document, int fi
         const QString path = QStringLiteral("assets/%1-%2-p%3.png")
             .arg(assetBaseName(document.sourcePath), materialId).arg(page);
         assets->insert(path, png);
-        images.append(QJsonObject{{"path", path}, {"alt", "原卷材料版式（含下划线和填空）"}});
+        images.append(QJsonObject{{"path", path}, {"alt", chartOnly
+            ? QStringLiteral("原卷资料图表")
+            : QStringLiteral("原卷材料版式（含下划线和填空）")}});
     }
     return images;
 }
@@ -315,20 +379,23 @@ QJsonObject extractQuestionVisualImage(const ExtractedDocument& document, int pa
     qreal cropRight = 0.95;
     if (optionRow.size() == 4) {
         const qreal rowY = optionRow.value(QStringLiteral("a")).center().y();
-        // 文字标签基线正好位于分数下方；约 2.8% 页高足以覆盖分子/分母，
-        // 下方只留 1% 页高，避免把紧随其后的第 77 题题干卷入。
+        // 公式/分数位于字母标签正上方。作答按钮本身会显示 A/B/C/D，因此截图
+        // 只保留公式，不再冒险截标签基线：北京卷 76 的下一题紧贴标签下方，
+        // 多留几个像素就会把第 77 题的文字卷进来。
         top = qMax<qreal>(0.0, rowY - 0.028);
-        const qreal optionBottom = qMin<qreal>(0.995, rowY + 0.008);
+        const qreal optionBottom = qMin<qreal>(0.995, rowY - 0.002);
         bottom = !nextBounds.isEmpty()
             ? qMin(optionBottom, nextBounds.top() - 0.001) : optionBottom;
         const qreal firstCenter = optionRow.value(QStringLiteral("a")).center().x();
         const qreal lastCenter = optionRow.value(QStringLiteral("d")).center().x();
         const qreal spacing = (lastCenter - firstCenter) / 3.0;
-        cropLeft = qMax<qreal>(0.0, optionRow.value(QStringLiteral("a")).left());
+        cropLeft = qMax<qreal>(0.0,
+            optionRow.value(QStringLiteral("a")).left() - spacing * 0.10);
         cropRight = qMin<qreal>(1.0,
             optionRow.value(QStringLiteral("d")).right() + spacing * 0.55);
     }
-    if (bottom <= top + 0.035)
+    const qreal minimumVisualHeight = optionRow.size() == 4 ? 0.020 : 0.035;
+    if (bottom <= top + minimumVisualHeight)
         return {};
     const QRect crop(qFloor(source.width() * cropLeft), qFloor(source.height() * top),
                      qCeil(source.width() * (cropRight - cropLeft)),
@@ -985,6 +1052,14 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
             const QString id(label);
             options.append({id, QStringLiteral("图%1").arg(label.toUpper())});
         }
+        // 文字层只剩“A、 B、 C、 D、”时，这一行是图形/公式选项的标签，不是
+        // 题干。作答按钮会显示标签，结构化题干里不应再重复一遍空字母。
+        static const QRegularExpression bareVisualLabels(QStringLiteral(
+            R"(^\s*(?:[A-D]\s*[、.．]?\s*){2,}$)"),
+            QRegularExpression::CaseInsensitiveOption);
+        for (int index = stemLines.size() - 1; index >= 0; --index)
+            if (bareVisualLabels.match(stemLines.at(index)).hasMatch())
+                stemLines.removeAt(index);
     }
 
     QJsonArray jsonOptions;
@@ -1222,7 +1297,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
             // 只裁材料范围，绝不把整页试卷错挂到子题题干。
             QJsonArray images = extractMaterialLayoutImages(
                 document, firstPage, lastPage, lines.at(line).text,
-                lines.at(firstQuestionLine).text, id, &result.assets);
+                lines.at(firstQuestionLine).text, id,
+                isInsideDataAnalysisPart(lines, line), &result.assets);
             // 文本锚点不可用的旧式/扫描夹具仍保留原有整页视觉回退；正式 PDF
             // 优先走上面的裁切路径，避免把无关题目混进阅读材料。
             if (images.isEmpty() &&
