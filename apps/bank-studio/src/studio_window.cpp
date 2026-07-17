@@ -564,12 +564,8 @@ void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
     int base = 0, span = 0;
     QString phase;
     switch (progress.stage) {
-    case WorkflowStage::Extracting: base = 5; span = 20; phase = QStringLiteral("读取资料"); break;
-    case WorkflowStage::Chunking: base = 25; span = 5; phase = QStringLiteral("整理内容"); break;
-    case WorkflowStage::Generating: base = 30; span = 40; phase = QStringLiteral("AI 整理"); break;
-    case WorkflowStage::Validating: base = 70; span = 15; phase = QStringLiteral("检查结果"); break;
-    case WorkflowStage::Repairing: base = 85; span = 10; phase = QStringLiteral("调整结果"); break;
-    case WorkflowStage::Packaging: base = 95; span = 5; phase = QStringLiteral("打包"); break;
+    case WorkflowStage::Extracting: base = 20; span = 40; phase = QStringLiteral("读取资料"); break;
+    case WorkflowStage::Chunking: base = 60; span = 30; phase = QStringLiteral("规则整理"); break;
     case WorkflowStage::Done: base = 100; phase = QStringLiteral("整理完成"); break;
     case WorkflowStage::Failed: phase = QStringLiteral("任务中断"); break;
     default: phase = QStringLiteral("等待继续"); break;
