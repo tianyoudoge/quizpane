@@ -171,6 +171,41 @@ int main(int argc, char** argv) {
         crossPageResult.questions.first().toObject().contains("stemImage"))
         return 106;
 
+    // 资料分析题即使结构完整（规则没有报任何硬失败），也必须标注
+    // riskLevel=soft 并携带 material-type:资料分析 信号，交给复核页强制展示，
+    // 而不是像普通及格题一样悄悄免检进入最终包。
+    {
+        const QJsonObject dataAnalysisReview =
+            crossPageResult.questions.first().toObject().value("review").toObject();
+        if (!dataAnalysisReview.value("needsReview").toBool() ||
+            dataAnalysisReview.value("riskLevel").toString() != QStringLiteral("soft") ||
+            !dataAnalysisReview.value("signals").toArray().contains(
+                QStringLiteral("material-type:资料分析")))
+            return 111;
+    }
+
+    // 图形推理整题型分区：即使规则解析完全成功，也要标注 soft 风险，因为规则
+    // 无法验证图形规律本身是否正确。
+    ExtractedDocument graphicalReasoning;
+    graphicalReasoning.sourcePath = QStringLiteral("graphical-reasoning.txt");
+    graphicalReasoning.plainText = QStringLiteral(
+        "四、图形推理，共 5 题\n"
+        "1. 下列哪一项符合规律？\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n答案：B\n");
+    const auto graphicalReasoningResult =
+        RuleBasedBankGenerator{}.generate({graphicalReasoning});
+    if (graphicalReasoningResult.questions.size() != 1 ||
+        !graphicalReasoningResult.needsReviewQuestions.isEmpty())
+        return 112;
+    {
+        const QJsonObject graphicalReview =
+            graphicalReasoningResult.questions.first().toObject().value("review").toObject();
+        if (!graphicalReview.value("needsReview").toBool() ||
+            graphicalReview.value("riskLevel").toString() != QStringLiteral("soft") ||
+            !graphicalReview.value("signals").toArray().contains(
+                QStringLiteral("material-type:图形推理")))
+            return 113;
+    }
+
     // “根据下列材料”与“根据下列统计资料”都是独立资料头；相邻资料组不能
     // 合并，否则后组图表会丢失，前组最后一道题的 D 选项也会吞入新资料标题。
     ExtractedDocument adjacentMaterials;
@@ -739,5 +774,47 @@ int main(int argc, char** argv) {
     quizpane::DeclarativeProvider provider;
     if (!provider.load(bankFile.fileName(), &validationError))
         return 18;
+
+    // 批量统计审计：同一份文档里 5 道题，第 3 题缺一个选项（3 个 vs 众数 4 个）、
+    // 题号缺第 4 题。样本量 ≥4 才启用众数/中位数统计；答案分布检测要求 ≥8 题
+    // 才启用（避免小题库正常撞车触发误报），这里 5 题不会命中该项。同时验证
+    // 未命中信号的题目（第 2 题）不会被误伤。
+    ExtractedDocument auditDocument;
+    auditDocument.sourcePath = QStringLiteral("audit-batch.txt");
+    auditDocument.plainText = QStringLiteral(
+        "1. 第一题？\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n答案：A\n"
+        "2. 第二题？\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n答案：B\n"
+        "3. 第三题？\nA. 甲\nB. 乙\nC. 丙\n答案：A\n"
+        "5. 第五题？\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n答案：A\n"
+        "6. 第六题？\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n答案：A\n");
+    const auto auditResult = RuleBasedBankGenerator{}.generate({auditDocument});
+    if (auditResult.questions.size() != 5 || !auditResult.needsReviewQuestions.isEmpty())
+        return 114;
+    bool sawMissingNumberWarning = false;
+    for (const QString& warning : auditResult.warnings)
+        if (warning.contains(QStringLiteral("第 4 题"))) sawMissingNumberWarning = true;
+    if (!sawMissingNumberWarning)
+        return 115;
+    QJsonObject auditQuestion3, auditQuestion2;
+    for (const auto& value : auditResult.questions) {
+        const QJsonObject question = value.toObject();
+        if (question.value("id").toString().contains(QStringLiteral("-q3-")))
+            auditQuestion3 = question;
+        if (question.value("id").toString().contains(QStringLiteral("-q2-")))
+            auditQuestion2 = question;
+    }
+    if (auditQuestion3.isEmpty() || auditQuestion2.isEmpty())
+        return 116;
+    const QJsonObject question3Review = auditQuestion3.value("review").toObject();
+    if (!question3Review.value("needsReview").toBool() ||
+        question3Review.value("riskLevel").toString() != QStringLiteral("soft") ||
+        !question3Review.value("signals").toArray().contains(QStringLiteral("option-count-outlier")))
+        return 117;
+    // 第 2 题答案是 B（非多数派），不应被答案分布信号误伤；也不应携带
+    // option-count-outlier（选项数与众数一致）。
+    const QJsonObject question2Review = auditQuestion2.value("review").toObject();
+    if (question2Review.value("needsReview").toBool())
+        return 118;
+
     return 0;
 }

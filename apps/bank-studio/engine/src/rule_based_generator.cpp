@@ -12,6 +12,7 @@
 #include <QSet>
 
 #include <limits>
+#include <algorithm>
 
 namespace quizpane::studio {
 namespace {
@@ -84,12 +85,33 @@ bool isDataAnalysisPartHeading(const QString& text) {
     return pattern.match(text).hasMatch();
 }
 
+bool isGraphicalReasoningPartHeading(const QString& text) {
+    static const QRegularExpression pattern(QStringLiteral(
+        R"(^\s*(?:第\s*[一二三四五六七八九十\d]+\s*部分|[一二三四五六七八九十]+、)\s*图形推理(?:\s*[，,].*)?\s*$)"));
+    return pattern.match(text).hasMatch();
+}
+
 bool isInsideDataAnalysisPart(const QList<SourceLine>& lines, int line) {
     static const QRegularExpression partHeading(
         QStringLiteral(R"(^\s*第\s*[一二三四五六七八九十\d]+\s*部分.*$)"));
     for (int cursor = line; cursor >= 0; --cursor) {
         const QString text = lines.at(cursor).text.trimmed();
         if (isDataAnalysisPartHeading(text))
+            return true;
+        if (partHeading.match(text).hasMatch())
+            return false;
+    }
+    return false;
+}
+
+// 判定题目所在大标题是否为“图形推理”整题型分区，用于高危复核信号标注：图形推理
+// 靠像素图判断规律，规则引擎无法验证正确性，即使结构完整也必须提示复核。
+bool isInsideGraphicalReasoningPart(const QList<SourceLine>& lines, int line) {
+    static const QRegularExpression partHeading(
+        QStringLiteral(R"(^\s*第\s*[一二三四五六七八九十\d]+\s*部分.*$)"));
+    for (int cursor = line; cursor >= 0; --cursor) {
+        const QString text = lines.at(cursor).text.trimmed();
+        if (isGraphicalReasoningPartHeading(text))
             return true;
         if (partHeading.match(text).hasMatch())
             return false;
@@ -911,7 +933,8 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
                           const QString& materialId, const QHash<int, QString>& answerKey,
                           const QHash<int, QString>& solutionKey,
                           QHash<QString, QByteArray>* generatedAssets, QString* reviewReason,
-                          bool allowMultipleAnswers) {
+                          bool allowMultipleAnswers, bool insideDataAnalysisPart,
+                          bool insideGraphicalReasoningPart) {
     QStringList stemLines;
     QList<QPair<QString, QString>> options;
     QString rawAnswer;
@@ -1148,16 +1171,179 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
             question.insert("stemImage", QJsonObject{{"path", path}, {"alt", "原卷图表"}});
         }
     }
+    // 高危名单：结构可能完全合法，但内容正确性规则原理上验证不了，命中即强制
+    // 复核（riskLevel=soft），不因为规则没报错就免检放行。跨页题的信号计算依赖
+    // 相邻题的版面位置，留待后续批量审计阶段（RuleBasedGenerationAudit）补充。
+    QStringList softSignals;
+    if (insideDataAnalysisPart)
+        softSignals.append(QStringLiteral("material-type:资料分析"));
+    if (insideGraphicalReasoningPart)
+        softSignals.append(QStringLiteral("material-type:图形推理"));
+    bool hasImageOption = false;
+    for (const auto& optionValue : jsonOptions)
+        if (optionValue.toObject().contains("image")) { hasImageOption = true; break; }
+    if (question.contains("stemImage") || hasImageOption)
+        softSignals.append(QStringLiteral("image-content"));
+    if (document.usedOcr)
+        softSignals.append(QStringLiteral("ocr-source"));
     if (!reasons.isEmpty()) {
         *reviewReason = reasons.join(QStringLiteral("；"));
-        question.insert(
-            "review",
-            QJsonObject{{"needsReview", true}, {"confidence", 0.25}, {"reason", *reviewReason}});
+        QJsonObject review{{"needsReview", true}, {"confidence", 0.25},
+                           {"reason", *reviewReason}, {"riskLevel", "hard"}};
+        if (!softSignals.isEmpty()) review.insert("signals", QJsonArray::fromStringList(softSignals));
+        question.insert("review", review);
+    } else if (!softSignals.isEmpty()) {
+        // 规则没有报错，但命中高危名单：结构进入正常候选（questions），复核信息
+        // 仍然标注 needsReview，交由制作器复核页按 riskLevel=soft 展示和批量确认，
+        // 而不是像 hard 失败那样打回 needsReviewQuestions 数组。
+        question.insert("review", QJsonObject{{"needsReview", true},
+                                              {"confidence", document.usedOcr ? 0.6 : 0.7},
+                                              {"reason", QStringLiteral("规则无法验证图表/图形内容的正确性，请核对原图")},
+                                              {"riskLevel", "soft"},
+                                              {"signals", QJsonArray::fromStringList(softSignals)}});
     } else {
         question.insert("review", QJsonObject{{"needsReview", false},
                                               {"confidence", document.usedOcr ? 0.75 : 0.95}});
     }
     return question;
+}
+
+// 从规则生成器的稳定 id（"r<doc>-q<number>-<ordinal>"）里取回原始题号，用于
+// 题号连续性等批量统计；不依赖单独持久化原始题号字段。
+int originalQuestionNumber(const QJsonObject& question) {
+    static const QRegularExpression pattern(QStringLiteral(R"(-q(\d+)-)"));
+    const auto match = pattern.match(question.value("id").toString());
+    return match.hasMatch() ? match.captured(1).toInt() : -1;
+}
+
+// 把一个复核信号追加到题目的 review.signals，并按需把该题标记为待复核
+// （riskLevel 不覆盖已有的 hard，只在题目当前完全常规或已是 soft 时设为 soft）。
+// 统计信号只能加严，不能把已经 hard 失败的题目降级为看似较轻的 soft。
+QJsonObject withReviewSignal(QJsonObject question, const QString& signal, const QString& reason) {
+    QJsonObject review = question.value("review").toObject();
+    QJsonArray signalList = review.value("signals").toArray();
+    bool alreadyPresent = false;
+    for (const auto& value : signalList)
+        if (value.toString() == signal) { alreadyPresent = true; break; }
+    if (!alreadyPresent) signalList.append(signal);
+    review.insert("signals", signalList);
+    review.insert("needsReview", true);
+    if (review.value("riskLevel").toString() != QStringLiteral("hard"))
+        review.insert("riskLevel", QStringLiteral("soft"));
+    if (!review.contains("confidence")) review.insert("confidence", 0.6);
+    QString existingReason = review.value("reason").toString();
+    if (!existingReason.contains(reason))
+        review.insert("reason", existingReason.isEmpty() ? reason
+            : existingReason + QStringLiteral("；") + reason);
+    question.insert("review", review);
+    return question;
+}
+
+// 批量统计审计：单题看不出问题，只有跟“这批题应该是什么样子”做比对才能发现。
+// 只在已通过单题结构校验的 result.questions 里运行，按来源文档分组；样本量
+// 太小时统计意义不大，不产生信号。命中的题目追加 signals，不移出 questions
+// 数组（riskLevel=soft 由复核页决定是否强制人工/AI 复核，而不是直接打回）。
+void applyRuleBasedGenerationAudit(RuleBasedGenerationResult* result) {
+    QHash<QString, QList<int>> indicesByDocument;
+    for (qsizetype index = 0; index < result->questions.size(); ++index) {
+        const QJsonObject question = result->questions.at(index).toObject();
+        const QString document = question.value("source").toObject().value("document").toString();
+        indicesByDocument[document].append(int(index));
+    }
+
+    for (auto it = indicesByDocument.constBegin(); it != indicesByDocument.constEnd(); ++it) {
+        const QList<int>& indices = it.value();
+        if (indices.size() < 4)
+            continue; // 样本太小，众数/分布统计没有意义，避免对小题库误报。
+
+        // 1) 题号连续性：源文档能提取出题号时，检测生成结果覆盖的题号区间是否
+        // 有缺口。缺口本身不知道是哪道题的问题，因此作为整批 warning 而不是
+        // 挂在某道具体题目上。
+        QList<int> numbers;
+        for (int index : indices) {
+            const int number = originalQuestionNumber(result->questions.at(index).toObject());
+            if (number > 0) numbers.append(number);
+        }
+        if (numbers.size() == indices.size()) {
+            std::sort(numbers.begin(), numbers.end());
+            QStringList missing;
+            for (int expected = numbers.first(); expected <= numbers.last(); ++expected)
+                if (!numbers.contains(expected)) missing.append(QString::number(expected));
+            if (!missing.isEmpty())
+                result->warnings.append(QStringLiteral("%1：题号 %2—%3 之间缺少第 %4 题，"
+                    "请核对是否有题目未被识别").arg(it.key()).arg(numbers.first())
+                    .arg(numbers.last()).arg(missing.join(QStringLiteral("、"))));
+        }
+
+        // 2) 选项数量分布：同一份文档的选项数应该基本一致；偏离众数的题目
+        // 可能被截断或多算了一行。
+        QHash<int, int> optionCountFrequency;
+        for (int index : indices)
+            ++optionCountFrequency[result->questions.at(index).toObject()
+                .value("options").toArray().size()];
+        int modeOptionCount = -1, modeFrequency = 0;
+        for (auto freqIt = optionCountFrequency.constBegin(); freqIt != optionCountFrequency.constEnd();
+             ++freqIt)
+            if (freqIt.value() > modeFrequency) { modeFrequency = freqIt.value(); modeOptionCount = freqIt.key(); }
+        if (modeOptionCount > 0 && modeFrequency >= indices.size() * 3 / 4) {
+            for (int index : indices) {
+                const QJsonObject question = result->questions.at(index).toObject();
+                if (question.value("options").toArray().size() != modeOptionCount)
+                    result->questions[index] = withReviewSignal(question,
+                        QStringLiteral("option-count-outlier"),
+                        QStringLiteral("本题选项数与同批次题目的众数（%1 个）不一致，"
+                                       "可能选项被截断或多算").arg(modeOptionCount));
+            }
+        }
+
+        // 3) 答案分布：单一答案字母占比异常高，通常指向选项/答案系统性错位，
+        // 而不是巧合。只在样本量足够大时启用，避免小题库正常撞车触发误报。
+        if (indices.size() >= 8) {
+            QHash<QString, int> answerFrequency;
+            for (int index : indices) {
+                const QJsonArray answerIds = result->questions.at(index).toObject()
+                    .value("answer").toObject().value("optionIds").toArray();
+                if (answerIds.size() == 1) ++answerFrequency[answerIds.first().toString()];
+            }
+            for (auto freqIt = answerFrequency.constBegin(); freqIt != answerFrequency.constEnd(); ++freqIt) {
+                if (freqIt.value() * 5 < indices.size() * 3) continue; // 占比阈值 60%。
+                for (int index : indices) {
+                    const QJsonObject question = result->questions.at(index).toObject();
+                    const QJsonArray answerIds =
+                        question.value("answer").toObject().value("optionIds").toArray();
+                    if (answerIds.size() == 1 && answerIds.first().toString() == freqIt.key())
+                        result->questions[index] = withReviewSignal(question,
+                            QStringLiteral("answer-distribution-skew"),
+                            QStringLiteral("本题答案 %1 在同批次题目中占比过高（%2/%3），"
+                                           "请核对选项与答案是否对齐").arg(freqIt.key())
+                                .arg(freqIt.value()).arg(indices.size()));
+                }
+            }
+        }
+
+        // 4) 题干长度异常：显著短于中位数可能被截断，显著长于中位数可能材料未
+        // 拆分或多题被误合并成一题。
+        QList<int> stemLengths;
+        for (int index : indices)
+            stemLengths.append(result->questions.at(index).toObject().value("stem").toString().size());
+        QList<int> sortedLengths = stemLengths;
+        std::sort(sortedLengths.begin(), sortedLengths.end());
+        const int median = sortedLengths.at(sortedLengths.size() / 2);
+        if (median >= 8) {
+            for (qsizetype offset = 0; offset < indices.size(); ++offset) {
+                const int length = stemLengths.at(offset);
+                const bool tooShort = length * 5 < median * 2; // < 40% 中位数
+                const bool tooLong = length > median * 25 / 10; // > 250% 中位数
+                if (!tooShort && !tooLong) continue;
+                const int index = indices.at(offset);
+                result->questions[index] = withReviewSignal(result->questions.at(index).toObject(),
+                    QStringLiteral("stem-length-outlier"),
+                    tooShort
+                        ? QStringLiteral("题干长度明显短于同批次中位数，可能被截断")
+                        : QStringLiteral("题干长度明显长于同批次中位数，可能材料未拆分或多题被误合并"));
+            }
+        }
+    }
 }
 
 } // namespace
@@ -1380,7 +1566,9 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
             QString reviewReason;
             QJsonObject question = parseQuestion(document, lines, anchor, blockEnd, id, materialId,
                                                  answers, solutions, &result.assets, &reviewReason,
-                                                 allowMultipleAnswers);
+                                                 allowMultipleAnswers,
+                                                 isInsideDataAnalysisPart(lines, anchor.line),
+                                                 isInsideGraphicalReasoningPart(lines, anchor.line));
             const QJsonObject stemImage = question.value("stemImage").toObject();
             const QString assetPath = stemImage.value("path").toString();
             if (!assetPath.isEmpty() && !result.assets.contains(assetPath)) {
@@ -1408,6 +1596,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents) cons
         if (referenced.contains(value.toObject().value("id").toString()))
             usedMaterials.append(value);
     result.materials = usedMaterials;
+    applyRuleBasedGenerationAudit(&result);
     return result;
 }
 

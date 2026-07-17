@@ -173,13 +173,26 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
     }
     if (question.contains("review")) {
         const QJsonObject review = question.value("review").toObject();
-        static const QSet<QString> reviewKeys{"confidence", "needsReview", "reason"};
+        static const QSet<QString> reviewKeys{"confidence", "needsReview", "reason", "riskLevel", "signals"};
+        static const QSet<QString> riskLevels{"hard", "soft"};
         const double confidence = review.value("confidence").toDouble(-1);
+        bool signalsValid = true;
+        if (review.contains("signals")) {
+            if (!review.value("signals").isArray()) {
+                signalsValid = false;
+            } else {
+                for (const auto& signal : review.value("signals").toArray())
+                    if (!signal.isString()) { signalsValid = false; break; }
+            }
+        }
         if (!question.value("review").isObject() || !hasOnlyKeys(review, reviewKeys) ||
             (review.contains("confidence") && (confidence < 0 || confidence > 1)) ||
             (review.contains("needsReview") && !review.value("needsReview").isBool()) ||
             (review.contains("reason") && !review.value("reason").isString()) ||
-            review.value("reason").toString().size() > 1000) {
+            review.value("reason").toString().size() > 1000 ||
+            (review.contains("riskLevel") && (!review.value("riskLevel").isString() ||
+                !riskLevels.contains(review.value("riskLevel").toString()))) ||
+            !signalsValid) {
             errors->append({index, id, QStringLiteral("第 %1 题的复核信息无效").arg(index + 1), {}});
         }
     }

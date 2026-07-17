@@ -117,7 +117,9 @@
           "properties": {
             "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
             "needsReview": { "type": "boolean" },
-            "reason": { "type": "string", "maxLength": 1000 }
+            "reason": { "type": "string", "maxLength": 1000 },
+            "riskLevel": { "enum": ["hard", "soft"] },
+            "signals": { "type": "array", "items": { "type": "string" } }
           }
         }
       }

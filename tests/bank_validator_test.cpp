@@ -192,5 +192,29 @@ int main(int argc, char** argv) {
     // 独立题库回归通过（重复用最初读取的 validBank）。
     if (!quizpane::validateBankDetailed(validBank).isEmpty()) return 22;
 
+    // riskLevel/signals：合法值应当通过。
+    {
+        QJsonObject bank = mutateFirstQuestion(validBank, "review",
+            QJsonObject{{"needsReview", true}, {"confidence", 0.6},
+                        {"reason", "资料分析题：规则无法验证图表读数正确性"},
+                        {"riskLevel", "soft"},
+                        {"signals", QJsonArray{"material-type:资料分析", "ocr-source"}}});
+        if (!quizpane::validateBankDetailed(bank).isEmpty()) return 23;
+    }
+
+    // riskLevel 非法枚举值应当被拒绝。
+    {
+        QJsonObject bank = mutateFirstQuestion(validBank, "review",
+            QJsonObject{{"needsReview", true}, {"riskLevel", "medium"}});
+        if (quizpane::validateBankDetailed(bank).isEmpty()) return 24;
+    }
+
+    // signals 必须是字符串数组，非字符串元素应当被拒绝。
+    {
+        QJsonObject bank = mutateFirstQuestion(validBank, "review",
+            QJsonObject{{"needsReview", true}, {"signals", QJsonArray{1, 2}}});
+        if (quizpane::validateBankDetailed(bank).isEmpty()) return 25;
+    }
+
     return 0;
 }

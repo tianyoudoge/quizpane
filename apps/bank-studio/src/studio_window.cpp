@@ -11,6 +11,7 @@
 #include "styled_dropdown.hpp"
 
 #include <QCloseEvent>
+#include <QColor>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDragEnterEvent>
@@ -46,6 +47,7 @@
 #include <QTreeWidget>
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <utility>
 #include <QTemporaryDir>
@@ -186,23 +188,8 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     connect(nextButton_, &QPushButton::clicked, this, [this] { movePage(1); });
     connect(startButton_, &QPushButton::clicked, this, &StudioWindow::beginPreflight);
     connect(pages_, &QStackedWidget::currentChanged, this, &StudioWindow::updateNavigation);
-    connect(generationMode_, &StyledDropdown::currentIndexChanged, this, [this] {
-        if (!modelSummary_) return;
-        if (generationMode_->currentData().toString() == QStringLiteral("rules")) {
-            modelSummary_->setText(
-                QStringLiteral("当前方式：离线整理 · 资料不会离开电脑"));
-        } else {
-            modelSummary_->setText(
-                QStringLiteral("当前模型：%1 · %2（可在“设置 → 模型设置”中修改）")
-                    .arg(modelSettings_.serviceName, modelSettings_.modelName));
-        }
-    });
-    networkManager_ = new QNetworkAccessManager(this);
-    auto* settingsMenu = menuBar()->addMenu(QStringLiteral("设置"));
-    auto* modelSettingsAction = settingsMenu->addAction(
-        QStringLiteral("模型设置…"), this, &StudioWindow::showModelSettings);
-    modelSettingsAction->setShortcut(QKeySequence::Preferences);
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
+    auto* settingsMenu = menuBar()->addMenu(QStringLiteral("设置"));
     settingsMenu->addAction(QStringLiteral("查看调试日志…"), this, [] {
         diagnostic::openLogFile();
     });
@@ -241,21 +228,9 @@ QWidget* StudioWindow::buildSourcePage() {
     modePanel->setObjectName(QStringLiteral("panel"));
     auto* modeLayout = new QVBoxLayout(modePanel);
     modeLayout->setContentsMargins(16, 12, 16, 12);
-    modeLayout->addWidget(new QLabel(QStringLiteral("整理方式")));
-    generationMode_ = new StyledDropdown;
-    generationMode_->addItem(QStringLiteral("离线整理（推荐）"), QStringLiteral("rules"));
-    generationMode_->addItem(QStringLiteral("AI 辅助整理"), QStringLiteral("model"));
-    modeLayout->addWidget(generationMode_);
-    auto* modeHint = mutedLabel(QString());
-    modeLayout->addWidget(modeHint);
-    const auto refreshModeHint = [modeHint](const QString& mode) {
-        modeHint->setText(mode == QStringLiteral("model")
-            ? QStringLiteral("AI 辅助整理更适合排版复杂的资料，会使用你配置的模型，结果需要复核。")
-            : QStringLiteral("离线整理不会上传资料，适合题号、选项和答案比较规范的文档。"));
-    };
-    refreshModeHint(generationMode_->currentData().toString());
-    connect(generationMode_, &StyledDropdown::currentIndexChanged, this,
-        [this, refreshModeHint] { refreshModeHint(generationMode_->currentData().toString()); });
+    modeLayout->addWidget(new QLabel(QStringLiteral("整理方式：离线整理")));
+    modeLayout->addWidget(mutedLabel(
+        QStringLiteral("资料全程只在本机读取和处理，不会上传，适合题号、选项和答案比较规范的文档。")));
     layout->addWidget(modePanel);
     auto* drop = new QFrame;
     drop->setObjectName(QStringLiteral("dropZone"));
@@ -371,11 +346,45 @@ QWidget* StudioWindow::buildReviewPage() {
     allReviewButton_ = new QPushButton(QStringLiteral("全部异常  0"));
     missingAnswerButton_ = new QPushButton(QStringLiteral("缺少答案  0"));
     duplicateButton_ = new QPushButton(QStringLiteral("疑似重复  0"));
+    allReviewButton_->setCheckable(true);
+    missingAnswerButton_->setCheckable(true);
+    duplicateButton_->setCheckable(true);
     filters->addWidget(allReviewButton_);
     filters->addWidget(missingAnswerButton_);
     filters->addWidget(duplicateButton_);
     filters->addStretch();
     layout->addLayout(filters);
+    connect(allReviewButton_, &QPushButton::clicked, this, [this] {
+        activeReviewFilter_ = allReviewButton_->isChecked() ? QStringLiteral("__any_review__") : QString();
+        missingAnswerButton_->setChecked(false);
+        duplicateButton_->setChecked(false);
+        applyReviewFilter();
+    });
+    connect(missingAnswerButton_, &QPushButton::clicked, this, [this] {
+        activeReviewFilter_ = missingAnswerButton_->isChecked() ? QStringLiteral("__missing_answer__") : QString();
+        allReviewButton_->setChecked(false);
+        duplicateButton_->setChecked(false);
+        applyReviewFilter();
+    });
+    connect(duplicateButton_, &QPushButton::clicked, this, [this] {
+        activeReviewFilter_ = duplicateButton_->isChecked() ? QStringLiteral("__duplicate__") : QString();
+        allReviewButton_->setChecked(false);
+        missingAnswerButton_->setChecked(false);
+        applyReviewFilter();
+    });
+
+    // 高危名单批量确认区：resultLevel=soft 的题目（资料分析、图形推理等规则
+    // 无法验证正确性的类型）按 signals 分类展示，用户扫一眼这一类下面的样例
+    // 就可以一次性放行整类，而不必逐题点开确认——批量按钮本身不是自动豁免，
+    // 只是把"确认过看过这一类"的动作从 N 次点击降到 1 次。
+    riskCategoryPanel_ = new QFrame;
+    riskCategoryPanel_->setObjectName(QStringLiteral("panel"));
+    riskCategoryLayout_ = new QVBoxLayout(riskCategoryPanel_);
+    riskCategoryLayout_->setContentsMargins(16, 12, 16, 12);
+    riskCategoryLayout_->setSpacing(8);
+    riskCategoryPanel_->setVisible(false);
+    layout->addWidget(riskCategoryPanel_);
+
     reviewTree_ = new QTreeWidget;
     reviewTree_->setColumnCount(3);
     reviewTree_->setHeaderLabels({QStringLiteral("材料 / 题目"), QStringLiteral("问题"),
@@ -481,19 +490,6 @@ void StudioWindow::removeSource(const QString& question) {
     updateNavigation();
 }
 
-void StudioWindow::showModelSettings() {
-    // 对话框返回新的完整 DTO；用户取消时保持当前设置不变。
-    const auto edited = editModelSettings(this, modelSettings_);
-    if (!edited) return;
-
-    modelSettings_ = *edited;
-    if (modelSummary_ && generationMode_->currentData().toString() == QStringLiteral("model")) {
-        modelSummary_->setText(
-            QStringLiteral("当前模型：%1 · %2（可在“设置 → 模型设置”中修改）")
-                .arg(modelSettings_.serviceName, modelSettings_.modelName));
-    }
-}
-
 // ===== 向导状态机与本地预检 =====
 
 void StudioWindow::movePage(int delta) {
@@ -522,21 +518,12 @@ void StudioWindow::beginPreflight() {
         return;
     }
     if (sourcePaths_.isEmpty()) return;
-    const bool ruleBased =
-        generationMode_->currentData().toString() == QStringLiteral("rules");
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("generation-start"),
-        {{QStringLiteral("mode"), ruleBased ? QStringLiteral("rules") : QStringLiteral("model")},
-         {QStringLiteral("sources"), sourcePaths_.size()},
-         {QStringLiteral("vendor"), ruleBased ? QString{} : modelSettings_.vendorId},
-         {QStringLiteral("model"), ruleBased ? QString{} : modelSettings_.modelName}});
-    if (!ruleBased && modelSettings_.vendorId == QStringLiteral("anthropic")) {
-        QMessageBox::information(this, QStringLiteral("暂未实现"),
-            QStringLiteral("Anthropic Messages API 生成暂未实现。请选择 OpenAI 兼容供应商。"));
-        return;
-    }
+        {{QStringLiteral("mode"), QStringLiteral("rules")},
+         {QStringLiteral("sources"), sourcePaths_.size()}});
     if (workflow_ && workflow_->isActive()) return;
     if (workflow_) workflow_->deleteLater();
-    workflow_ = new GenerationWorkflow(networkManager_, this);
+    workflow_ = new GenerationWorkflow(this);
     connect(workflow_, &GenerationWorkflow::progressChanged,
             this, &StudioWindow::updateWorkflowProgress);
     connect(workflow_, &GenerationWorkflow::questionsReady,
@@ -545,21 +532,7 @@ void StudioWindow::beginPreflight() {
         activityTimer_->stop();
         activitySpinner_->hide();
         startButton_->setEnabled(true);
-        if (error.contains(QStringLiteral("重新开始"))) {
-            if (confirmAction(this, QStringLiteral("重新开始生成任务？"),
-                              error + QStringLiteral("\n\n是否删除旧检查点并重新开始？"),
-                              QStringLiteral("删除并重新开始"))) {
-                CheckpointStore store;
-                QString clearError;
-                if (!store.clear(store.taskIdForSources(sourcePaths_), &clearError)) {
-                    QMessageBox::warning(this, QStringLiteral("无法删除旧任务"), clearError);
-                    return;
-                }
-                QTimer::singleShot(0, this, &StudioWindow::beginPreflight);
-            }
-            return;
-        }
-        QMessageBox::warning(this, QStringLiteral("生成未完成"), error);
+        QMessageBox::warning(this, QStringLiteral("整理未完成"), error);
     });
     connect(workflow_, &GenerationWorkflow::finished, this, [this] {
         activityTimer_->stop();
@@ -581,22 +554,10 @@ void StudioWindow::beginPreflight() {
     activitySpinner_->setText(QStringLiteral("◐ 运行中"));
     activitySpinner_->show();
     activityTimer_->start(120);
-    if (ruleBased) {
-        QList<SourceMaterialGroup> groups;
-        for (const QString& question : sourcePaths_)
-            groups.append({question, answerPathsByQuestion_.value(question)});
-        workflow_->startRuleBased(groups);
-    }
-    else {
-        QStringList modelSources = sourcePaths_;
-        // AI 路径也把配对的答案/解析一并送入，但仍保留文件名，提示词能够区分
-        // 两份来源；离线路径则使用更严格的按题号合并规则。
-        for (const QString& question : sourcePaths_) {
-            const QString answer = answerPathsByQuestion_.value(question);
-            if (!answer.isEmpty()) modelSources.append(answer);
-        }
-        workflow_->start(modelSources, modelSettings_);
-    }
+    QList<SourceMaterialGroup> groups;
+    for (const QString& question : sourcePaths_)
+        groups.append({question, answerPathsByQuestion_.value(question)});
+    workflow_->startRuleBased(groups);
 }
 
 void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
@@ -642,6 +603,10 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     generatedAssets_ = candidate.assets;
     outputTokens_->setText(QString::number(generatedQuestions_.size()));
     totalTokens_->setText(QString::number(reviewQuestions_.size()));
+    activeReviewFilter_.clear();
+    allReviewButton_->setChecked(false);
+    missingAnswerButton_->setChecked(false);
+    duplicateButton_->setChecked(false);
     reviewTree_->clear();
     QHash<QString, QTreeWidgetItem*> groups;
     for (const auto& value : generatedMaterials_) {
@@ -661,15 +626,38 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     independent->setCheckState(0, Qt::Checked);
     QTreeWidgetItem* brokenReferences = nullptr;
 
+    // 人类可读的信号标签，用于批量确认区的分类标题；未在此列出的信号按原始
+    // key 展示，保证新增信号不需要同步改 UI 才能显示。
+    static const QHash<QString, QString> signalLabels{
+        {QStringLiteral("material-type:资料分析"), QStringLiteral("资料分析")},
+        {QStringLiteral("material-type:图形推理"), QStringLiteral("图形推理")},
+        {QStringLiteral("image-content"), QStringLiteral("含图片内容")},
+        {QStringLiteral("ocr-source"), QStringLiteral("扫描件识别")},
+        {QStringLiteral("option-count-outlier"), QStringLiteral("选项数异常")},
+        {QStringLiteral("answer-distribution-skew"), QStringLiteral("答案分布异常")},
+        {QStringLiteral("stem-length-outlier"), QStringLiteral("题干长度异常")},
+    };
+
     int missingAnswers = 0;
     int duplicates = 0;
-    const auto appendQuestions = [&](const QJsonArray& questions, bool needsReview) {
+    QHash<QString, int> softCategoryCounts;
+    const auto appendQuestions = [&](const QJsonArray& questions) {
         for (const auto& value : questions) {
             const QJsonObject question = value.toObject();
             const QJsonObject review = question.value("review").toObject();
+            const bool needsReview = review.value("needsReview").toBool();
+            const QString riskLevel = review.value("riskLevel").toString();
+            const bool isHardRisk = needsReview && riskLevel != QStringLiteral("soft");
+            const bool isSoftRisk = needsReview && riskLevel == QStringLiteral("soft");
             const QString reason = review.value("reason").toString();
-            if (needsReview && reason.contains(QStringLiteral("答案"))) ++missingAnswers;
-            if (needsReview && reason.contains(QStringLiteral("重复"))) ++duplicates;
+            if (isHardRisk && reason.contains(QStringLiteral("答案"))) ++missingAnswers;
+            if (isHardRisk && reason.contains(QStringLiteral("重复"))) ++duplicates;
+            QStringList signalList;
+            for (const auto& signal : review.value("signals").toArray())
+                signalList.append(signal.toString());
+            if (isSoftRisk)
+                for (const QString& signal : signalList)
+                    ++softCategoryCounts[signal];
             const QString materialId = question.value("materialId").toString();
             QTreeWidgetItem* parent = independent;
             if (!materialId.isEmpty()) {
@@ -685,24 +673,118 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
                     parent = brokenReferences;
                 }
             }
+            QString statusText;
+            if (isHardRisk) statusText = reason.left(240);
+            else if (isSoftRisk) {
+                QStringList labels;
+                for (const QString& signal : signalList)
+                    labels.append(signalLabels.value(signal, signal));
+                statusText = QStringLiteral("待复核 · %1").arg(labels.join(QStringLiteral("、")));
+            } else {
+                statusText = QStringLiteral("已通过规则校验");
+            }
             auto* item = new QTreeWidgetItem(parent,
-                {question.value("id").toString(), needsReview
-                    ? reason.left(240) : QStringLiteral("已通过规则校验"),
+                {question.value("id").toString(), statusText,
                  question.value("stem").toString().left(300)});
             item->setData(0, Qt::UserRole, question);
+            item->setData(0, Qt::UserRole + 1, signalList);
+            item->setData(0, Qt::UserRole + 2, isHardRisk);
+            item->setData(0, Qt::UserRole + 3, isSoftRisk);
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-            // 规则或模型明确标记为待复核的题目可能缺答案/选项，默认不进入最终包；
-            // 用户主动勾选后仍会经过 BankValidator，生产路径绝不补猜测答案。
-            item->setCheckState(0, needsReview ? Qt::Unchecked : Qt::Checked);
+            // 硬失败（结构不完整）默认不进入最终包，必须逐题人工确认；软风险
+            // （高危名单/统计异常，结构本身合法）默认放行，但会在批量确认区
+            // 和状态列明确展示原因，不悄悄混入"已通过规则校验"的正常题。
+            item->setCheckState(0, isHardRisk ? Qt::Unchecked : Qt::Checked);
+            if (isSoftRisk) item->setForeground(1, QColor(QStringLiteral("#d9a441")));
         }
     };
-    appendQuestions(generatedQuestions_, false);
-    appendQuestions(reviewQuestions_, true);
+    appendQuestions(generatedQuestions_);
+    appendQuestions(reviewQuestions_);
     if (independent->childCount() == 0) delete independent;
     reviewTree_->expandToDepth(0);
     allReviewButton_->setText(QStringLiteral("全部异常  %1").arg(reviewQuestions_.size()));
     missingAnswerButton_->setText(QStringLiteral("缺少答案  %1").arg(missingAnswers));
     duplicateButton_->setText(QStringLiteral("疑似重复  %1").arg(duplicates));
+
+    // 批量确认区：按 soft 信号分类展示，用户可以一次性把整类标记为已复核，
+    // 不必逐题点开。类别为空（没有任何 soft 风险题）时整个面板隐藏。
+    QLayoutItem* child;
+    while ((child = riskCategoryLayout_->takeAt(0)) != nullptr) {
+        delete child->widget();
+        delete child;
+    }
+    if (softCategoryCounts.isEmpty()) {
+        riskCategoryPanel_->setVisible(false);
+    } else {
+        riskCategoryLayout_->addWidget(new QLabel(QStringLiteral(
+            "以下题目结构完整、已通过规则校验，但规则无法验证内容本身是否正确，"
+            "建议抽查后按类确认：")));
+        QStringList sortedSignals = softCategoryCounts.keys();
+        std::sort(sortedSignals.begin(), sortedSignals.end());
+        for (const QString& signal : sortedSignals) {
+            auto* row = new QHBoxLayout;
+            const QString label = signalLabels.value(signal, signal);
+            row->addWidget(new QLabel(QStringLiteral("%1  %2 题")
+                .arg(label).arg(softCategoryCounts.value(signal))));
+            row->addStretch();
+            auto* confirmButton = new QPushButton(QStringLiteral("全部标记已复核"));
+            confirmButton->setObjectName(QStringLiteral("secondaryButton"));
+            connect(confirmButton, &QPushButton::clicked, this,
+                    [this, signal] { confirmRiskCategory(signal); });
+            row->addWidget(confirmButton);
+            riskCategoryLayout_->addLayout(row);
+        }
+        riskCategoryPanel_->setVisible(true);
+    }
+}
+
+void StudioWindow::confirmRiskCategory(const QString& signal) {
+    int confirmed = 0;
+    std::function<void(QTreeWidgetItem*)> visit = [&](QTreeWidgetItem* item) {
+        for (int index = 0; index < item->childCount(); ++index) {
+            QTreeWidgetItem* child = item->child(index);
+            const bool isSoftRisk = child->data(0, Qt::UserRole + 3).toBool();
+            const QStringList signalList = child->data(0, Qt::UserRole + 1).toStringList();
+            if (isSoftRisk && signalList.contains(signal) && child->checkState(0) != Qt::Checked) {
+                child->setCheckState(0, Qt::Checked);
+                ++confirmed;
+            }
+            visit(child);
+        }
+    };
+    for (int index = 0; index < reviewTree_->topLevelItemCount(); ++index)
+        visit(reviewTree_->topLevelItem(index));
+    diagnostic::event(QStringLiteral("studio"), QStringLiteral("review-category-confirmed"),
+        {{QStringLiteral("signal"), signal}, {QStringLiteral("confirmed"), confirmed}});
+}
+
+void StudioWindow::applyReviewFilter() {
+    std::function<bool(QTreeWidgetItem*)> visit = [&](QTreeWidgetItem* item) -> bool {
+        bool anyChildVisible = item->childCount() == 0;
+        for (int index = 0; index < item->childCount(); ++index) {
+            QTreeWidgetItem* child = item->child(index);
+            if (child->childCount() > 0) {
+                if (visit(child)) anyChildVisible = true;
+                continue;
+            }
+            bool matches = true;
+            if (activeReviewFilter_ == QStringLiteral("__any_review__"))
+                matches = child->data(0, Qt::UserRole + 2).toBool() ||
+                          child->data(0, Qt::UserRole + 3).toBool();
+            else if (activeReviewFilter_ == QStringLiteral("__missing_answer__"))
+                matches = child->data(0, Qt::UserRole + 2).toBool() &&
+                          child->text(1).contains(QStringLiteral("答案"));
+            else if (activeReviewFilter_ == QStringLiteral("__duplicate__"))
+                matches = child->data(0, Qt::UserRole + 2).toBool() &&
+                          child->text(1).contains(QStringLiteral("重复"));
+            child->setHidden(!matches);
+            if (matches) anyChildVisible = true;
+        }
+        item->setHidden(!anyChildVisible);
+        return anyChildVisible;
+    };
+    for (int index = 0; index < reviewTree_->topLevelItemCount(); ++index)
+        visit(reviewTree_->topLevelItem(index));
 }
 
 void StudioWindow::packageProvider() {
