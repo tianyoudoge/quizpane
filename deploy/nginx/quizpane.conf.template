@@ -146,8 +146,8 @@ server {
     }
 
     location / {
-        root /srv/quizpane/site/current;
-        try_files $uri $uri/ /index.html =404;
-        add_header Cache-Control "no-cache";
+        # 小窗刷题正式挂在 /quizpane/；根路径应交给站长自己的主页配置，不能
+        # 意外把整站导向产品官网。尚未配置个人主页时明确返回 404。
+        return 404;
     }
 }
