@@ -20,6 +20,9 @@
 HMAC secret，也没有对外暴露可被陌生人触发写操作的接口，见
 [`release-proxy/README.md`](../release-proxy/README.md)。
 
+部署前需安装 **Node.js 18+**。Release 代理是零依赖 Node 脚本；初始化脚本会
+在版本不符合要求时直接停止，而不会留下持续重启的 systemd 服务。
+
 ## 首次初始化 Ubuntu 22.04 / 24.04
 
 前提：域名 A/AAAA 记录已经解析到服务器，且 80/443 可从公网访问；**服务器本身

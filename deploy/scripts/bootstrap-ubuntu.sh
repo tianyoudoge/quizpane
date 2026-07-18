@@ -45,6 +45,10 @@ if (( issue_cert )) && [[ -z "$email" ]]; then
   echo "--issue-cert requires --email." >&2
   exit 2
 fi
+if ! command -v node >/dev/null 2>&1 || ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)'; then
+  echo "Node.js 18+ is required for quizpane-release-proxy. Install it before running bootstrap." >&2
+  exit 2
+fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 deploy_dir="$(cd -- "$script_dir/.." && pwd)"

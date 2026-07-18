@@ -57,6 +57,9 @@ if [[ ! -f /etc/systemd/system/quizpane-release-proxy.service ]]; then
   exit 1
 fi
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+deploy_dir="$(cd -- "$script_dir/.." && pwd)"
+
 switch_current() {
   local base="$1" target="$2"
   ln -s "$target" "$base/.current-next"
@@ -103,6 +106,10 @@ if (( restart )); then
     systemctl reload nginx
   fi
   if (( proxy_changed )); then
+    # service unit 也是代理部署的一部分。若只更新脚本、保留首次 bootstrap 时
+    # 的旧 unit，ExecStart/安全限制修复不会生效，甚至会持续重启一个失效软链接。
+    install -m 0644 "$deploy_dir/systemd/quizpane-release-proxy.service" \
+      /etc/systemd/system/quizpane-release-proxy.service
     systemctl daemon-reload
     if ! systemctl restart quizpane-release-proxy.service; then
       if [[ -n "$previous_proxy_target" ]]; then
