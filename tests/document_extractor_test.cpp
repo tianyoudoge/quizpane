@@ -66,5 +66,32 @@ int main(int argc, char** argv) {
     const auto invalidDocx = registry.extract(directory.filePath(QStringLiteral("missing.docx")));
     if (invalidDocx.error.isEmpty())
         return 9;
+
+    // 可选的人工回归夹具：不提交受版权保护的真题 PDF，但在本地提供路径时验证
+    // 下划线来自 PDF 原始渲染和文字坐标的交叉检测，而不是题目选项猜测。
+    const QString underlineFixture = qEnvironmentVariable("QUIZPANE_UNDERLINE_FIXTURE");
+    if (!underlineFixture.isEmpty()) {
+        auto underlined = registry.extract(underlineFixture);
+        if (!underlined.error.isEmpty()) return 10;
+        const QStringList pages = underlined.plainText.split(QChar('\f'));
+        if (pages.size() < 3) return 10;
+        // 提取阶段不再扫描整卷；只有生成器根据题干语义回溯到材料时，才把该
+        // 材料的视觉行交给精确像素检测。这里模拟那一步。
+        detectPdfUnderlinesForCandidateLines(
+            &underlined, {{3, pages.at(2).split(QChar('\n'), Qt::SkipEmptyParts)}});
+        bool found = false;
+        for (const auto& decoration : underlined.underlineDecorations.value(3)) {
+            const int target = decoration.text.indexOf(QStringLiteral("采取"));
+            if (target < 0) continue;
+            for (const auto& range : decoration.ranges) {
+                if (range.first <= target && range.first + range.second >= target + 2) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+        }
+        if (!found) return 11;
+    }
     return 0;
 }

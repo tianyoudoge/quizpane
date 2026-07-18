@@ -36,6 +36,7 @@ private:
     QHash<QString, int> questionCountByCatalog_;
     QString bankDirectory_;
     QHash<int, QSet<int>> answers_;
+    bool hasAnswerKey_ = true;
 };
 
 }  // namespace quizpane

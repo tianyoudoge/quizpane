@@ -62,6 +62,40 @@ int main(int argc, char** argv) {
     if (!quizpane::validateBank(bankFor(result), &validationError))
         return 4;
 
+    // 无答案模式只导入题干与选项：不能因为没有答案被打回复核，也不能把空答案
+    // 伪装成可判分题目。原始小题号须随 source 保留。
+    ExtractedDocument answerless;
+    answerless.sourcePath = QStringLiteral("answerless.txt");
+    answerless.plainText = QStringLiteral("76. 下列说法正确的是？\nA. 甲\nB. 乙\n");
+    const auto answerlessResult = RuleBasedBankGenerator{}.generate({answerless}, false);
+    if (answerlessResult.hasAnswerKey || answerlessResult.questions.size() != 1 ||
+        !answerlessResult.needsReviewQuestions.isEmpty()) return 115;
+    const QJsonObject answerlessQuestion = answerlessResult.questions.first().toObject();
+    if (answerlessQuestion.contains("answer") || answerlessQuestion.contains("solution") ||
+        answerlessQuestion.value("source").toObject().value("questionNumber").toInt() != 76)
+        return 116;
+    const QJsonObject answerlessBank{{"schemaVersion", 3}, {"answerPolicy", "none"},
+        {"title", "No answer"}, {"catalogs", QJsonArray{QJsonObject{{"id", "generated"},
+            {"title", "No answer"}, {"practice", QJsonObject{{"mode", "all"}}}}}},
+        {"questions", answerlessResult.questions}};
+    if (!quizpane::validateBank(answerlessBank, &validationError)) return 117;
+
+    // 粉笔等网页导出的 PDF 可能把题干排在裸题号之前，并把无题号的“正确答案”
+    // 集中排在题目之前。生成器需要把题干折回题号、且仅在答案数与题数完全相同
+    // 时按顺序配对，不能让整页题目因视觉阅读顺序而全部丢失。
+    ExtractedDocument trailingNumbers;
+    trailingNumbers.sourcePath = QStringLiteral("web-export.pdf");
+    trailingNumbers.plainText = QStringLiteral(
+        "正确答案： C\n你的答案：\n正确答案： A\n你的答案：\n"
+        "第一题的题干在题号前。\n1.\nA. 甲 B. 乙 C. 丙 D. 丁\n"
+        "第二题的题干也在题号前。\n2.\nA. 一 B. 二 C. 三 D. 四\n");
+    const auto trailingNumberResult = RuleBasedBankGenerator{}.generate({trailingNumbers});
+    if (trailingNumberResult.questions.size() != 2) return 121;
+    const QJsonObject trailingFirst = trailingNumberResult.questions.first().toObject();
+    if (!trailingFirst.value("stem").toString().contains(QStringLiteral("第一题")) ||
+        trailingFirst.value("answer").toObject().value("optionIds").toArray().first().toString()
+            != QStringLiteral("c")) return 122;
+
     // PDF 文字层会漏掉独立绘制的下划线；资料解析必须保留【甲】等原题编号，
     // 并将纯横线补成可渲染 token，随材料携带裁切后的原卷版式附件。
     ExtractedDocument fillLayout;
@@ -69,10 +103,14 @@ int main(int argc, char** argv) {
     fillLayout.hasPageBoundaries = true;
     fillLayout.plainText = QStringLiteral(
         "材料一：阅读下面文字\n这是【甲】需要填写的 。\n根据材料回答1-1题。\n"
-        "1. 请选择正确答案。\nA. 甲\nB. 乙\n答案：A\n");
+        "1. 第 1 段中划线词语使用正确的是？\nA. 甲\nB. 乙\n答案：A\n");
     fillLayout.lineAnchors.insert(1, {
         {QStringLiteral("材料一：阅读下面文字"), QRectF(0.1, 0.45, 0.4, 0.03)},
-        {QStringLiteral("1. 请选择正确答案。"), QRectF(0.1, 0.75, 0.4, 0.03)}});
+        {QStringLiteral("1. 第 1 段中划线词语使用正确的是？"), QRectF(0.1, 0.75, 0.4, 0.03)}});
+    // 下划线范围来自 PDF 文字框与页面细线的交叉检测，生成器仅转交其精确字符
+    // offset；不能根据【甲】样式或后续题目选项反向猜测。
+    fillLayout.underlineDecorations.insert(1, {
+        {QStringLiteral("这是【甲】需要填写的 。"), {{5, 2}}, QRectF(0.1, 0.50, 0.4, 0.03)}});
     fillLayout.questionAnchors.insert(1, {
         {QStringLiteral("1"), QRectF(0.1, 0.75, 0.02, 0.02)}});
     QImage fillPage(800, 1200, QImage::Format_ARGB32_Premultiplied);
@@ -87,8 +125,43 @@ int main(int argc, char** argv) {
         !fillResult.materials.first().toObject().value("body").toString().contains(
             QStringLiteral("【甲】")) ||
         !fillResult.materials.first().toObject().value("body").toString().contains(
-            QStringLiteral("〔填空〕")))
+            QStringLiteral("〔填空〕")) ||
+        !fillResult.questions.first().toObject().value("review").toObject().value("signals")
+            .toArray().contains(QStringLiteral("material-layout:underline-or-blank")))
         return 91;
+    const QJsonArray detectedUnderlines = fillResult.materials.first().toObject()
+        .value("underlines").toArray();
+    if (detectedUnderlines.size() != 1 || detectedUnderlines.first().toObject()
+        .value("start").toInt(-1) != 5 || detectedUnderlines.first().toObject()
+        .value("length").toInt() != 2)
+        return 120;
+
+    // PDF 的文字 API 常把每一条视觉行都输出成一行；材料正文要根据行坐标和
+    // OCR 保留下来的空行还原自然段，而不是在复核页显示成每行一个段落。
+    ExtractedDocument wrappedMaterial;
+    wrappedMaterial.sourcePath = QStringLiteral("wrapped-material.pdf");
+    wrappedMaterial.hasPageBoundaries = true;
+    wrappedMaterial.plainText = QStringLiteral(
+        "材料一：阅读下面文字\n第一自然段的前半句，\n紧接着是同一段的后半句。\n\n"
+        "第二自然段的第一行，\n第二自然段的第二行。\n根据材料回答1-1题。\n"
+        "1. 文意理解正确的是？\nA. 甲\nB. 乙\n答案：A\n");
+    // QPdfDocument 在部分 PDF 中输出 CRLF；它仍是一条视觉行，不能被误判为
+    // “一条文本行 + 一个空行”。
+    wrappedMaterial.plainText.replace(QStringLiteral("\n"), QStringLiteral("\r\n"));
+    wrappedMaterial.lineAnchors.insert(1, {
+        {QStringLiteral("材料一：阅读下面文字"), QRectF(0.10, 0.10, 0.35, 0.02)},
+        {QStringLiteral("第一自然段的前半句，"), QRectF(0.10, 0.16, 0.30, 0.02)},
+        {QStringLiteral("紧接着是同一段的后半句。"), QRectF(0.10, 0.19, 0.34, 0.02)},
+        {QStringLiteral("第二自然段的第一行，"), QRectF(0.13, 0.25, 0.30, 0.02)},
+        {QStringLiteral("第二自然段的第二行。"), QRectF(0.10, 0.28, 0.30, 0.02)},
+        {QStringLiteral("根据材料回答1-1题。"), QRectF(0.10, 0.34, 0.30, 0.02)},
+        {QStringLiteral("1. 文意理解正确的是？"), QRectF(0.10, 0.45, 0.32, 0.02)}});
+    const auto wrappedResult = RuleBasedBankGenerator{}.generate({wrappedMaterial});
+    if (wrappedResult.materials.size() != 1) return 118;
+    const QString wrappedBody = wrappedResult.materials.first().toObject().value("body").toString();
+    if (!wrappedBody.contains(QStringLiteral("第一自然段的前半句，紧接着是同一段的后半句。")) ||
+        !wrappedBody.contains(QStringLiteral("第二自然段的第一行，第二自然段的第二行。")) ||
+        !wrappedBody.contains(QStringLiteral("后半句。\n\n第二自然段"))) return 119;
 
     // 题号锚点可能因“44、第…”这类版式而取不到。裁切必须改用完整题干的
     // 行锚点；否则宁可没有截图，也不能把第 44 题的题干裁进材料图。
@@ -112,6 +185,48 @@ int main(int argc, char** argv) {
         return 93;
     if (safeCropImage.height() >= 1000)
         return 94;
+
+    // 题干明确“如图所示”时，即便 A-D 文本选项都已完整解析，也必须保留题干
+    // 与选项行之间的插图。它不是图形选项，不能按选项行上方的窄条公式区域裁切。
+    ExtractedDocument illustratedStem;
+    illustratedStem.sourcePath = QStringLiteral("illustrated-stem.pdf");
+    illustratedStem.hasPageBoundaries = true;
+    illustratedStem.plainText = QStringLiteral(
+        "1. 小王站在何处？如图所示。\nA. 30 米\nB. 40 米\nC. 50 米\nD. 60 米\n答案：C\n");
+    illustratedStem.questionAnchors.insert(1, {
+        {QStringLiteral("1"), QRectF(0.08, 0.10, 0.02, 0.025)}});
+    illustratedStem.lineAnchors.insert(1, {
+        {QStringLiteral("1. 小王站在何处？如图所示。"), QRectF(0.08, 0.10, 0.62, 0.055)}});
+    illustratedStem.optionLabelAnchors.insert(1, {
+        {QStringLiteral("a"), QRectF(0.10, 0.63, 0.02, 0.02)},
+        {QStringLiteral("b"), QRectF(0.34, 0.63, 0.02, 0.02)},
+        {QStringLiteral("c"), QRectF(0.58, 0.63, 0.02, 0.02)},
+        {QStringLiteral("d"), QRectF(0.82, 0.63, 0.02, 0.02)}});
+    QImage illustratedPage(800, 1200, QImage::Format_ARGB32_Premultiplied);
+    illustratedPage.fill(Qt::white);
+    {
+        QPainter painter(&illustratedPage);
+        painter.setPen(QPen(Qt::black, 7));
+        painter.drawLine(90, 610, 710, 610);
+        painter.drawLine(400, 610, 400, 280); // 题干插图的高线，必须不能被截掉。
+    }
+    QByteArray illustratedPng;
+    QBuffer illustratedBuffer(&illustratedPng);
+    if (!illustratedBuffer.open(QIODevice::WriteOnly) || !illustratedPage.save(&illustratedBuffer, "PNG"))
+        return 123;
+    illustratedStem.pageImages.insert(1, illustratedPng);
+    const auto illustratedResult = RuleBasedBankGenerator{}.generate({illustratedStem});
+    if (illustratedResult.questions.size() != 1) return 124;
+    const QJsonObject illustratedQuestion = illustratedResult.questions.first().toObject();
+    const QJsonObject illustratedAsset = illustratedQuestion.value("stemImage").toObject();
+    const QJsonObject illustratedCrop = illustratedAsset.value("autoCrop").toObject();
+    const QString illustratedPath = illustratedAsset.value("path").toString();
+    if (illustratedPath.isEmpty() || !illustratedResult.assets.contains(illustratedPath)) return 125;
+    if (!illustratedAsset.value("alt").toString().contains(QStringLiteral("题干插图"))) return 126;
+    if (illustratedCrop.value("y").toDouble() > 0.17) return 127;
+    if (illustratedCrop.value("height").toDouble() < 0.42) return 128;
+    if (illustratedCrop.value("y").toDouble() + illustratedCrop.value("height").toDouble() > 0.63)
+        return 129;
 
     // 真实试卷常以“（一）阅读以下文字”而不是“材料一”标记资料题；文字
     // PDF 的图表还必须作为题库 assets 保留，不能因为该页有文字层就被丢弃。
@@ -171,17 +286,19 @@ int main(int argc, char** argv) {
         crossPageResult.questions.first().toObject().contains("stemImage"))
         return 106;
 
-    // 资料分析题即使结构完整（规则没有报任何硬失败），也必须标注
-    // riskLevel=soft 并携带 material-type:资料分析 信号，交给复核页强制展示，
-    // 而不是像普通及格题一样悄悄免检进入最终包。
+    // 资料分析的题目文字通常可靠且非常短；应只把共享材料标为软复核，避免
+    // 同一份图表下的每道子题都被重复打回复核列表。
     {
         const QJsonObject dataAnalysisReview =
-            crossPageResult.questions.first().toObject().value("review").toObject();
+            crossPageResult.materials.first().toObject().value("review").toObject();
         if (!dataAnalysisReview.value("needsReview").toBool() ||
             dataAnalysisReview.value("riskLevel").toString() != QStringLiteral("soft") ||
             !dataAnalysisReview.value("signals").toArray().contains(
                 QStringLiteral("material-type:资料分析")))
             return 111;
+        if (crossPageResult.questions.first().toObject().value("review").toObject()
+                .value("signals").toArray().contains(QStringLiteral("material-type:资料分析")))
+            return 114;
     }
 
     // 图形推理整题型分区：即使规则解析完全成功，也要标注 soft 风险，因为规则
@@ -277,13 +394,19 @@ int main(int argc, char** argv) {
     if (formulaResult.questions.size() != 1 || !formulaResult.needsReviewQuestions.isEmpty()) return 102;
     if (formulaResult.assets.size() != 1) return 103;
     const QJsonObject formulaQuestion = formulaResult.questions.first().toObject();
-    const QString formulaVisualPath =
-        formulaQuestion.value("stemImage").toObject().value("path").toString();
+    const QJsonObject formulaVisual = formulaQuestion.value("stemImage").toObject();
+    const QString formulaVisualPath = formulaVisual.value("path").toString();
     const QImage formulaVisualImage =
         QImage::fromData(formulaResult.assets.value(formulaVisualPath), "PNG");
     if (formulaVisualPath.isEmpty() || formulaVisualImage.isNull() ||
         formulaVisualImage.height() >= 200 ||
         formulaQuestion.value("options").toArray().at(0).toObject().contains("image")) return 104;
+    // 每张自动截图都携带原卷定位信息，复核页才能直接回到对应页、以这一框为
+    // 初始位置重新裁切；公式行需保留足够高度，不能再把分子分母裁掉。
+    if (formulaVisual.value("sourceDocument").toString() != QStringLiteral("formula-options.pdf") ||
+        formulaVisual.value("sourcePage").toInt() != 1 ||
+        formulaVisual.value("autoCrop").toObject().value("height").toDouble() < 0.08)
+        return 108;
     if (!quizpane::validateBank(bankFor(formulaResult), &validationError)) return 105;
 
     // 有些图形题的 A/B/C/D 是矢量字，根本没有文字层锚点。此时必须截出本题

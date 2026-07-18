@@ -16,7 +16,7 @@ GenerationWorkflow::GenerationWorkflow(QObject* parent) : QObject(parent) {}
 void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
     QList<SourceMaterialGroup> groups;
     for (const QString& path : sourcePaths)
-        groups.append({path, {}});
+        groups.append({path, {}, true});
     startRuleBased(groups);
 }
 
@@ -33,11 +33,16 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
     // PDF 渲染、OCR 和规则扫描都会触发大量 CPU/磁盘工作。放到工作线程后，主窗口
     // 的“运行中”动画能持续刷新，完成结果再排回 GUI 线程，避免跨线程操作控件。
     const QPointer<GenerationWorkflow> owner(this);
-    [[maybe_unused]] const auto backgroundTask = QtConcurrent::run([owner, sources] {
+    const bool hasAnswerKey = sources.isEmpty() || sources.first().hasAnswerKey;
+    [[maybe_unused]] const auto backgroundTask = QtConcurrent::run([owner, sources, hasAnswerKey] {
         QList<ExtractedDocument> documents;
         ExtractorRegistry registry;
         QString failure;
         for (const SourceMaterialGroup& source : sources) {
+            if (source.hasAnswerKey != hasAnswerKey) {
+                failure = QStringLiteral("同一题库不能混合含答案与无答案资料");
+                break;
+            }
             const QString path = source.questionPath;
             ExtractedDocument document = registry.extract(QFileInfo(path).absoluteFilePath());
             if (!document.error.isEmpty()) {
@@ -45,6 +50,10 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                 break;
             }
             if (!source.answerPath.isEmpty()) {
+                if (!hasAnswerKey) {
+                    failure = QStringLiteral("无答案题库不能配对答案文件");
+                    break;
+                }
                 const ExtractedDocument answers = registry.extract(
                     QFileInfo(source.answerPath).absoluteFilePath());
                 if (!answers.error.isEmpty()) {
@@ -57,7 +66,7 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
             documents.append(document);
         }
         const RuleBasedGenerationResult result = failure.isEmpty()
-            ? RuleBasedBankGenerator{}.generate(documents) : RuleBasedGenerationResult{};
+            ? RuleBasedBankGenerator{}.generate(documents, hasAnswerKey) : RuleBasedGenerationResult{};
         if (!owner)
             return;
         QMetaObject::invokeMethod(owner.data(), [owner, result, failure] {
@@ -85,7 +94,7 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
             self->publish(WorkflowStage::Done, detail);
             emit self->questionsReady({result.materials, result.questions,
                                        result.needsReviewQuestions, result.warnings,
-                                       result.assets});
+                                       result.assets, result.hasAnswerKey});
             emit self->finished();
         }, Qt::QueuedConnection);
     });

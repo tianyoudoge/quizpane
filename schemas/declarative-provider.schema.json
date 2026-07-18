@@ -6,9 +6,10 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "title", "catalogs", "questions"],
   "properties": {
-    "schemaVersion": { "const": 2 },
+    "schemaVersion": { "enum": [2, 3] },
     "title": { "type": "string", "minLength": 1, "maxLength": 120 },
     "description": { "type": "string", "maxLength": 2000 },
+    "answerPolicy": { "enum": ["included", "none"] },
     "catalogs": {
       "type": "array",
       "minItems": 1,
@@ -43,6 +44,25 @@
       "items": { "$ref": "#/$defs/question" }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "schemaVersion": { "const": 3 } } },
+      "then": { "required": ["answerPolicy"] }
+    },
+    {
+      "if": { "required": ["answerPolicy"], "properties": { "answerPolicy": { "const": "none" } } },
+      "then": {
+        "properties": {
+          "questions": { "items": { "not": { "anyOf": [{ "required": ["answer"] }, { "required": ["solution"] }] } } }
+        }
+      },
+      "else": {
+        "properties": {
+          "questions": { "items": { "required": ["answer", "solution"] } }
+        }
+      }
+    }
+  ],
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
     "asset": {
@@ -59,7 +79,9 @@
       "additionalProperties": false,
       "properties": {
         "document": { "type": "string", "maxLength": 300 },
-        "page": { "type": "integer", "minimum": 1 }
+        "page": { "type": "integer", "minimum": 1 },
+        "questionNumber": { "type": "integer", "minimum": 1 },
+        "questionLabel": { "type": "string", "maxLength": 40 }
       }
     },
     "material": {
@@ -71,12 +93,35 @@
         "catalogId": { "$ref": "#/$defs/id" },
         "title": { "type": "string", "maxLength": 200 },
         "body": { "type": "string", "maxLength": 100000 },
+        "underlines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["start", "length"],
+            "properties": {
+              "start": { "type": "integer", "minimum": 0 },
+              "length": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
         "images": {
           "type": "array",
           "maxItems": 20,
           "items": { "$ref": "#/$defs/asset" }
         },
-        "source": { "$ref": "#/$defs/source" }
+        "source": { "$ref": "#/$defs/source" },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "needsReview": { "type": "boolean" },
+            "reason": { "type": "string", "maxLength": 1000 },
+            "riskLevel": { "enum": ["hard", "soft"] },
+            "signals": { "type": "array", "items": { "type": "string" } }
+          }
+        }
       }
     },
     "option": {
@@ -92,7 +137,7 @@
     "question": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "catalogId", "type", "stem", "options", "answer", "solution"],
+      "required": ["id", "catalogId", "type", "stem", "options"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "catalogId": { "$ref": "#/$defs/id" },

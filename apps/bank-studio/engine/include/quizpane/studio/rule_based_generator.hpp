@@ -20,7 +20,7 @@ using RuleBasedGenerationResult = ReviewResult;
 class RuleBasedBankGenerator final {
   public:
     [[nodiscard]] RuleBasedGenerationResult
-    generate(const QList<ExtractedDocument>& documents) const;
+    generate(const QList<ExtractedDocument>& documents, bool hasAnswerKey = true) const;
 };
 
 } // namespace quizpane::studio

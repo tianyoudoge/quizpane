@@ -29,16 +29,40 @@ bool hasOnlyKeys(const QJsonObject& object, const QSet<QString>& allowed) {
     return true;
 }
 
+bool validNormalizedCrop(const QJsonValue& value) {
+    if (!value.isObject()) return false;
+    const QJsonObject crop = value.toObject();
+    static const QSet<QString> keys{"x", "y", "width", "height"};
+    if (!hasOnlyKeys(crop, keys)) return false;
+    const double x = crop.value("x").toDouble(-1.0);
+    const double y = crop.value("y").toDouble(-1.0);
+    const double width = crop.value("width").toDouble(-1.0);
+    const double height = crop.value("height").toDouble(-1.0);
+    return crop.value("x").isDouble() && crop.value("y").isDouble() &&
+        crop.value("width").isDouble() && crop.value("height").isDouble() &&
+        x >= 0.0 && y >= 0.0 && width > 0.0 && height > 0.0 &&
+        x + width <= 1.000001 && y + height <= 1.000001;
+}
+
 bool validAsset(const QJsonValue& value) {
     if (!value.isObject()) return false;
     const QJsonObject asset = value.toObject();
-    static const QSet<QString> keys{"path", "alt"};
+    static const QSet<QString> keys{"path", "alt", "sourceDocument", "sourcePage",
+                                    "autoCrop", "crop"};
     static const QRegularExpression pathPattern(
         QStringLiteral("^assets/[A-Za-z0-9._/-]+$"));
+    const int sourcePage = asset.value("sourcePage").toInt();
+    const bool hasSource = asset.contains("sourceDocument") || asset.contains("sourcePage");
     return hasOnlyKeys(asset, keys) && asset.value("path").isString() &&
         pathPattern.match(asset.value("path").toString()).hasMatch() &&
         (!asset.contains("alt") || (asset.value("alt").isString() &&
-                                    asset.value("alt").toString().size() <= 500));
+                                    asset.value("alt").toString().size() <= 500)) &&
+        (!hasSource || (asset.value("sourceDocument").isString() &&
+                        asset.value("sourceDocument").toString().size() <= 300 &&
+                        asset.value("sourcePage").isDouble() &&
+                        asset.value("sourcePage").toDouble() == sourcePage && sourcePage >= 1)) &&
+        (!asset.contains("autoCrop") || validNormalizedCrop(asset.value("autoCrop"))) &&
+        (!asset.contains("crop") || validNormalizedCrop(asset.value("crop")));
 }
 
 QSet<QString> validateCatalogs(const QJsonArray& catalogs, QList<BankValidationError>* errors) {
@@ -95,11 +119,32 @@ QHash<QString, QJsonObject> validateMaterials(const QJsonArray& materials, const
             continue;
         }
         const auto material = value.toObject();
-        static const QSet<QString> materialKeys{"id", "catalogId", "title", "body", "images", "source"};
+        static const QSet<QString> materialKeys{"id", "catalogId", "title", "body", "images", "source", "review", "underlines"};
         const QString id = material.value("id").toString();
         const QString title = material.value("title").toString();
         const QString body = material.value("body").toString();
         const auto images = material.value("images").toArray();
+        const QJsonObject review = material.value("review").toObject();
+        bool underlinesValid = true;
+        if (material.contains("underlines")) {
+            if (!material.value("underlines").isArray()) {
+                underlinesValid = false;
+            } else {
+                int previousEnd = 0;
+                for (const QJsonValue& underlineValue : material.value("underlines").toArray()) {
+                    const QJsonObject underline = underlineValue.toObject();
+                    const int start = underline.value("start").toInt(-1);
+                    const int length = underline.value("length").toInt();
+                    if (!underlineValue.isObject() || !hasOnlyKeys(underline, {"start", "length"}) ||
+                        !underline.value("start").isDouble() || !underline.value("length").isDouble() ||
+                        start < previousEnd || length <= 0 || start + length > body.size()) {
+                        underlinesValid = false;
+                        break;
+                    }
+                    previousEnd = start + length;
+                }
+            }
+        }
         bool imagesValid = true;
         for (const auto& imageValue : images) {
             if (!validAsset(imageValue)) { imagesValid = false; break; }
@@ -108,13 +153,31 @@ QHash<QString, QJsonObject> validateMaterials(const QJsonArray& materials, const
         const bool hasBody = material.contains("body") && material.value("body").isString() &&
             !body.trimmed().isEmpty() && body.size() <= 100000;
         const bool hasImages = material.contains("images") && !images.isEmpty();
+        bool reviewValid = true;
+        if (material.contains("review")) {
+            static const QSet<QString> reviewKeys{"confidence", "needsReview", "reason", "riskLevel", "signals"};
+            static const QSet<QString> riskLevels{"hard", "soft"};
+            const double confidence = review.value("confidence").toDouble(-1);
+            reviewValid = material.value("review").isObject() && hasOnlyKeys(review, reviewKeys) &&
+                (!review.contains("confidence") || (confidence >= 0 && confidence <= 1)) &&
+                (!review.contains("needsReview") || review.value("needsReview").isBool()) &&
+                (!review.contains("reason") || (review.value("reason").isString() &&
+                                                  review.value("reason").toString().size() <= 1000)) &&
+                (!review.contains("riskLevel") || (review.value("riskLevel").isString() &&
+                    riskLevels.contains(review.value("riskLevel").toString()))) &&
+                (!review.contains("signals") || review.value("signals").isArray());
+            if (reviewValid) {
+                for (const QJsonValue& signal : review.value("signals").toArray())
+                    if (!signal.isString()) { reviewValid = false; break; }
+            }
+        }
         if (!hasOnlyKeys(material, materialKeys) || !validId(id) || materialsById.contains(id) ||
             !catalogIds.contains(material.value("catalogId").toString()) ||
             (material.contains("title") &&
                 (!material.value("title").isString() || title.size() > 200)) ||
             (material.contains("images") && (!material.value("images").isArray() || images.size() > 20 ||
                 !imagesValid)) ||
-            (!hasBody && !hasImages)) {
+            (!hasBody && !hasImages) || !reviewValid || !underlinesValid) {
             errors->append({-1, {}, QStringLiteral("材料 %1 的标识、分类或内容无效").arg(id), id});
             continue;
         }
@@ -139,7 +202,7 @@ QHash<QString, QJsonObject> validateMaterials(const QJsonArray& materials, const
 // （不存在的材料、分类不一致、正文完整复制进 stem）由调用方在此之前处理，
 // 因为需要访问 materialsById，不属于"题目内部结构"的范畴。
 void validateQuestionCommon(const QJsonObject& question, int index, const QString& id,
-                            QList<BankValidationError>* errors) {
+                            bool hasAnswerKey, QList<BankValidationError>* errors) {
     const auto options = question.value("options").toArray();
     const auto answers = question.value("answer").toObject().value("optionIds").toArray();
     QSet<QString> optionIds;
@@ -165,12 +228,13 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
     }
     if (!optionsValid) return;
 
-    for (const auto& answer : answers) {
-        if (!optionIds.contains(answer.toString())) {
-            errors->append({index, id, QStringLiteral("第 %1 题的答案没有对应选项").arg(index + 1), {}});
-            break;
+    if (hasAnswerKey)
+        for (const auto& answer : answers) {
+            if (!optionIds.contains(answer.toString())) {
+                errors->append({index, id, QStringLiteral("第 %1 题的答案没有对应选项").arg(index + 1), {}});
+                break;
+            }
         }
-    }
     if (question.contains("review")) {
         const QJsonObject review = question.value("review").toObject();
         static const QSet<QString> reviewKeys{"confidence", "needsReview", "reason", "riskLevel", "signals"};
@@ -198,13 +262,18 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
     }
     if (question.contains("source")) {
         const QJsonObject source = question.value("source").toObject();
-        static const QSet<QString> sourceKeys{"document", "page"};
+        static const QSet<QString> sourceKeys{"document", "page", "questionNumber", "questionLabel"};
         const int page = source.value("page").toInt();
+        const int questionNumber = source.value("questionNumber").toInt();
         if (!question.value("source").isObject() || !hasOnlyKeys(source, sourceKeys) ||
             (source.contains("document") && (!source.value("document").isString() ||
                 source.value("document").toString().size() > 300)) ||
             (source.contains("page") && (!source.value("page").isDouble() ||
-                source.value("page").toDouble() != page || page < 1))) {
+                source.value("page").toDouble() != page || page < 1)) ||
+            (source.contains("questionNumber") && (!source.value("questionNumber").isDouble() ||
+                source.value("questionNumber").toDouble() != questionNumber || questionNumber < 1)) ||
+            (source.contains("questionLabel") && (!source.value("questionLabel").isString() ||
+                source.value("questionLabel").toString().size() > 40))) {
             errors->append({index, id, QStringLiteral("第 %1 题的来源信息无效").arg(index + 1), {}});
         }
     }
@@ -215,14 +284,23 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
 QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
     QList<BankValidationError> errors;
     static const QSet<QString> bankKeys{
-        "schemaVersion", "title", "description", "catalogs", "materials", "questions"};
+        "schemaVersion", "title", "description", "answerPolicy", "catalogs", "materials", "questions"};
     if (!hasOnlyKeys(bank, bankKeys))
         errors.append({-1, {}, QStringLiteral("题库包含 Schema 未声明的字段"), {}});
     const QString bankTitle = bank.value("title").toString();
-    if (bank.value("schemaVersion").toInt() != 2 || !bank.value("title").isString() ||
+    const int schemaVersion = bank.value("schemaVersion").toInt();
+    if ((schemaVersion != 2 && schemaVersion != 3) || !bank.value("title").isString() ||
         bankTitle.trimmed().isEmpty() || bankTitle.size() > 120) {
-        errors.append({-1, {}, QStringLiteral("题库必须包含 schemaVersion=2 和非空 title"), {}});
+        errors.append({-1, {}, QStringLiteral("题库必须包含 schemaVersion=2 或 3 和非空 title"), {}});
     }
+    const QString answerPolicy = schemaVersion == 2
+        ? QStringLiteral("included") : bank.value("answerPolicy").toString();
+    if (schemaVersion == 3 && (answerPolicy != QStringLiteral("included") &&
+                               answerPolicy != QStringLiteral("none")))
+        errors.append({-1, {}, QStringLiteral("schemaVersion=3 的题库必须声明 answerPolicy 为 included 或 none"), {}});
+    if (schemaVersion == 2 && bank.contains("answerPolicy"))
+        errors.append({-1, {}, QStringLiteral("schemaVersion=2 不支持 answerPolicy，请升级为 schemaVersion=3"), {}});
+    const bool hasAnswerKey = answerPolicy != QStringLiteral("none");
     if (bank.contains("description") && (!bank.value("description").isString() ||
         bank.value("description").toString().size() > 2000))
         errors.append({-1, {}, QStringLiteral("题库描述格式无效或超过 2000 字"), {}});
@@ -243,6 +321,7 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
 
     QSet<QString> questionIds;
     QSet<QString> referencedMaterialIds;
+    QHash<QString, int> lastQuestionNumberByDocument;
     for (qsizetype index = 0; index < questions.size(); ++index) {
         if (!questions.at(index).isObject()) {
             errors.append({int(index), {}, QStringLiteral("第 %1 题必须是 JSON 对象").arg(index + 1), {}});
@@ -273,22 +352,48 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
         require(questionTypes().contains(type), QStringLiteral("题型不受支持"));
         require(question.value("stem").isString() && !stem.trimmed().isEmpty() && stem.size() <= 20000,
                 QStringLiteral("题干为空、格式错误或超过 20000 字"));
+        if (schemaVersion == 3) {
+            const QJsonObject source = question.value("source").toObject();
+            require(source.value("questionNumber").isDouble() &&
+                    source.value("questionNumber").toInt() > 0,
+                    QStringLiteral("必须保留源文档中的原始小题号"));
+        }
         require(question.value("options").isArray() && options.size() >= 2 && options.size() <= 20,
                 QStringLiteral("选项必须为 2–20 项的数组"));
         const bool multiple = type == QStringLiteral("multiple_choice");
-        require(question.value("answer").isObject() &&
-                hasOnlyKeys(question.value("answer").toObject(), answerKeys) &&
-                question.value("answer").toObject().value("optionIds").isArray() &&
-                (multiple ? answers.size() >= 2 : answers.size() == 1),
-                multiple ? QStringLiteral("多选答案至少需要两个 optionId")
-                         : QStringLiteral("单选答案必须且只能包含一个 optionId"));
-        require(question.contains("solution") && question.value("solution").isString() &&
-                question.value("solution").toString().size() <= 20000,
-                QStringLiteral("解析缺失、格式错误或超过 20000 字"));
+        if (hasAnswerKey) {
+            require(question.value("answer").isObject() &&
+                    hasOnlyKeys(question.value("answer").toObject(), answerKeys) &&
+                    question.value("answer").toObject().value("optionIds").isArray() &&
+                    (multiple ? answers.size() >= 2 : answers.size() == 1),
+                    multiple ? QStringLiteral("多选答案至少需要两个 optionId")
+                             : QStringLiteral("单选答案必须且只能包含一个 optionId"));
+            require(question.contains("solution") && question.value("solution").isString() &&
+                    question.value("solution").toString().size() <= 20000,
+                    QStringLiteral("解析缺失、格式错误或超过 20000 字"));
+        } else {
+            require(!question.contains("answer") && !question.contains("solution"),
+                    QStringLiteral("无答案题库不得保存答案或解析"));
+        }
         require(!question.contains("stemImage") || validAsset(question.value("stemImage")),
                 QStringLiteral("题干图片资源无效"));
         if (invalid) continue;
         questionIds.insert(id);
+
+        const QJsonObject source = question.value("source").toObject();
+        const QString document = source.value("document").toString();
+        const int sourceNumber = source.value("questionNumber").toInt();
+        if (!document.isEmpty() && sourceNumber > 0) {
+            const auto last = lastQuestionNumberByDocument.constFind(document);
+            if (last != lastQuestionNumberByDocument.cend() && sourceNumber <= last.value()) {
+                errors.append({int(index), id,
+                    QStringLiteral("第 %1 题的原始小题号 %2 未严格大于同一文档上一题 %3；"
+                                   "禁止重号、倒序或静默重编号")
+                        .arg(index + 1).arg(sourceNumber).arg(last.value()), {}});
+            } else {
+                lastQuestionNumberByDocument.insert(document, sourceNumber);
+            }
+        }
 
         if (question.contains("materialId")) {
             const QString materialId = question.value("materialId").toString();
@@ -314,7 +419,7 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
                 referencedMaterialIds.insert(materialId);
             }
         }
-        validateQuestionCommon(question, int(index), id, &errors);
+        validateQuestionCommon(question, int(index), id, hasAnswerKey, &errors);
     }
 
     // 禁止孤立材料：至少一道题必须引用每份材料。

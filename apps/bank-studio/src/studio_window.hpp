@@ -1,14 +1,20 @@
 #pragma once
 
 #include <QHash>
+#include <QImage>
 #include <QMainWindow>
+#include "model_settings_dialog.hpp"
 #include "quizpane/studio/review_result.hpp"
 #include <QJsonArray>
+#include <QList>
 #include <QSet>
 #include <QStringList>
 
 class QLabel;
+class QCheckBox;
 class QLineEdit;
+class QPlainTextEdit;
+class QTextEdit;
 class QProgressBar;
 class QPushButton;
 class QScrollArea;
@@ -22,6 +28,7 @@ class QCloseEvent;
 
 namespace quizpane::studio {
 class GenerationWorkflow;
+class ModelClient;
 class SourceRowWidget;
 class StyledDropdown;
 using GeneratedBankCandidate = ReviewResult;
@@ -60,6 +67,27 @@ private:
     void populateReview(const GeneratedBankCandidate& candidate);
     void applyReviewFilter();
     void confirmRiskCategory(const QString& signal);
+    void showReviewQuestion(QTreeWidgetItem* item);
+    bool saveCurrentReviewQuestion();
+    void confirmCurrentReviewQuestion();
+    void excludeCurrentReviewQuestion();
+    void addManualMaterialUnderline();
+    void displayReviewAssets(const QList<QJsonObject>& assets);
+    void recropReviewAsset(const QJsonObject& asset);
+    void requestAiCrop(const QJsonObject& asset);
+    void handleAiCropResult(const QString& rawText, const QString& error);
+    bool commitReviewCrop(const QJsonObject& asset, const QImage& page,
+                          const QRectF& normalizedCrop);
+    void setReviewOptions(const QJsonArray& options);
+    QJsonArray reviewOptions() const;
+    void addReviewOption(const QString& id = {}, const QString& text = {});
+    void requestAiReview();
+    void handleAiReviewResult(const QString& rawText, const QString& error);
+    void editModelSettings();
+    void showDonationDialog();
+    bool ensureModelApiKeyLoaded();
+    void updateAiReviewAffordance();
+    void updateReviewStemHeight();
     void packageProvider();
     void applyStyle();
 
@@ -68,6 +96,7 @@ private:
     QVBoxLayout* sourceListLayout_ = nullptr;
     QWidget* sourcePanel_ = nullptr;
     QLabel* sourceSummary_ = nullptr;
+    QCheckBox* hasAnswerKeyCheck_ = nullptr;
     QLabel* modelSummary_ = nullptr;
     QLabel* phaseLabel_ = nullptr;
     QLabel* phaseDetail_ = nullptr;
@@ -77,6 +106,32 @@ private:
     QLabel* totalTokens_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
     QTreeWidget* reviewTree_ = nullptr;
+    QLabel* reviewDetailTitle_ = nullptr;
+    QLabel* reviewDetailStatus_ = nullptr;
+    QLabel* reviewStemLabel_ = nullptr;
+    QTextEdit* reviewStemEditor_ = nullptr;
+    QWidget* reviewQuestionEditorPanel_ = nullptr;
+    QWidget* reviewOptionsPanel_ = nullptr;
+    QVBoxLayout* reviewOptionsLayout_ = nullptr;
+    QList<QLineEdit*> reviewOptionEditors_;
+    QLabel* reviewAnswerLabel_ = nullptr;
+    QLineEdit* reviewAnswerEditor_ = nullptr;
+    QLabel* reviewSolutionLabel_ = nullptr;
+    QPlainTextEdit* reviewSolutionEditor_ = nullptr;
+    QWidget* reviewVisualPanel_ = nullptr;
+    QVBoxLayout* reviewVisualLayout_ = nullptr;
+    QPushButton* saveReviewButton_ = nullptr;
+    QPushButton* confirmReviewButton_ = nullptr;
+    QPushButton* excludeReviewButton_ = nullptr;
+    QPushButton* aiReviewButton_ = nullptr;
+    QTreeWidgetItem* currentReviewItem_ = nullptr;
+    QTreeWidgetItem* currentMaterialItem_ = nullptr;
+    QPushButton* manualMaterialUnderlineButton_ = nullptr;
+    bool aiReviewInFlight_ = false;
+    bool aiCropInFlight_ = false;
+    QJsonObject pendingCropAsset_;
+    QImage pendingCropPage_;
+    QRectF pendingCropContext_;
     QPushButton* allReviewButton_ = nullptr;
     QPushButton* missingAnswerButton_ = nullptr;
     QPushButton* duplicateButton_ = nullptr;
@@ -93,6 +148,8 @@ private:
     QPushButton* nextButton_ = nullptr;
     QPushButton* startButton_ = nullptr;
     GenerationWorkflow* workflow_ = nullptr;
+    ModelClient* modelClient_ = nullptr;
+    ModelSettings modelSettings_;
     QTimer* activityTimer_ = nullptr;
     int spinnerFrame_ = 0;
     QStringList sourcePaths_;
@@ -102,6 +159,7 @@ private:
     QJsonArray generatedQuestions_;
     QJsonArray reviewQuestions_;
     QHash<QString, QByteArray> generatedAssets_;
+    bool generatedHasAnswerKey_ = true;
 };
 
 }  // namespace quizpane::studio

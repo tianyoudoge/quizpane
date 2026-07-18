@@ -3,20 +3,30 @@ QFrame#sidebar { background: #111419; border: none; border-right: 1px solid #252
 QLabel#brand { font-size: 20px; font-weight: 700; color: #e0e3e7; }
 QLabel#pageTitle { font-size: 25px; font-weight: 700; color: #e0e3e7; }
 QLabel#eyebrow { color: #aeb5bd; font-size: 11px; font-weight: 600; }
-QLabel#muted, QLabel#privacyFootnote { color: #9ca3ab; }
+QLabel#muted { color: #9ca3ab; }
 QLabel#sideStep { color: #aeb5bd; padding: 9px 10px; border-radius: 7px; }
 QLabel#sideStep[active="true"] { color: #ffffff; background: #252a31; }
+QFrame#sidebarSupport { background: #1d1813; border: 1px solid #58432e; border-radius: 8px; }
+QPushButton#sidebarSupportButton { background: transparent; color: #f1bd77; border: none; padding: 2px 0; text-align: left; font-weight: 650; }
+QPushButton#sidebarSupportButton:hover { color: #ffd5a0; background: transparent; }
+QLabel#sidebarSupportHint { color: #aa9279; font-size: 11px; }
 QLabel#sectionTitle, QLabel#phaseTitle, QLabel#sourceRowTitle { color: #e0e3e7; font-size: 15px; font-weight: 650; }
 QLabel#metricValue, QLabel#pairedAnswerBadge { color: #b7bec7; font-weight: 650; }
 QLabel#notice { background: #20252b; color: #cfd4da; padding: 12px; border-radius: 8px; border: 1px solid #343a42; }
 QLabel#activitySpinner { color: #77bdf2; font-weight: 650; padding: 3px 0; }
 QFrame#dropZone { background: #15191e; border: 1px dashed #59616b; border-radius: 10px; }
 QFrame#panel, QFrame#metricCard, QFrame#sourceRow { background: #15191e; border: 1px solid #252a31; border-radius: 9px; }
+QFrame#reviewOptionRow { background: #111419; border: 1px solid #2d333b; border-radius: 7px; }
+QLabel#reviewOptionId { background: #2d333b; color: #f0f2f4; border-radius: 5px; font-weight: 700; padding: 3px; }
 QPushButton { background: #20252b; color: #cfd4da; border: 1px solid #343a42; border-radius: 7px; padding: 8px 13px; }
 QPushButton:hover { background: #2a3037; border-color: #59616b; }
 QPushButton#primaryButton { background: #d7dbe0; color: #15191e; border-color: #d7dbe0; font-weight: 600; }
 QPushButton#primaryButton:hover { background: #ffffff; border-color: #ffffff; }
 QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #b7bec7; border-color: transparent; }
+/* 复核页的“全部标记 / 手动修正 / AI 修正”是明确动作，不应伪装成普通文本链接。 */
+QPushButton#reviewActionButton { background: #20252b; color: #dce1e7; border: 1px solid #414954; border-radius: 7px; padding: 7px 12px; font-weight: 600; }
+QPushButton#reviewActionButton:hover { background: #2a3038; border-color: #717c89; color: #ffffff; }
+QPushButton#reviewActionButton:disabled { color: #747b85; background: #171b20; border-color: #303640; }
 QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget, QWidget#styledDropdown { background: #111419; color: #cfd4da; border: 1px solid #343a42; border-radius: 7px; padding: 8px; selection-background-color: #3b424b; }
 QListWidget::item { padding: 10px; border-bottom: 1px solid #252a31; }
 QListWidget::item:selected { color: #ffffff; background: #343a42; }

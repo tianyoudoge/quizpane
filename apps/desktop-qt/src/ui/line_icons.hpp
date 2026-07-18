@@ -10,6 +10,7 @@ enum class LineIcon {
     Previous,
     Next,
     Submit,
+    Save,
     Pin,
     Resize,
     Close,

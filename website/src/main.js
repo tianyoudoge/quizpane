@@ -29,11 +29,14 @@
     list.innerHTML = "";
     trust.forEach((item) => {
       const li = document.createElement("li");
+      const tag = document.createElement("span");
+      tag.className = "trust-tag";
+      tag.textContent = item.tag || "";
       const h3 = document.createElement("h3");
       h3.textContent = item.title;
       const p = document.createElement("p");
       p.textContent = item.detail;
-      li.append(h3, p);
+      li.append(tag, h3, p);
       list.append(li);
     });
   }
@@ -233,10 +236,16 @@
     const grid = $("#contact-grid");
     grid.innerHTML = "";
     contact.items.forEach((item) => {
-      const link = document.createElement("a");
-      link.className = "contact-card";
-      link.href = item.url;
-      if (item.url.startsWith("http")) {
+      const isSupport = item.action === "support";
+      const link = document.createElement(isSupport ? "button" : "a");
+      link.className = `contact-card${isSupport ? " contact-support" : ""}`;
+      if (isSupport) {
+        link.type = "button";
+        link.addEventListener("click", () => openSupportDialog());
+      } else {
+        link.href = item.url;
+      }
+      if (!isSupport && item.url.startsWith("http")) {
         link.target = "_blank";
         link.rel = "noopener";
       }
@@ -278,6 +287,51 @@
         nav.hidden = true;
       })
     );
+    $("#mobile-support-open").addEventListener("click", () => {
+      toggle.setAttribute("aria-expanded", "false");
+      nav.hidden = true;
+      openSupportDialog();
+    });
+  }
+
+  function openSupportDialog() {
+    const dialog = $("#support-dialog");
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function setupSupportDialog() {
+    const dialog = $("#support-dialog");
+    const close = $("#support-close");
+    ["#support-open", "#top-support-open"].forEach((selector) => {
+      $(selector).addEventListener("click", openSupportDialog);
+    });
+    close.addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    const methods = [
+      { id: "wechat", label: "微信扫码赞赏", src: "assets/support/wechat-payment.jpg", alt: "微信收款码" },
+      { id: "alipay", label: "支付宝扫码赞赏", src: "assets/support/alipay-payment.jpg", alt: "支付宝收款码" },
+    ];
+    let activeIndex = 0;
+    const code = $("#payment-code");
+    const caption = $("#payment-caption");
+    const tabs = $$(".payment-tab", dialog);
+    const selectPayment = (index) => {
+      activeIndex = (index + methods.length) % methods.length;
+      const method = methods[activeIndex];
+      code.src = method.src;
+      code.alt = method.alt;
+      caption.textContent = method.label;
+      tabs.forEach((tab) => {
+        const selected = tab.dataset.payment === method.id;
+        tab.classList.toggle("is-active", selected);
+        tab.setAttribute("aria-pressed", String(selected));
+      });
+    };
+    tabs.forEach((tab, index) => tab.addEventListener("click", () => selectPayment(index)));
+    $("#payment-previous").addEventListener("click", () => selectPayment(activeIndex - 1));
+    $("#payment-next").addEventListener("click", () => selectPayment(activeIndex + 1));
   }
 
   async function fetchRelease() {
@@ -304,6 +358,7 @@
     renderContact(content.contact);
     renderFooter(content.footer);
     setupMobileNav();
+    setupSupportDialog();
     setupCarousel();
 
     content.downloads.releaseUrlFallback = content.site.latestReleaseUrl;

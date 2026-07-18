@@ -13,10 +13,13 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCoreApplication>
+#include <QDateTime>
+#include <QDialog>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGuiApplication>
@@ -34,6 +37,7 @@
 #include <QNetworkReply>
 #include <QPushButton>
 #include <QPixmap>
+#include <QPainter>
 #include <QProcess>
 #include <QRadioButton>
 #include <QCheckBox>
@@ -394,6 +398,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     solutionNav->setContentsMargins(0, 0, 0, 0);
     previousSolutionButton_ = new QPushButton;
     nextSolutionButton_ = new QPushButton;
+    exportResultsButton_ = new QPushButton(QStringLiteral("查看作答结果"));
+    exportResultsButton_->setObjectName(QStringLiteral("smallButton"));
+    exportResultsButton_->setToolTip(QStringLiteral("预览适合手机查看的作答结果长图"));
     auto* backToCatalogButton = new QPushButton;
     previousSolutionButton_->setIcon(makeLineIcon(LineIcon::Previous));
     nextSolutionButton_->setIcon(makeLineIcon(LineIcon::Next));
@@ -409,11 +416,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     solutionNav->addWidget(previousSolutionButton_);
     solutionNav->addWidget(nextSolutionButton_);
     solutionNav->addStretch();
+    solutionNav->addWidget(exportResultsButton_);
     solutionNav->addWidget(backToCatalogButton);
     connect(previousSolutionButton_, &QPushButton::clicked, this,
             [this] { showSolution(currentSolutionIndex_ - 1); });
     connect(nextSolutionButton_, &QPushButton::clicked, this,
             [this] { showSolution(currentSolutionIndex_ + 1); });
+    connect(exportResultsButton_, &QPushButton::clicked, this,
+            &MainWindow::exportAttemptResults);
     connect(backToCatalogButton, &QPushButton::clicked, this,
             [this] {
                 pages_->setCurrentWidget(catalogPage_);
@@ -512,6 +522,8 @@ void MainWindow::initializeDesktopShell() {
             [this] { applyUiSize(UiSize::Large); });
     trayMenu_->addAction(QStringLiteral("返回练习列表"), this,
                          &MainWindow::returnToCatalog);
+    trayMenu_->addAction(QStringLiteral("赞赏支持…"), this,
+                         [this] { ui::showDonation(this); });
     trayMenu_->addAction(QStringLiteral("关于小窗刷题"), this,
                          &MainWindow::showAboutDialog);
     trayMenu_->addSeparator();
@@ -544,6 +556,8 @@ void MainWindow::initializeDesktopShell() {
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
     appMenu->addAction(debugLogAction);
 #endif
+    appMenu->addAction(QStringLiteral("赞赏支持…"), this,
+                       [this] { ui::showDonation(this); });
     appMenu->addAction(QStringLiteral("关于小窗刷题"), this,
                        &MainWindow::showAboutDialog);
     appMenu->addSeparator();
@@ -1047,8 +1061,9 @@ void MainWindow::requestResults() {
     QString error;
     provider_.request({{"id", "attempt-report"}, {"method", "attempt.report"},
                        {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error);
-    provider_.request({{"id", "attempt-solutions"}, {"method", "attempt.solutions"},
-                       {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error);
+    if (attemptHasAnswerKey_)
+        provider_.request({{"id", "attempt-solutions"}, {"method", "attempt.solutions"},
+                           {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error);
 }
 
 void MainWindow::showSolution(int index) {
@@ -1074,27 +1089,193 @@ void MainWindow::showSolution(int index) {
     solutionQuestionLabel_->setText(
         QStringLiteral("<div style=\"color:#c7ccd2\">%1%2</div>")
             .arg(solution.value("contentHtml").toString(), optionsHtml));
-    const int correct = solution.value("correctChoice").toInt(-1);
-    QSet<int> correctChoices;
-    for (const auto& value : solution.value("correctChoices").toArray()) correctChoices.insert(value.toInt());
     const bool multiple = solution.value("type").toString() == QStringLiteral("multiple_choice");
     const int selected = answers_.value(currentSolutionIndex_, -1);
     const auto labels = [](const QSet<int>& set) { QStringList result; for (int value : set) result.append(choiceLabel(value)); std::sort(result.begin(), result.end()); return result.join(QStringLiteral("、")); };
     const QSet<int> selectedChoices = multiple ? multiAnswers_.value(currentSolutionIndex_) : QSet<int>{selected};
-    const bool isCorrect = selectedChoices == correctChoices;
     selectedAnswerLabel_->setText(QStringLiteral("你的答案\n%1").arg(multiple ? labels(selectedChoices) : choiceLabel(selected)));
-    correctAnswerLabel_->setText(QStringLiteral("正确答案\n%1").arg(multiple ? labels(correctChoices) : choiceLabel(correct)));
-    answerStatusLabel_->setText(isCorrect ? QStringLiteral("✓ 正确") : QStringLiteral("✗ 错误"));
-    answerStatusLabel_->setProperty("correct", isCorrect);
-    answerStatusLabel_->style()->unpolish(answerStatusLabel_);
-    answerStatusLabel_->style()->polish(answerStatusLabel_);
-    solutionExplanationLabel_->setText(
-        QStringLiteral("<div style=\"color:#aebbb5\"><p><b>解析</b></p>%1</div>")
-            .arg(solution.value("solutionHtml").toString()));
+    if (attemptHasAnswerKey_) {
+        const int correct = solution.value("correctChoice").toInt(-1);
+        QSet<int> correctChoices;
+        for (const auto& value : solution.value("correctChoices").toArray())
+            correctChoices.insert(value.toInt());
+        const bool isCorrect = selectedChoices == correctChoices;
+        correctAnswerLabel_->setVisible(true);
+        answerStatusLabel_->setVisible(true);
+        solutionExplanationLabel_->setVisible(true);
+        correctAnswerLabel_->setText(QStringLiteral("正确答案\n%1").arg(
+            multiple ? labels(correctChoices) : choiceLabel(correct)));
+        answerStatusLabel_->setText(isCorrect ? QStringLiteral("✓ 正确") : QStringLiteral("✗ 错误"));
+        answerStatusLabel_->setProperty("correct", isCorrect);
+        answerStatusLabel_->style()->unpolish(answerStatusLabel_);
+        answerStatusLabel_->style()->polish(answerStatusLabel_);
+        solutionExplanationLabel_->setText(
+            QStringLiteral("<div style=\"color:#aebbb5\"><p><b>解析</b></p>%1</div>")
+                .arg(solution.value("solutionHtml").toString()));
+    } else {
+        correctAnswerLabel_->setVisible(false);
+        answerStatusLabel_->setVisible(false);
+        solutionExplanationLabel_->setVisible(false);
+    }
     solutionProgressLabel_->setText(QStringLiteral("第 %1 / %2 题")
         .arg(currentSolutionIndex_ + 1).arg(solutions_.size()));
     previousSolutionButton_->setEnabled(currentSolutionIndex_ > 0);
     nextSolutionButton_->setEnabled(currentSolutionIndex_ + 1 < solutions_.size());
+}
+
+void MainWindow::exportAttemptResults() {
+    if (questions_.isEmpty())
+        return;
+    constexpr int imageWidth = 1080;
+    constexpr int padding = 44;
+    constexpr int columns = 4;
+    constexpr int rowHeight = 74;
+    constexpr int maxRowsPerImage = 72;
+    constexpr int headerHeight = 208;
+    constexpr int gap = 14;
+    const int itemCapacity = columns * maxRowsPerImage;
+    const int pageCount = (questions_.size() + itemCapacity - 1) / itemCapacity;
+    QList<QImage> resultImages;
+    const auto answerText = [this](qsizetype index, const QJsonObject& question) {
+        if (question.value("type").toString() == QStringLiteral("multiple_choice")) {
+            QStringList choices;
+            for (const int choice : multiAnswers_.value(index)) choices.append(choiceLabel(choice));
+            std::sort(choices.begin(), choices.end());
+            return choices.isEmpty() ? QStringLiteral("未作答") : choices.join(QStringLiteral("、"));
+        }
+        return choiceLabel(answers_.value(index, -1));
+    };
+    for (int page = 0; page < pageCount; ++page) {
+        const int first = page * itemCapacity;
+        const int count = qMin(itemCapacity, int(questions_.size()) - first);
+        const int rows = (count + columns - 1) / columns;
+        QImage image(imageWidth, headerHeight + rows * rowHeight + padding,
+                     QImage::Format_ARGB32_Premultiplied);
+        image.fill(QColor(QStringLiteral("#10151c")));
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QFont titleFont = painter.font();
+        titleFont.setPixelSize(38);
+        titleFont.setBold(true);
+        painter.setFont(titleFont);
+        painter.setPen(QColor(QStringLiteral("#f2f5f8")));
+        painter.drawText(padding, 66, QStringLiteral("作答结果"));
+        QFont detailFont = painter.font();
+        detailFont.setPixelSize(22);
+        detailFont.setBold(false);
+        painter.setFont(detailFont);
+        painter.setPen(QColor(QStringLiteral("#aeb8c3")));
+        painter.drawText(padding, 104, attemptTitle_.isEmpty() ? QStringLiteral("题库练习") : attemptTitle_);
+        const int answered = std::count_if(answers_.cbegin(), answers_.cend(),
+            [](int answer) { return answer >= 0; });
+        painter.drawText(padding, 140, QStringLiteral("已作答 %1 / %2 题 · %3")
+            .arg(answered).arg(questions_.size())
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))));
+        painter.drawText(padding, 174, attemptHasAnswerKey_
+            ? QStringLiteral("仅汇总你的选择，便于快速对照答案")
+            : QStringLiteral("无答案题库：仅记录你的选择，不提供判分"));
+        if (pageCount > 1)
+            painter.drawText(imageWidth - padding - 90, 174,
+                             QStringLiteral("%1 / %2").arg(page + 1).arg(pageCount));
+        const qreal cardWidth = (imageWidth - padding * 2 - gap * (columns - 1)) / qreal(columns);
+        for (int offset = 0; offset < count; ++offset) {
+            const int index = first + offset;
+            const QJsonObject question = questions_.at(index).toObject();
+            const int column = offset % columns;
+            const int row = offset / columns;
+            const QRectF card(padding + column * (cardWidth + gap), headerHeight + row * rowHeight,
+                              cardWidth, rowHeight - gap);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(QStringLiteral("#1b232d")));
+            painter.drawRoundedRect(card, 12, 12);
+            const int sourceNumber = question.value("sourceQuestionNumber").toInt(index + 1);
+            QFont numberFont = painter.font();
+            numberFont.setPixelSize(22);
+            numberFont.setBold(true);
+            painter.setFont(numberFont);
+            painter.setPen(QColor(QStringLiteral("#e7edf4")));
+            painter.drawText(card.adjusted(16, 8, -16, -8), Qt::AlignLeft | Qt::AlignTop,
+                             QStringLiteral("%1").arg(sourceNumber));
+            QFont choiceFont = painter.font();
+            choiceFont.setPixelSize(24);
+            choiceFont.setBold(true);
+            painter.setFont(choiceFont);
+            const QString choice = answerText(index, question);
+            painter.setPen(choice == QStringLiteral("未作答") ? QColor(QStringLiteral("#8995a3"))
+                                                               : QColor(QStringLiteral("#f45aa6")));
+            painter.drawText(card.adjusted(16, 8, -16, -8), Qt::AlignRight | Qt::AlignVCenter, choice);
+        }
+        painter.end();
+        resultImages.append(image);
+    }
+    if (resultImages.isEmpty())
+        return;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("作答结果"));
+    dialog.resize(760, 700);
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(16, 14, 16, 16);
+    layout->setSpacing(10);
+    auto* toolbar = new QHBoxLayout;
+    auto* title = new QLabel(QStringLiteral("作答结果长图"));
+    title->setObjectName(QStringLiteral("sectionTitle"));
+    auto* previous = new QPushButton;
+    auto* next = new QPushButton;
+    previous->setObjectName(QStringLiteral("navIconButton"));
+    next->setObjectName(QStringLiteral("navIconButton"));
+    previous->setIcon(makeLineIcon(LineIcon::Previous));
+    next->setIcon(makeLineIcon(LineIcon::Next));
+    previous->setToolTip(QStringLiteral("上一张"));
+    next->setToolTip(QStringLiteral("下一张"));
+    auto* pageLabel = new QLabel;
+    pageLabel->setObjectName(QStringLiteral("detail"));
+    auto* save = new QPushButton;
+    save->setObjectName(QStringLiteral("navIconButton"));
+    save->setIcon(makeLineIcon(LineIcon::Save));
+    save->setToolTip(QStringLiteral("保存当前图片"));
+    save->setAccessibleName(QStringLiteral("保存当前图片"));
+    toolbar->addWidget(title);
+    toolbar->addStretch();
+    toolbar->addWidget(previous);
+    toolbar->addWidget(pageLabel);
+    toolbar->addWidget(next);
+    toolbar->addSpacing(6);
+    toolbar->addWidget(save);
+    layout->addLayout(toolbar);
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(false);
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto* preview = new QLabel;
+    preview->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
+    scroll->setWidget(preview);
+    layout->addWidget(scroll, 1);
+    int currentImage = 0;
+    const auto showImage = [&] {
+        preview->setPixmap(QPixmap::fromImage(resultImages.at(currentImage)));
+        pageLabel->setText(QStringLiteral("%1 / %2").arg(currentImage + 1).arg(resultImages.size()));
+        previous->setEnabled(currentImage > 0);
+        next->setEnabled(currentImage + 1 < resultImages.size());
+    };
+    connect(previous, &QPushButton::clicked, &dialog, [&] {
+        if (currentImage > 0) { --currentImage; showImage(); }
+    });
+    connect(next, &QPushButton::clicked, &dialog, [&] {
+        if (currentImage + 1 < resultImages.size()) { ++currentImage; showImage(); }
+    });
+    connect(save, &QPushButton::clicked, &dialog, [&] {
+        const QString suffix = resultImages.size() > 1
+            ? QStringLiteral("-%1").arg(currentImage + 1) : QString();
+        const QString suggested = QDir(QStandardPaths::writableLocation(
+            QStandardPaths::PicturesLocation)).filePath(QStringLiteral("作答结果%1.png").arg(suffix));
+        const QString path = QFileDialog::getSaveFileName(&dialog, QStringLiteral("保存作答结果"),
+            suggested, QStringLiteral("PNG 图片 (*.png)"));
+        if (!path.isEmpty() && !resultImages.at(currentImage).save(path, "PNG"))
+            QMessageBox::warning(&dialog, QStringLiteral("保存失败"),
+                                 QStringLiteral("无法写入图片：%1").arg(path));
+    });
+    showImage();
+    dialog.exec();
 }
 
 void MainWindow::setQrContent(const QString& content) {
@@ -1212,6 +1393,7 @@ void MainWindow::handleProviderResponse(const QJsonObject& response) {
     } else if (id == QStringLiteral("attempt-create")) {
         attemptId_ = result.value("attemptId").toString();
         attemptTitle_ = result.value("title").toString(attemptTitle_);
+        attemptHasAnswerKey_ = result.value("hasAnswerKey").toBool(true);
         if (attemptId_.isEmpty()) {
             QMessageBox::warning(this, QStringLiteral("创建失败"),
                                  QStringLiteral("题库没有返回练习编号"));
@@ -1241,9 +1423,21 @@ void MainWindow::handleProviderResponse(const QJsonObject& response) {
         draftStore_.clearAttempt(providerId_, attemptId_);
         requestResults();
     } else if (id == QStringLiteral("attempt-report")) {
-        resultSummaryLabel_->setText(QStringLiteral("%1 / %2 题正确")
-            .arg(result.value("correctCount").toInt())
-            .arg(result.value("questionCount").toInt()));
+        attemptHasAnswerKey_ = result.value("hasAnswerKey").toBool(attemptHasAnswerKey_);
+        if (attemptHasAnswerKey_) {
+            resultSummaryLabel_->setText(QStringLiteral("%1 / %2 题正确")
+                .arg(result.value("correctCount").toInt())
+                .arg(result.value("questionCount").toInt()));
+        } else {
+            resultSummaryLabel_->setText(QStringLiteral("已作答 %1 / %2 题 · 未提供答案，不评分")
+                .arg(result.value("answerCount").toInt())
+                .arg(result.value("questionCount").toInt()));
+            solutions_ = questions_;
+            if (!solutions_.isEmpty()) {
+                showSolution(0);
+                pages_->setCurrentWidget(solutionPage_);
+            }
+        }
     } else if (id == QStringLiteral("attempt-solutions")) {
         solutions_ = result.value("solutions").toArray();
         updateMaterialsCache(result.value("materials").toArray());
@@ -1349,7 +1543,7 @@ void MainWindow::installProviderPackage(const QString& path) {
     loadProvider(result.entryPath);
 }
 
-void MainWindow::loadProvider(const QString& path) {
+bool MainWindow::loadProvider(const QString& path) {
     diagnostic::event(QStringLiteral("ui"), QStringLiteral("load-provider"),
         {{QStringLiteral("file"), QFileInfo(path).fileName()}});
     // 切换题库前清理只属于当前页面会话的状态；安全登录态由 ProviderLoader 按
@@ -1362,6 +1556,7 @@ void MainWindow::loadProvider(const QString& path) {
     attemptId_.clear();
     questions_ = {};
     solutions_ = {};
+    attemptHasAnswerKey_ = true;
     materialsById_.clear();
     practiceMaterialCard_->hideMaterial();
     solutionMaterialCard_->hideMaterial();
@@ -1374,7 +1569,7 @@ void MainWindow::loadProvider(const QString& path) {
             {{QStringLiteral("error"), error}});
         titleLabel_->setText(QStringLiteral("题库加载失败"));
         detailLabel_->setText(error);
-        return;
+        return false;
     }
     const auto descriptor = provider_.descriptor();
     providerId_ = descriptor.value("id").toString();
@@ -1388,6 +1583,7 @@ void MainWindow::loadProvider(const QString& path) {
     titleLabel_->setText(QStringLiteral("正在打开题库…"));
     detailLabel_->setText(QStringLiteral("请稍候"));
     sendInitialize();
+    return true;
 }
 
 bool MainWindow::loadLastProvider() {
@@ -1507,6 +1703,8 @@ void MainWindow::showMainMenu() {
     });
 #endif
     menu.addSeparator();
+    menu.addAction(QStringLiteral("赞赏支持…"), this,
+                   [this] { ui::showDonation(this); });
     menu.addAction(QStringLiteral("关于小窗刷题"), this,
                    &MainWindow::showAboutDialog);
     menu.exec(menuButton_->mapToGlobal(QPoint(0, menuButton_->height())));

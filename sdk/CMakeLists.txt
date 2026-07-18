@@ -8,10 +8,12 @@ add_library(quizpane_provider_host STATIC
     include/quizpane/declarative_provider.hpp
     include/quizpane/provider_installer.hpp
     include/quizpane/provider_loader.hpp
+    include/quizpane/running_app_handoff.hpp
     include/quizpane/secret_store.hpp
     src/declarative_provider.cpp
     src/provider_installer.cpp
     src/provider_loader.cpp
+    src/running_app_handoff.cpp
     src/secret_store.cpp
     src/zip_archive.cpp
 )
@@ -20,7 +22,7 @@ set_source_files_properties(src/secret_store.cpp PROPERTIES
     SKIP_UNITY_BUILD_INCLUSION ON)
 target_include_directories(quizpane_provider_host PUBLIC include)
 target_link_libraries(quizpane_provider_host
-    PUBLIC quizpane_provider_sdk Qt6::Core
+    PUBLIC quizpane_provider_sdk Qt6::Core Qt6::Network
     PRIVATE quizpane_core miniz
 )
 quizpane_optimize_target(quizpane_provider_host)

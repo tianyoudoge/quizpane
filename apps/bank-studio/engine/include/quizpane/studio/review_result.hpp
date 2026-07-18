@@ -16,6 +16,8 @@ struct ReviewResult {
     QStringList warnings;
     // assets/<...>.png -> PNG bytes。该字段是制作过程中的附件清单，不写入 bank.json。
     QHash<QString, QByteArray> assets;
+    // 一个题库只能处于“含答案”或“无答案”之一；不能混合，避免练习结果语义不清。
+    bool hasAnswerKey = true;
 };
 
 }  // namespace quizpane::studio

@@ -3,6 +3,10 @@
 #include <QFileInfo>
 #include <QFileOpenEvent>
 #include <QIcon>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QNetworkProxyFactory>
 #include <QSet>
 
@@ -12,6 +16,7 @@
 
 #include "platform/file_association.hpp"
 #include "quizpane/diagnostic_logger.hpp"
+#include "quizpane/running_app_handoff.hpp"
 #include "ui/main_window.hpp"
 
 namespace {
@@ -66,6 +71,83 @@ private:
 
 }  // namespace
 
+namespace {
+
+void sendControlReply(QLocalSocket* socket, bool ok, const QString& error = {}) {
+    if (!socket) return;
+    QJsonObject response{{QStringLiteral("ok"), ok}};
+    if (!error.isEmpty()) response.insert(QStringLiteral("error"), error);
+    socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
+    socket->flush();
+    socket->disconnectFromServer();
+    socket->deleteLater();
+}
+
+void installProviderHandoffServer(QLocalServer* server, quizpane::MainWindow* window) {
+    if (!server || !window) return;
+    const QString name = quizpane::runningAppControlServerName();
+    server->setSocketOptions(QLocalServer::UserAccessOption);
+    if (!server->listen(name)) {
+        // Unix 域 socket 可能因异常退出留下文件；只在确实无法连接到现有实例时
+        // 清理它，绝不把另一个仍活着的小窗刷题踢下线。
+        QLocalSocket probe;
+        probe.connectToServer(name);
+        if (!probe.waitForConnected(100)) {
+            QLocalServer::removeServer(name);
+            server->listen(name);
+        }
+    }
+    if (!server->isListening()) {
+        quizpane::diagnostic::event(QStringLiteral("handoff"), QStringLiteral("server-unavailable"),
+            {{QStringLiteral("name"), name}, {QStringLiteral("error"), server->errorString()}});
+        return;
+    }
+    QObject::connect(server, &QLocalServer::newConnection, server, [server, window] {
+        while (QLocalSocket* socket = server->nextPendingConnection()) {
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, window] {
+                QByteArray buffered = socket->property("quizpane-control-buffer").toByteArray();
+                buffered += socket->readAll();
+                if (buffered.size() > 16 * 1024) {
+                    sendControlReply(socket, false, QStringLiteral("控制消息过大"));
+                    return;
+                }
+                const int newline = buffered.indexOf('\n');
+                if (newline < 0) {
+                    socket->setProperty("quizpane-control-buffer", buffered);
+                    return;
+                }
+                QJsonParseError parseError;
+                const QJsonDocument request = QJsonDocument::fromJson(buffered.left(newline), &parseError);
+                if (!request.isObject() || request.object().value(QStringLiteral("command")).toString() !=
+                        QStringLiteral("load-provider")) {
+                    sendControlReply(socket, false, QStringLiteral("不支持的控制命令"));
+                    return;
+                }
+                const QString path = QFileInfo(request.object().value(QStringLiteral("path")).toString())
+                    .absoluteFilePath();
+                if (!QFileInfo(path).isFile()) {
+                    sendControlReply(socket, false, QStringLiteral("题库入口文件不存在"));
+                    return;
+                }
+                window->show();
+                window->raise();
+                window->activateWindow();
+                if (!window->loadProvider(path)) {
+                    sendControlReply(socket, false, QStringLiteral("小窗刷题无法加载这份题库"));
+                    return;
+                }
+                quizpane::diagnostic::event(QStringLiteral("handoff"), QStringLiteral("provider-accepted"),
+                    {{QStringLiteral("file"), QFileInfo(path).fileName()}});
+                sendControlReply(socket, true);
+            });
+        }
+    });
+    quizpane::diagnostic::event(QStringLiteral("handoff"), QStringLiteral("server-ready"),
+        {{QStringLiteral("name"), name}});
+}
+
+} // namespace
+
 int main(int argc, char* argv[]) {
     // QApplication 是 Qt Widgets 的进程级运行时，角色接近浏览器的 window +
     // event loop。所有控件必须在它创建之后、app.exec() 之前构造。
@@ -117,6 +199,8 @@ int main(int argc, char* argv[]) {
         window.installProviderPackage(normalized);
     };
     app.setFileOpenHandler(openPackage);
+    QLocalServer handoffServer;
+    installProviderHandoffServer(&handoffServer, &window);
     window.show();
     if (parser.isSet(providerOption)) {
         quizpane::diagnostic::event(QStringLiteral("startup"),

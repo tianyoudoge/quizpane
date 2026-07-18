@@ -23,6 +23,9 @@ std::optional<QKeySequence> askBossKey(QWidget* parent,
 // 这样版本号只有一处事实来源，避免界面和构建产物不一致。
 void showAbout(QWidget* parent);
 
+// 统一展示赞赏码。当前二维码是明确标示的非支付占位资源，正式发布时仅替换资源文件。
+void showDonation(QWidget* parent);
+
 DraftDecision chooseDraft(QWidget* parent, const QList<DraftSnapshot>& drafts);
 
 bool confirm(QWidget* parent, const QString& title, const QString& message,

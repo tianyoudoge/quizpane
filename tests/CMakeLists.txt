@@ -32,6 +32,12 @@ target_link_libraries(provider_installer_test PRIVATE
 )
 add_test(NAME provider_installer_test COMMAND provider_installer_test)
 
+add_executable(running_app_handoff_test running_app_handoff_test.cpp)
+target_link_libraries(running_app_handoff_test PRIVATE
+    quizpane_provider_host Qt6::Core Qt6::Network
+)
+add_test(NAME running_app_handoff_test COMMAND running_app_handoff_test)
+
 add_executable(provider_rpc_smoke provider_rpc_smoke.cpp)
 target_link_libraries(provider_rpc_smoke PRIVATE quizpane_provider_host Qt6::Core)
 
@@ -130,8 +136,8 @@ if(TARGET question_maker_engine)
 
     add_executable(generation_workflow_test generation_workflow_test.cpp)
     target_link_libraries(generation_workflow_test PRIVATE
-        question_maker_engine Qt6::Core Qt6::Network)
-add_test(NAME generation_workflow_test COMMAND generation_workflow_test)
+        question_maker_engine Qt6::Core)
+    add_test(NAME generation_workflow_test COMMAND generation_workflow_test)
 
 if(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING)
     add_executable(diagnostic_logger_test diagnostic_logger_test.cpp)

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>QuizPane · 把 PDF 真题变成能刷的题库</title>
-<meta name="description" content="本地优先的小窗刷题工具。导入题目 PDF 和答案 PDF，离线整理成题库，隐蔽小窗作答，PDF 图表和图片选项都不丢失。" />
+<title>小窗刷题 · 把 PDF 真题变成能刷的题库</title>
+<meta name="description" content="小窗刷题是 PDF 真题整理与练习工具。导入题目 PDF 和答案 PDF，整理成题库，在小窗中作答。" />
 <meta name="theme-color" content="#14161a" />
 <link rel="icon" href="assets/icons/quizpane-app-icon.png" type="image/png" />
 <link rel="stylesheet" href="main.css" />
@@ -15,8 +15,8 @@
 <header class="topbar">
   <div class="topbar-inner">
     <a class="brand" href="#top">
-      <img class="brand-logo" src="assets/icons/quizpane-app-icon.png" alt="QuizPane 产品图标" width="36" height="36" />
-      <span>QuizPane</span>
+      <img class="brand-logo" src="assets/icons/quizpane-app-icon.png" alt="小窗刷题产品图标" width="36" height="36" />
+      <span>小窗刷题</span>
     </a>
     <nav class="topnav" aria-label="页面导航">
       <a href="#features">能力</a>
@@ -24,6 +24,7 @@
       <a href="#download">下载</a>
       <a href="#privacy">隐私与开源</a>
       <a href="#contact">联系</a>
+      <button class="support-nav-action" id="top-support-open" type="button" aria-haspopup="dialog">赞赏支持</button>
     </nav>
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav">
       <span class="sr-only">打开菜单</span>
@@ -36,6 +37,7 @@
     <a href="#download">下载</a>
     <a href="#privacy">隐私与开源</a>
     <a href="#contact">联系</a>
+    <button class="support-nav-action" id="mobile-support-open" type="button" aria-haspopup="dialog">赞赏支持</button>
   </nav>
 </header>
 
@@ -43,16 +45,13 @@
   <section id="top" class="hero">
     <div class="hero-inner">
       <div class="hero-copy">
-        <div class="product-chip"><img src="assets/icons/quizpane-app-icon.png" alt="" width="42" height="42" /><span>QuizPane · 本地优先</span></div>
+        <div class="product-chip"><img src="assets/icons/quizpane-app-icon.png" alt="" width="42" height="42" /><span>小窗刷题</span></div>
         <h1 data-bind="hero.headline"></h1>
         <p class="hero-sub" data-bind="hero.subhead"></p>
         <div class="hero-actions">
           <a class="btn btn-primary" id="hero-download" href="#download" data-bind="hero.primaryCta"></a>
           <a class="btn btn-ghost" href="#features" data-bind="hero.secondaryCta"></a>
         </div>
-      </div>
-      <div class="hero-shot">
-        <img id="hero-image" src="assets/screenshots/floating.svg" alt="QuizPane 小窗刷题界面截图" width="640" height="760" loading="eager" />
       </div>
     </div>
   </section>
@@ -112,14 +111,30 @@
   </div>
 </footer>
 
-<aside class="support-float" aria-label="支持 QuizPane">
-  <img src="assets/icons/quizpane-app-icon.png" alt="" width="44" height="44" />
-  <div class="support-copy">
-    <strong>赞赏支持</strong>
-    <span>喜欢 QuizPane？请我喝杯咖啡</span>
-  </div>
-  <a href="mailto:xutianyoubupt@foxmail.com?subject=QuizPane%20%E8%B5%9E%E8%B5%8F%E6%94%B6%E6%AC%BE%E7%A0%81" aria-label="邮件获取 QuizPane 赞赏收款码">获取收款码</a>
+<aside class="support-float" aria-label="支持小窗刷题">
+  <button id="support-open" type="button" aria-haspopup="dialog">
+    <span aria-hidden="true">☕</span><span>赞赏支持</span>
+  </button>
 </aside>
+
+<dialog id="support-dialog" class="support-dialog" aria-labelledby="support-title">
+  <button class="support-close" id="support-close" type="button" aria-label="关闭">×</button>
+  <p class="support-kicker">感谢你的认可</p>
+  <h2 id="support-title">请作者喝杯咖啡</h2>
+  <p>一个人慢慢把小窗刷题做好并不容易。您的支持，是我继续下去的最大动力。</p>
+  <img id="payment-code" src="assets/support/wechat-payment.jpg" alt="微信收款码" width="280" height="280" />
+  <small id="payment-caption">微信扫码赞赏</small>
+  <div class="payment-switcher" aria-label="选择付款方式">
+    <button class="payment-arrow" id="payment-previous" type="button" aria-label="上一种付款方式">‹</button>
+    <button class="payment-tab is-active" type="button" data-payment="wechat" aria-pressed="true">
+      <span class="payment-logo payment-logo-wechat" aria-hidden="true">微</span>微信支付
+    </button>
+    <button class="payment-tab" type="button" data-payment="alipay" aria-pressed="false">
+      <span class="payment-logo payment-logo-alipay" aria-hidden="true">支</span>支付宝
+    </button>
+    <button class="payment-arrow" id="payment-next" type="button" aria-label="下一种付款方式">›</button>
+  </div>
+</dialog>
 
 <script src="main.js" defer></script>
 </body>

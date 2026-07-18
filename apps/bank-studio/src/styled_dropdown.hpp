@@ -53,6 +53,7 @@ private:
 
     QVector<Entry> entries_;
     int currentIndex_ = -1;
+    QLabel* currentIcon_ = nullptr;
     QLabel* currentLabel_ = nullptr;
     QLabel* arrow_ = nullptr;
     QFrame* popup_ = nullptr;

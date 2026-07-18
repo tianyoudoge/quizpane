@@ -1,8 +1,8 @@
 #include "model_settings_dialog.hpp"
-#include "styled_dropdown.hpp"
 
 #include <QColor>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -34,8 +34,8 @@ namespace {
 struct ModelVendor {
     QString id;
     QString name;
-    QString badge;
-    QColor badgeColor;
+    QString iconResource;
+    QColor logoBackground;
     QString endpoint;
     QString accountUrl;
     QString tutorialUrl;
@@ -47,44 +47,44 @@ struct ModelVendor {
 
 const QList<ModelVendor>& modelVendors() {
     static const QList<ModelVendor> vendors{
-        {QStringLiteral("openai"), QStringLiteral("OpenAI"), QStringLiteral("AI"),
+        {QStringLiteral("openai"), QStringLiteral("OpenAI"),
+         QStringLiteral(":/icons/vendor/openai.svg"),
          QColor(QStringLiteral("#2f6f61")), QStringLiteral("https://api.openai.com/v1"),
          QStringLiteral("https://platform.openai.com/api-keys"),
          QStringLiteral("https://platform.openai.com/docs/quickstart"),
          {QStringLiteral("gpt-5.2"), QStringLiteral("gpt-5-mini"),
           QStringLiteral("gpt-4.1-mini")}},
-        {QStringLiteral("anthropic"), QStringLiteral("Anthropic Claude"), QStringLiteral("C"),
+        {QStringLiteral("anthropic"), QStringLiteral("Anthropic"),
+         QStringLiteral(":/icons/vendor/anthropic.svg"),
          QColor(QStringLiteral("#8b6248")), QStringLiteral("https://api.anthropic.com/v1"),
          QStringLiteral("https://console.anthropic.com/settings/keys"),
          QStringLiteral("https://docs.anthropic.com/en/api/getting-started"),
          {QStringLiteral("claude-sonnet-4-5"), QStringLiteral("claude-haiku-4-5")},
          false, false, true},
-        {QStringLiteral("deepseek"), QStringLiteral("DeepSeek"), QStringLiteral("DS"),
-         QColor(QStringLiteral("#355d91")), QStringLiteral("https://api.deepseek.com/v1"),
-         QStringLiteral("https://platform.deepseek.com/api_keys"),
-         QStringLiteral("https://api-docs.deepseek.com/"),
-         {QStringLiteral("deepseek-v4-flash"), QStringLiteral("deepseek-v4-pro")}},
-        {QStringLiteral("dashscope"), QStringLiteral("阿里云百炼 · 通义千问"), QStringLiteral("Q"),
+        {QStringLiteral("dashscope"), QStringLiteral("阿里云百炼（通义千问）"),
+         QStringLiteral(":/icons/vendor/qwen.svg"),
          QColor(QStringLiteral("#6a55a6")),
          QStringLiteral("https://dashscope.aliyuncs.com/compatible-mode/v1"),
          QStringLiteral("https://bailian.console.aliyun.com/?apiKey=1"),
          QStringLiteral("https://help.aliyun.com/zh/model-studio/get-api-key"),
          {QStringLiteral("qwen3.7-plus"), QStringLiteral("qwen3.6-flash"),
           QStringLiteral("qwen-plus")}},
-        {QStringLiteral("zhipu"), QStringLiteral("智谱 AI"), QStringLiteral("GLM"),
+        {QStringLiteral("zhipu"), QStringLiteral("智谱 AI（GLM）"),
+         QStringLiteral(":/icons/vendor/zhipu.svg"),
          QColor(QStringLiteral("#3c6c8c")),
          QStringLiteral("https://open.bigmodel.cn/api/paas/v4"),
          QStringLiteral("https://open.bigmodel.cn/usercenter/apikeys"),
          QStringLiteral("https://docs.bigmodel.cn/cn/guide/develop/http/introduction"),
          {QStringLiteral("glm-5.1"), QStringLiteral("glm-5-turbo"),
           QStringLiteral("glm-4.7")}},
-        {QStringLiteral("ollama"), QStringLiteral("Ollama 本地模型"), QStringLiteral("O"),
+        {QStringLiteral("ollama"), QStringLiteral("Ollama（本地模型）"),
+         QStringLiteral(":/icons/vendor/ollama.svg"),
          QColor(QStringLiteral("#4e5964")), QStringLiteral("http://127.0.0.1:11434/v1"),
          QStringLiteral("https://ollama.com/download"),
          QStringLiteral("https://docs.ollama.com/api/introduction"),
          {QStringLiteral("qwen3:8b"), QStringLiteral("qwen3:4b"),
           QStringLiteral("llama3.2:3b")}, true},
-        {QStringLiteral("custom"), QStringLiteral("自定义供应商（高级）"), QStringLiteral("+"),
+        {QStringLiteral("custom"), QStringLiteral("自定义 OpenAI 兼容服务（高级）"), QString(),
          QColor(QStringLiteral("#59616a")), QString(), QString(),
          QStringLiteral(
              "https://github.com/tianyoudoge/quizpane/blob/master/"
@@ -102,21 +102,26 @@ const ModelVendor& vendorById(const QString& id) {
 }
 
 QIcon vendorIcon(const ModelVendor& vendor) {
-    // 用 QPainter 运行时绘制小徽标，等价于 Web 前端的小型 Avatar 组件；这样无需
-    // 为每个模型厂商携带一张图片，也不会增加低配机器的磁盘和加载开销。
+    // 官方品牌标识随资源包分发；运行时只负责放进统一的品牌色底座，使深色界面中
+    // 的小尺寸图标仍清晰可辨。自定义兼容服务保留通用“+”标识，不伪装成任何厂商。
     QPixmap pixmap(28, 28);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(vendor.badgeColor);
+    painter.setBrush(vendor.logoBackground);
     painter.drawRoundedRect(QRectF(2, 2, 24, 24), 6, 6);
-    QFont font = painter.font();
-    font.setBold(true);
-    font.setPixelSize(vendor.badge.size() > 2 ? 8 : 11);
-    painter.setFont(font);
-    painter.setPen(QColor(QStringLiteral("#f0f2f4")));
-    painter.drawText(pixmap.rect(), Qt::AlignCenter, vendor.badge);
+    if (!vendor.iconResource.isEmpty()) {
+        const QPixmap logo = QIcon(vendor.iconResource).pixmap(16, 16);
+        painter.drawPixmap(QRect(6, 6, 16, 16), logo);
+    } else {
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPixelSize(14);
+        painter.setFont(font);
+        painter.setPen(QColor(QStringLiteral("#f0f2f4")));
+        painter.drawText(pixmap.rect(), Qt::AlignCenter, QStringLiteral("+"));
+    }
     return QIcon(pixmap);
 }
 
@@ -158,20 +163,21 @@ QLabel* mutedLabel(const QString& text) {
 std::optional<ModelSettings> editModelSettings(QWidget* parent,
                                                const ModelSettings& current) {
     QDialog dialog(parent);
-    dialog.setWindowTitle(QStringLiteral("模型设置"));
+    dialog.setWindowTitle(QStringLiteral("模型管理"));
     dialog.setMinimumWidth(660);
     auto* layout = new QVBoxLayout(&dialog);
-    auto* title = new QLabel(QStringLiteral("模型设置"));
+    auto* title = new QLabel(QStringLiteral("模型管理"));
     title->setObjectName(QStringLiteral("pageTitle"));
     layout->addWidget(title);
     layout->addWidget(mutedLabel(
-        QStringLiteral("选择厂商并填写 API Key，生成器会优先获取账号当前可用模型；"
-                       "网络失败时自动使用内置推荐列表。")));
+        QStringLiteral("选择厂商并填写 API Key。可在供应商控制台查询用量；"
+                       "网络失败时模型列表会回退到内置推荐。")));
 
     auto* form = new QFormLayout;
     form->setSpacing(10);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    auto* service = new StyledDropdown;
+    // 与“模型”字段保持同一种原生下拉控件，厂商图标仅作为选项前缀。
+    auto* service = new QComboBox;
     for (const auto& vendor : modelVendors()) {
         service->addItem(vendorIcon(vendor), vendor.name, vendor.id);
     }
@@ -190,11 +196,16 @@ std::optional<ModelSettings> editModelSettings(QWidget* parent,
     links->setOpenExternalLinks(true);
     links->setTextInteractionFlags(Qt::TextBrowserInteraction);
     auto* hint = mutedLabel(QString());
+    auto* supportsVision = new QCheckBox(QStringLiteral("该模型支持图片输入（用于 AI 修正）"));
+    supportsVision->setChecked(current.supportsVision);
+    supportsVision->setToolTip(QStringLiteral(
+        "仅在所选模型确实支持图片输入时勾选。AI 修正只会发送当前裁切位置附近的局部图。"));
     hint->setObjectName(QStringLiteral("notice"));
     form->addRow(QStringLiteral("模型厂商"), service);
     form->addRow(QStringLiteral("模型"), model);
     form->addRow(QStringLiteral("Endpoint"), endpoint);
     form->addRow(QStringLiteral("API Key"), apiKey);
+    form->addRow(QStringLiteral("图片输入"), supportsVision);
     form->addRow(QStringLiteral("帮助"), links);
     layout->addLayout(form);
     layout->addWidget(hint);
@@ -333,7 +344,7 @@ std::optional<ModelSettings> editModelSettings(QWidget* parent,
         if (model->findText(current.modelName) < 0) model->insertItem(0, current.modelName);
         model->setCurrentText(current.modelName);
     }
-    QObject::connect(service, &StyledDropdown::currentIndexChanged, &dialog,
+    QObject::connect(service, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
                      [&, refreshVendor](int) {
         apiKey->clear();
         refreshVendor(false);
@@ -364,7 +375,8 @@ std::optional<ModelSettings> editModelSettings(QWidget* parent,
         service->currentText(),
         model->currentText().trimmed(),
         endpoint->text().trimmed(),
-        apiKey->text().trimmed()
+        apiKey->text().trimmed(),
+        supportsVision->isChecked()
     };
 }
 

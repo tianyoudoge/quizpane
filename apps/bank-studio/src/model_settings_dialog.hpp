@@ -17,6 +17,9 @@ struct ModelSettings {
     QString modelName = QStringLiteral("gpt-5.2");
     QString endpoint = QStringLiteral("https://api.openai.com/v1");
     QString apiKey;
+    // 这是模型能力声明，而不是厂商能力。许多 OpenAI 兼容端点同时托管纯文本和
+    // 视觉模型；只有明确勾选后，AI 修正才会发送局部图片。
+    bool supportsVision = true;
 };
 
 // 创建并同步执行模型设置对话框。网络请求和厂商差异全部封装在实现文件中，

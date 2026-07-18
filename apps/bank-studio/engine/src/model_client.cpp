@@ -10,11 +10,23 @@
 
 namespace quizpane::studio {
 
+bool canSendImageInput(const ModelSettings& settings) {
+    return settings.supportsVision;
+}
+
 QJsonObject buildChatCompletionsBody(const GenerationRequest& request) {
+    QJsonValue userContent = request.userContent;
+    if (!request.imagePng.isEmpty()) {
+        const QString imageUrl = QStringLiteral("data:image/png;base64,") +
+            QString::fromLatin1(request.imagePng.toBase64());
+        userContent = QJsonArray{
+            QJsonObject{{"type", "text"}, {"text", request.userContent}},
+            QJsonObject{{"type", "image_url"}, {"image_url", QJsonObject{{"url", imageUrl}}}}};
+    }
     return {{"model", request.modelName},
             {"messages", QJsonArray{
                 QJsonObject{{"role", "system"}, {"content", request.systemPrompt}},
-                QJsonObject{{"role", "user"}, {"content", request.userContent}}}},
+                QJsonObject{{"role", "user"}, {"content", userContent}}}},
             {"response_format", QJsonObject{{"type", "json_object"}}},
             {"temperature", 0.2}};
 }
@@ -80,6 +92,15 @@ ModelClient::ModelClient(QNetworkAccessManager* manager, QObject* parent)
 
 void ModelClient::generate(const ModelSettings& settings, const GenerationRequest& requestValue) {
     cancel();
+    if (!requestValue.imagePng.isEmpty() && !canSendImageInput(settings)) {
+        const QString error = QStringLiteral(
+            "当前模型未声明支持图片输入，未发送局部截图。请到“模型管理”勾选“该模型支持图片输入”，"
+            "或改用视觉模型后重试。");
+        QMetaObject::invokeMethod(this, [this, error] {
+            GenerationResult result; result.error = error; emit finished(result);
+        }, Qt::QueuedConnection);
+        return;
+    }
     QString error;
     const QNetworkRequest networkRequest = buildChatCompletionsRequest(settings, &error);
     if (!error.isEmpty()) {
@@ -92,21 +113,34 @@ void ModelClient::generate(const ModelSettings& settings, const GenerationReques
         return;
     }
     diagnostic::event(QStringLiteral("model"), QStringLiteral("request-start"),
-        {{QStringLiteral("vendor"), settings.vendorId},
-         {QStringLiteral("model"), requestValue.modelName},
-         {QStringLiteral("host"), networkRequest.url().host()},
-         {QStringLiteral("inputChars"), requestValue.userContent.size()}});
+         {{QStringLiteral("vendor"), settings.vendorId},
+          {QStringLiteral("model"), requestValue.modelName},
+          {QStringLiteral("host"), networkRequest.url().host()},
+         {QStringLiteral("inputChars"), requestValue.userContent.size()},
+         {QStringLiteral("imageBytes"), requestValue.imagePng.size()}});
     QElapsedTimer elapsed;
     elapsed.start();
+    QJsonObject requestBody = buildChatCompletionsBody(requestValue);
+    // 百炼的 Qwen 3.7 系列默认会输出思考过程；视觉定位则要求稳定的
+    // response_format=json_object，按官方兼容接口约定需显式关闭思考模式。
+    if (settings.vendorId == QStringLiteral("dashscope"))
+        requestBody.insert(QStringLiteral("enable_thinking"), false);
     reply_ = manager_->post(networkRequest,
-        QJsonDocument(buildChatCompletionsBody(requestValue)).toJson(QJsonDocument::Compact));
+        QJsonDocument(requestBody).toJson(QJsonDocument::Compact));
     QNetworkReply* current = reply_;
-    connect(current, &QNetworkReply::finished, this, [this, current, elapsed] {
+    connect(current, &QNetworkReply::finished, this, [this, current, elapsed, settings] {
         if (reply_ == current) reply_ = nullptr;
         const int status = current->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QString networkError = current->error() == QNetworkReply::NoError
             ? QString() : current->errorString();
-        const auto result = parseChatCompletionsResponse(current->readAll(), status, networkError);
+        auto result = parseChatCompletionsResponse(current->readAll(), status, networkError);
+        if (current->error() == QNetworkReply::RemoteHostClosedError) {
+            result.error = settings.vendorId == QStringLiteral("dashscope")
+                ? QStringLiteral("百炼服务主动关闭了连接。已自动按视觉 JSON 模式请求；"
+                                 "请稍后重试，并确认模型与 API Key 属于同一百炼地域。")
+                : QStringLiteral("模型服务主动关闭了连接。请确认 Endpoint 是 OpenAI 兼容接口，"
+                                 "且所选模型支持图片输入。");
+        }
         diagnostic::event(QStringLiteral("model"), QStringLiteral("request-finished"),
             {{QStringLiteral("http"), status},
              {QStringLiteral("ok"), result.ok},

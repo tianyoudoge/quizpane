@@ -42,6 +42,12 @@ QIcon makeLineIcon(LineIcon type) {
         path.lineTo(18, 18); path.closeSubpath();
         painter.drawPath(path);
         break;
+    case LineIcon::Save:
+        painter.drawRoundedRect(QRectF(4, 3.5, 16, 17), 1.5, 1.5);
+        painter.drawRect(QRectF(7, 4.5, 8, 5));
+        painter.drawLine(QPointF(8, 17), QPointF(16, 17));
+        painter.drawLine(QPointF(8, 13), QPointF(16, 13));
+        break;
     case LineIcon::Pin:
         path.moveTo(8, 5); path.lineTo(16, 5); path.lineTo(14, 10);
         path.lineTo(17, 13); path.lineTo(7, 13); path.lineTo(10, 10);

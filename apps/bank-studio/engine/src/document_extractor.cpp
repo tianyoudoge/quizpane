@@ -5,9 +5,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QBuffer>
+#include <QColor>
 #include <QImage>
 #include <QPdfDocument>
 #include <QPdfSelection>
+#include <QSet>
 #include <QStringConverter>
 #include <QStringDecoder>
 #include <QTextCodec>
@@ -186,6 +188,36 @@ QRectF normalizedSelectionBounds(QPdfDocument* document, int page, int start, in
             bounds.width() / pageSize.width(), bounds.height() / pageSize.height()};
 }
 
+bool hasRenderedUnderline(const QImage& image, const QRectF& normalizedBounds) {
+    if (image.isNull() || normalizedBounds.isEmpty())
+        return false;
+    const int left = qBound(0, qFloor(normalizedBounds.left() * image.width()), image.width() - 1);
+    const int right = qBound(left + 1, qCeil(normalizedBounds.right() * image.width()), image.width());
+    const int top = qBound(0, qFloor(normalizedBounds.top() * image.height()), image.height() - 1);
+    const int bottom = qBound(top + 1, qCeil(normalizedBounds.bottom() * image.height()), image.height());
+    const int width = right - left;
+    const int height = bottom - top;
+    if (width < 5 || height < 5)
+        return false;
+    // 下划线位于文字选择框的下 1/4。该位置的像素应在几乎整个字符宽度内连续
+    // 为深色，且是很薄的横向笔画；这同时适用于 PDF 中的 vector rectangle 和
+    // 栅格化的原始下划线，不依赖 OCR 或题目选项文本。
+    const int scanLeft = left + qMax(1, width / 10);
+    const int scanRight = right - qMax(1, width / 10);
+    const int requiredDark = qMax(2, qCeil((scanRight - scanLeft) * 0.80));
+    const int firstRow = top + qFloor(height * 0.72);
+    const int lastRow = qMin(image.height() - 1, bottom + qMax(1, height / 12));
+    for (int y = firstRow; y <= lastRow; ++y) {
+        const uchar* row = image.constScanLine(y);
+        int dark = 0;
+        for (int x = scanLeft; x < scanRight; ++x)
+            if (row[x] < 100) ++dark;
+        if (dark >= requiredDark)
+            return true;
+    }
+    return false;
+}
+
 void collectPdfTextAnchors(QPdfDocument* document, int page, const QString& text,
                            ExtractedDocument* result) {
     static const QRegularExpression questionMarker(
@@ -210,7 +242,8 @@ void collectPdfTextAnchors(QPdfDocument* document, int page, const QString& text
     }
 
     // QPdfDocument 的纯文字 API 不会告诉我们字体下划线或独立绘制的填空横线。
-    // 仍记录每一行的版面位置，让后续材料生成可以裁出对应的原卷视觉片段。
+    // 提取阶段只保留行锚点；真正的像素检测会等生成器找到“划线/横线/标注/标记”
+    // 类小题所关联的共享材料后再按需执行。
     int lineStart = 0;
     while (lineStart < text.size()) {
         const int lineEnd = text.indexOf(u'\n', lineStart);
@@ -218,10 +251,12 @@ void collectPdfTextAnchors(QPdfDocument* document, int page, const QString& text
         const QString line = text.mid(lineStart, end - lineStart).trimmed();
         if (!line.isEmpty()) {
             const int leading = text.mid(lineStart, end - lineStart).indexOf(line);
+            const int textStart = lineStart + qMax(0, leading);
             const QRectF bounds = normalizedSelectionBounds(
-                document, page, lineStart + qMax(0, leading), line.size());
-            if (!bounds.isEmpty())
+                document, page, textStart, line.size());
+            if (!bounds.isEmpty()) {
                 result->lineAnchors[page + 1].append({line, bounds});
+            }
         }
         if (lineEnd < 0)
             break;
@@ -348,14 +383,17 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
     QStringList pages;
     for (int page = 0; page < document.pageCount(); ++page) {
         QString text = document.getAllText(page).text().trimmed();
-        if (!text.isEmpty())
+        QImage pageImage;
+        if (!text.isEmpty()) {
+            pageImage = renderPdfPage(&document, page);
             collectPdfTextAnchors(&document, page, text, &result);
+        }
         if (text.isEmpty()) {
-            const QImage image = renderPdfPage(&document, page);
-            if (hasVisibleInk(image)) {
+            pageImage = renderPdfPage(&document, page);
+            if (hasVisibleInk(pageImage)) {
 #ifdef QUIZPANE_HAS_TESSERACT_OCR
                 QString ocrError;
-                text = recognizePage(image, &ocrError);
+                text = recognizePage(pageImage, &ocrError);
                 if (!ocrError.isEmpty()) {
                     result.warnings.append(
                         QStringLiteral("第 %1 页 OCR 失败：%2").arg(page + 1).arg(ocrError));
@@ -373,7 +411,8 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
         }
         // 不能仅在无文字时 OCR：文字型 PDF 常将图表单独嵌入，文字提取 API
         // 天然看不见它。以 PNG 保留整页视觉上下文，后续按题号关联时才入包。
-        QImage pageImage = renderPdfPage(&document, page);
+        if (pageImage.isNull())
+            pageImage = renderPdfPage(&document, page);
         if (!pageImage.isNull()) {
             QByteArray png;
             QBuffer buffer(&png);
@@ -390,6 +429,79 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
             : QStringLiteral("PDF 所有页面均无法提取：%1").arg(result.warnings.join(QStringLiteral("；")));
     }
     return result;
+}
+
+void detectPdfUnderlinesForCandidateLines(
+    ExtractedDocument* extracted, const QHash<int, QStringList>& candidateLinesByPage) {
+    if (!extracted || candidateLinesByPage.isEmpty() ||
+        !hasSuffix(extracted->sourcePath, {"pdf"}))
+        return;
+
+    QPdfDocument document;
+    if (document.load(extracted->sourcePath) != QPdfDocument::Error::None)
+        return;
+
+    for (auto pageIt = candidateLinesByPage.cbegin(); pageIt != candidateLinesByPage.cend(); ++pageIt) {
+        const int pageNumber = pageIt.key();
+        const int page = pageNumber - 1;
+        if (page < 0 || page >= document.pageCount())
+            continue;
+        QSet<QString> candidates;
+        for (const QString& line : pageIt.value()) {
+            const QString simplified = line.simplified();
+            if (!simplified.isEmpty())
+                candidates.insert(simplified);
+        }
+        if (candidates.isEmpty())
+            continue;
+
+        const QString text = document.getAllText(page).text().trimmed();
+        QImage pageImage;
+        if (extracted->pageImages.contains(pageNumber))
+            pageImage.loadFromData(extracted->pageImages.value(pageNumber), "PNG");
+        if (pageImage.isNull())
+            pageImage = renderPdfPage(&document, page);
+        const QImage grayPage = pageImage.convertToFormat(QImage::Format_Grayscale8);
+        if (grayPage.isNull())
+            continue;
+
+        int lineStart = 0;
+        while (lineStart < text.size()) {
+            const int lineEnd = text.indexOf(u'\n', lineStart);
+            const int end = lineEnd < 0 ? text.size() : lineEnd;
+            const QString rawLine = text.mid(lineStart, end - lineStart);
+            const QString line = rawLine.trimmed();
+            if (!line.isEmpty() && candidates.contains(line.simplified())) {
+                const int leading = rawLine.indexOf(line);
+                const int textStart = lineStart + qMax(0, leading);
+                const QRectF bounds = normalizedSelectionBounds(
+                    &document, page, textStart, line.size());
+                if (!bounds.isEmpty()) {
+                    QList<QPair<int, int>> ranges;
+                    int rangeStart = -1;
+                    for (int offset = 0; offset < line.size(); ++offset) {
+                        const QRectF characterBounds = normalizedSelectionBounds(
+                            &document, page, textStart + offset, 1);
+                        const bool underlined = !line.at(offset).isSpace() &&
+                            hasRenderedUnderline(grayPage, characterBounds);
+                        if (underlined && rangeStart < 0)
+                            rangeStart = offset;
+                        if ((!underlined || offset + 1 == line.size()) && rangeStart >= 0) {
+                            const int rangeEnd = underlined && offset + 1 == line.size()
+                                ? offset + 1 : offset;
+                            ranges.append({rangeStart, rangeEnd - rangeStart});
+                            rangeStart = -1;
+                        }
+                    }
+                    if (!ranges.isEmpty())
+                        extracted->underlineDecorations[pageNumber].append({line, ranges, bounds});
+                }
+            }
+            if (lineEnd < 0)
+                break;
+            lineStart = lineEnd + 1;
+        }
+    }
 }
 
 ExtractorRegistry::ExtractorRegistry() = default;

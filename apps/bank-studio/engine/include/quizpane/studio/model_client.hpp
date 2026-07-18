@@ -15,6 +15,9 @@ struct GenerationRequest {
     QString systemPrompt;
     QString userContent;
     QString modelName;
+    // 可选的局部视觉上下文。调用方负责只传当前复核所需的小区域；客户端不会从
+    // 文件系统读取图片，也不会自动上传整页或整份原卷。
+    QByteArray imagePng;
 };
 
 struct GenerationResult {
@@ -31,6 +34,10 @@ QNetworkRequest buildChatCompletionsRequest(const ModelSettings& settings,
 GenerationResult parseChatCompletionsResponse(const QByteArray& payload,
                                                int httpStatus,
                                                const QString& networkError = {});
+
+// 图片输入不能从 Endpoint 或厂商名称可靠推断：同一服务可能同时有文本、视觉模型。
+// 调用方据此在上传前阻断错误请求，并引导用户在模型管理里显式声明能力。
+[[nodiscard]] bool canSendImageInput(const ModelSettings& settings);
 
 class ModelClient final : public QObject {
     Q_OBJECT

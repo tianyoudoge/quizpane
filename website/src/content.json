@@ -1,47 +1,74 @@
 {
   "site": {
-    "title": "QuizPane · 把 PDF 真题变成能刷的题库",
-    "description": "本地优先的小窗刷题工具。导入题目 PDF + 答案 PDF，离线整理成题库，隐蔽小窗作答，PDF 图表和图片选项都不丢失。",
+    "title": "小窗刷题 · 把 PDF 真题变成能刷的题库",
+    "description": "小窗刷题是 PDF 真题整理与练习工具。导入题目 PDF 和答案 PDF，整理成题库，在小窗中作答。QuizPane 是本项目的仓库名称。",
     "repo": "tianyoudoge/quizpane",
     "repoUrl": "https://github.com/tianyoudoge/quizpane",
     "latestReleaseUrl": "https://github.com/tianyoudoge/quizpane/releases/latest"
   },
   "hero": {
-    "headline": "把 PDF 真题变成能刷的题库",
-    "subhead": "本地处理，PDF 图表保留，图片/公式选项可直接作答，小窗隐蔽刷题。不把你的资料传到云端。",
+    "headline": "自建题库，随手一刷",
+    "subhead": "PDF 真题做成自己的题库，图表、图片和公式选项不丢；轻量小窗随时练。",
     "primaryCta": "下载最新版",
     "secondaryCta": "查看功能"
   },
   "trust": [
-    { "title": "本地处理", "detail": "规则整理可离线完成，不上传你的 PDF 或题库" },
-    { "title": "PDF 图表保留", "detail": "跨页文字、统计图原样进题库，不再丢失" },
-    { "title": "多选题支持", "detail": "单选、多选、不定项都正确判分" },
-    { "title": "小窗刷题", "detail": "隐蔽小窗作答，答题状态与复盘一应俱全" }
+    {
+      "tag": "01",
+      "title": "小窗隐蔽刷题",
+      "detail": "一扇轻巧小窗，午休、通勤、工作间隙都能随手刷几题。"
+    },
+    {
+      "tag": "02",
+      "title": "自己的题库，自己做主",
+      "detail": "PDF 真题做成可安装、可分享的题库；题目、答案、解析和材料一起带走。"
+    },
+    {
+      "tag": "03",
+      "title": "可选 AI 辅助识别",
+      "detail": "复杂 PDF 可按需交给 AI 辅助复核；有疑问的地方仍由你确认和修改。"
+    },
+    {
+      "tag": "04",
+      "title": "完全免费，多端可用",
+      "detail": "免费使用，macOS、Windows、Linux 均可用；更多平台持续支持。"
+    },
+    {
+      "tag": "05",
+      "title": "开放协议，欢迎接入",
+      "detail": "开放 Provider 协议，开发者可接入自己的题库服务，扩展更多内容来源。"
+    }
   ],
   "carousel": [
     {
+      "id": "floating",
+      "title": "小窗隐蔽刷题",
+      "detail": "题库自动载入后，在轻量小窗中随手作答；答题进度与复盘入口一应俱全。",
+      "shot": "assets/screenshots/floating.svg"
+    },
+    {
       "id": "import",
-      "title": "PDF 导入与答案配对",
-      "detail": "题目 PDF、答案 PDF 一起加进题库制作器；规则整理可离线完成。",
+      "title": "自定义题库：导入、制作与分享",
+      "detail": "题目 PDF、答案 PDF 一起加进题库制作器；整理完成后可以安装、导出和分享。",
       "shot": "assets/screenshots/import.webp"
     },
     {
       "id": "materials",
-      "title": "资料题与图表保留",
-      "detail": "材料卡展示跨页文字和统计图；图表不再丢失。",
+      "title": "可选 AI 辅助复核",
+      "detail": "复杂 PDF 先由本地规则整理；遇到题图、下划线或裁切问题时，再按需使用 AI 或手动修正。",
       "shot": "assets/screenshots/materials.svg"
     },
     {
       "id": "imageoptions",
-      "title": "图片 / 公式选项",
-      "detail": "选项是图片或公式也可直接作答，不只是纯文字 A/B/C/D。",
+      "title": "图表、图片和公式不丢",
+      "detail": "题图、共享材料、图片与公式选项都可随题库保留，做题时仍能直接作答。",
       "shot": "assets/screenshots/image-options.svg"
     },
     {
-      "id": "floating",
-      "title": "小窗刷题",
-      "detail": "题库自动载入后在小窗中作答，答题状态与复盘入口一应俱全。",
-      "shot": "assets/screenshots/floating.svg"
+      "id": "provider",
+      "title": "开放 Provider 协议",
+      "detail": "开发者可以接入自有题库或服务，把更多经过授权的内容来源带进小窗刷题。",
+      "shot": "assets/screenshots/provider-protocol.png"
     }
   ],
   "workflow": {
@@ -120,12 +147,17 @@
         "label": "加入交流社群",
         "detail": "QQ群 / 微信群 / 小红书群，请邮件获取最新入口",
         "url": "mailto:xutianyoubupt@foxmail.com?subject=QuizPane%20%E5%8A%A0%E5%85%A5%E4%BA%A4%E6%B5%81%E7%A4%BE%E7%BE%A4"
+      },
+      {
+        "label": "用着不错？犒劳下作者",
+        "detail": "您的支持，是我继续下去的最大动力。",
+        "action": "support"
       }
     ]
   },
   "footer": {
-    "version": "QuizPane",
-    "note": "本地优先的刷题工具",
+    "version": "小窗刷题",
+    "note": "QuizPane 项目 · 免费刷题工具",
     "copyright": "© 2026 xutianyoubupt@foxmail.com · All rights reserved.",
     "links": [
       { "label": "GitHub", "url": "https://github.com/tianyoudoge/quizpane" },

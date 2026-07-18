@@ -3,6 +3,8 @@
 #include <QString>
 #include <QStringList>
 #include <QHash>
+#include <QList>
+#include <QPair>
 #include <QRectF>
 
 namespace quizpane::studio {
@@ -11,6 +13,15 @@ namespace quizpane::studio {
 // 以同一套逻辑裁切任意渲染分辨率的页面，而不必 OCR 图片里的数学符号。
 struct PdfTextAnchor {
     QString text;
+    QRectF bounds;
+};
+
+// 原卷中确实检测到的下划线字符范围。QPdfDocument 不公开“文字带下划线”样式，
+// 因而该信息来自文字选择框与渲染页中水平细线的几何交叉检测；没有足够证据时
+// 不填充，绝不根据题目选项猜测。
+struct PdfUnderlineDecoration {
+    QString text;
+    QList<QPair<int, int>> ranges;
     QRectF bounds;
 };
 
@@ -39,6 +50,7 @@ struct ExtractedDocument {
     // 每页文字行的坐标。规则生成器用它把阅读材料裁成原卷片段，保留 PDF
     // 文字层表达不了的下划线、填空横线和嵌入式图片横线。
     QHash<int, QList<PdfTextAnchor>> lineAnchors;
+    QHash<int, QList<PdfUnderlineDecoration>> underlineDecorations;
 };
 
 // 单一文档格式的提取器。supports() 只看扩展名，不打开文件，方便
@@ -69,6 +81,12 @@ class PdfExtractor final : public DocumentExtractor {
     bool supports(const QString& path) const override;
     ExtractedDocument extract(const QString& path) const override;
 };
+
+// 精确检测 PDF 中真正绘制出来的下划线。这个步骤刻意不在 extract() 中执行：
+// 规则生成器先确认某份共享材料确实被“划线/横线/标注/标记”类小题引用，再把那
+// 几行材料传进来，避免整卷逐字符扫图造成延迟和误召。
+void detectPdfUnderlinesForCandidateLines(
+    ExtractedDocument* document, const QHash<int, QStringList>& candidateLinesByPage);
 
 // 制作器唯一需要持有的入口：按扩展名找到合适的 DocumentExtractor 并提取。
 // 找不到匹配格式时返回的 error 会提示具体扩展名，方便用户理解为什么某个

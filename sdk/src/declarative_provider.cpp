@@ -29,8 +29,25 @@ QJsonObject findManifest(const QString& entry) {
     }
     return {};
 }
-QString paragraph(const QString& text) {
-    QString escaped = text.toHtmlEscaped();
+QString paragraph(const QString& text, const QJsonArray& underlines = {}) {
+    QList<QPair<int, int>> ranges;
+    for (const QJsonValue& value : underlines) {
+        const QJsonObject range = value.toObject();
+        const int start = range.value("start").toInt(-1);
+        const int length = range.value("length").toInt();
+        if (start >= 0 && length > 0 && start + length <= text.size())
+            ranges.append({start, length});
+    }
+    QString escaped;
+    int cursor = 0;
+    for (const auto& range : ranges) {
+        if (range.first < cursor) continue;
+        escaped += text.mid(cursor, range.first - cursor).toHtmlEscaped();
+        escaped += QStringLiteral("<span style=\"text-decoration:underline; text-decoration-thickness:1px;\">%1</span>")
+            .arg(text.mid(range.first, range.second).toHtmlEscaped());
+        cursor = range.first + range.second;
+    }
+    escaped += text.mid(cursor).toHtmlEscaped();
     // 规则导入器用这些保留 token 表达 PDF 文字层看不见的填空横线；在宿主端
     // 统一转成真正可见的下划线，既不把占位混成普通空格，也不会影响普通题干。
     escaped.replace(QStringLiteral("〔填空〕"),
@@ -69,7 +86,7 @@ bool DeclarativeProvider::load(const QString& bankPath, QString* errorOutput) {
     // 出现安装包声明的版本与实际 bank 内容不符这类静默不一致。
     const int runtimeSchemaVersion =
         manifest.value("runtime").toObject().value("schemaVersion").toInt();
-    if (runtimeSchemaVersion != 2)
+    if (runtimeSchemaVersion != 2 && runtimeSchemaVersion != 3)
         return fail(errorOutput, QStringLiteral("声明式题库运行时版本不受支持"));
     if (bank.value("schemaVersion").toInt() != runtimeSchemaVersion)
         return fail(errorOutput, QStringLiteral("manifest 与题库的 Schema 版本不一致"));
@@ -84,6 +101,8 @@ bool DeclarativeProvider::load(const QString& bankPath, QString* errorOutput) {
     bankTitle_ = bank.value("title").toString(providerName_);
     catalogs_ = bank.value("catalogs").toArray();
     questions_ = bank.value("questions").toArray();
+    hasAnswerKey_ = runtimeSchemaVersion == 2 ||
+        bank.value("answerPolicy").toString() == QStringLiteral("included");
     bankDirectory_ = QFileInfo(bankPath).absoluteDir().absolutePath();
     materials_ = bank.value("materials").toArray();
     if (providerId_.isEmpty() || providerName_.isEmpty()) {
@@ -103,6 +122,7 @@ void DeclarativeProvider::unload() {
     activeCatalogTitle_.clear();
     catalogs_ = {}; questions_ = {}; materials_ = {}; activeQuestions_ = {};
     materialsById_.clear(); questionCountByCatalog_.clear(); answers_.clear(); bankDirectory_.clear();
+    hasAnswerKey_ = true;
 }
 
 QJsonObject DeclarativeProvider::descriptor() const {
@@ -174,8 +194,12 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
             content += QStringLiteral("<p><img src=\"%1\" width=\"340\"></p>").arg(stemImageUrl);
         QJsonObject question{{"id", source.value("id")}, {"type", source.value("type")},
             {"contentHtml", content}, {"options", options}};
+        const int sourceQuestionNumber = source.value("source").toObject()
+            .value("questionNumber").toInt();
+        if (sourceQuestionNumber > 0)
+            question.insert("sourceQuestionNumber", sourceQuestionNumber);
         if (source.contains("materialId")) question.insert("materialId", source.value("materialId"));
-        if (withSolutions) {
+        if (withSolutions && hasAnswerKey_) {
             question.insert("correctChoice", correct);
             QJsonArray correctChoices;
             for (const auto& answerId : answerIds) {
@@ -203,7 +227,8 @@ QJsonArray DeclarativeProvider::hostMaterials() const {
         if (materialId.isEmpty() || seen.contains(materialId)) continue;
         seen.insert(materialId);
         const QJsonObject material = materialsById_.value(materialId);
-        QString content = paragraph(material.value("body").toString());
+        QString content = paragraph(material.value("body").toString(),
+                                    material.value("underlines").toArray());
         QJsonArray imageUrls;
         for (const auto& image : material.value("images").toArray()) {
             const QString url = assetUrl(image.toObject());
@@ -222,7 +247,9 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
     const QJsonObject params = requestValue.value("params").toObject();
     if (dispatch == Method::Initialize) return {{"id", id}, {"result", QJsonObject{
         {"providerId", providerId_}, {"providerVersion", providerVersion_}, {"requiresLogin", false}, {"sessionRestored", true}}}};
-    if (dispatch == Method::Capabilities) return {{"id", id}, {"result", QJsonObject{{"loginMethods", QJsonArray{"none"}}}}};
+    if (dispatch == Method::Capabilities) return {{"id", id}, {"result", QJsonObject{
+        {"loginMethods", QJsonArray{"none"}}, {"hasAnswerKey", hasAnswerKey_},
+        {"solutions", hasAnswerKey_}}}};
     if (dispatch == Method::CatalogList) {
         QJsonArray nodes;
         QSettings settings;
@@ -282,7 +309,8 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
         activeQuestions_ = selected;
         answers_.clear(); activeCatalogTitle_ = catalog.value("title").toString(bankTitle_);
         return {{"id", id}, {"result", QJsonObject{{"attemptId", QUuid::createUuid().toString(QUuid::WithoutBraces)},
-            {"title", activeCatalogTitle_}, {"status", "active"}, {"questionCount", selected.size()}}}};
+            {"title", activeCatalogTitle_}, {"status", "active"}, {"questionCount", selected.size()},
+            {"hasAnswerKey", hasAnswerKey_}}}};
     }
     if (dispatch == Method::AttemptQuestions) return {{"id", id}, {"result", QJsonObject{
         {"materials", hostMaterials()}, {"questions", hostQuestions(false)}}}};
@@ -299,12 +327,29 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
         return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
     }
     if (dispatch == Method::Submit) return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
-    if (dispatch == Method::Report) { int correct = 0; const auto solutions = hostQuestions(true); QSettings settings;
-        for (qsizetype i = 0; i < solutions.size(); ++i) { QSet<int> expected; for (const auto& choice : solutions.at(i).toObject().value("correctChoices").toArray()) expected.insert(choice.toInt()); const bool passed = answers_.value(static_cast<int>(i)) == expected; if (passed) ++correct; settings.setValue(QStringLiteral("practice/history/%1/%2").arg(providerId_, solutions.at(i).toObject().value("id").toString()), passed ? QStringLiteral("correct") : QStringLiteral("wrong")); }
-        return {{"id", id}, {"result", QJsonObject{{"questionCount", activeQuestions_.size()}, {"answerCount", answers_.size()}, {"correctCount", correct}}}};
+    if (dispatch == Method::Report) {
+        QJsonObject report{{"questionCount", activeQuestions_.size()},
+                           {"answerCount", answers_.size()}, {"hasAnswerKey", hasAnswerKey_}};
+        if (hasAnswerKey_) {
+            int correct = 0;
+            const auto solutions = hostQuestions(true);
+            QSettings settings;
+            for (qsizetype i = 0; i < solutions.size(); ++i) {
+                QSet<int> expected;
+                for (const auto& choice : solutions.at(i).toObject().value("correctChoices").toArray())
+                    expected.insert(choice.toInt());
+                const bool passed = answers_.value(static_cast<int>(i)) == expected;
+                if (passed) ++correct;
+                settings.setValue(QStringLiteral("practice/history/%1/%2").arg(
+                    providerId_, solutions.at(i).toObject().value("id").toString()),
+                    passed ? QStringLiteral("correct") : QStringLiteral("wrong"));
+            }
+            report.insert("correctCount", correct);
+        }
+        return {{"id", id}, {"result", report}};
     }
     if (dispatch == Method::Solutions) return {{"id", id}, {"result", QJsonObject{
-        {"materials", hostMaterials()}, {"solutions", hostQuestions(true)}}}};
+        {"materials", hostMaterials()}, {"solutions", hasAnswerKey_ ? hostQuestions(true) : QJsonArray{}}}}};
     return error(id, QStringLiteral("声明式题库不支持此操作：%1").arg(method));
 }
 

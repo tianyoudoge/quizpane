@@ -40,7 +40,7 @@ class MainWindow final : public QMainWindow {
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
-    void loadProvider(const QString& path);
+    bool loadProvider(const QString& path);
     void installProviderPackage(const QString& path);
     bool loadLastProvider();
 
@@ -84,6 +84,7 @@ private:
     void sendSubmit();
     void requestResults();
     void showSolution(int index);
+    void exportAttemptResults();
     void clearLayout(QLayout* layout);
     void setPinned(bool pinned);
     void showUiSizeMenu();
@@ -169,6 +170,7 @@ private:
     QLabel* solutionExplanationLabel_ = nullptr;
     QPushButton* previousSolutionButton_ = nullptr;
     QPushButton* nextSolutionButton_ = nullptr;
+    QPushButton* exportResultsButton_ = nullptr;
     QWidget* solutionControlBar_ = nullptr;
     QWidget* resizeHandle_ = nullptr;
     // ---- 当前页面会话状态：切换题库时会重置，安全凭据不在这里 ----
@@ -179,6 +181,7 @@ private:
     QString attemptTitle_;
     QJsonArray questions_;
     QJsonArray solutions_;
+    bool attemptHasAnswerKey_ = true;
     // materialId -> material（title/contentHtml）。attempt.questions 和
     // attempt.solutions 各自返回去重后的材料数组，这里合并成一份缓存供两个
     // 页面共用，避免每次切题都重新在数组里线性查找。

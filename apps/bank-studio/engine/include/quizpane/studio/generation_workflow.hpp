@@ -32,6 +32,7 @@ using GeneratedBankCandidate = ReviewResult;
 struct SourceMaterialGroup {
     QString questionPath;
     QString answerPath;
+    bool hasAnswerKey = true;
 };
 
 // 完全离线的规则结构化工作流：读取资料、跑规则引擎、发布候选 DTO。没有网络

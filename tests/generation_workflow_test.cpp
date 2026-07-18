@@ -2,7 +2,6 @@
 
 #include <QCoreApplication>
 #include <QFile>
-#include <QNetworkAccessManager>
 #include <QTimer>
 #include <QTemporaryDir>
 
@@ -24,10 +23,8 @@ int main(int argc, char** argv) {
     answers.write("答案及解析\n1. Alpha is the first option.\n故正确答案为 A。\n");
     answers.close();
 
-    // 工作流的模型 HTTP 边界由 model_client_test 覆盖；这里仅验证离线资料组，
-    // 不监听端口、不启动服务器，也不依赖网络调度。
-    QNetworkAccessManager manager;
-    quizpane::studio::GenerationWorkflow workflow(&manager);
+    // 工作流只编排离线资料组：不监听端口、不启动服务器，也不依赖网络调度。
+    quizpane::studio::GenerationWorkflow workflow;
     quizpane::studio::GeneratedBankCandidate ready;
     bool finished = false;
     QObject::connect(&workflow, &quizpane::studio::GenerationWorkflow::questionsReady, &app,

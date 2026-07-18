@@ -158,7 +158,8 @@ bool ProviderInstaller::inspect(const QString& packagePath, ProviderPackageInfo*
         const QJsonObject runtime = manifest.value(QStringLiteral("runtime")).toObject();
         if (runtime.value(QStringLiteral("format")).toString() !=
                 QStringLiteral("quizpane.bank+json") ||
-            runtime.value(QStringLiteral("schemaVersion")).toInt() != 2)
+            (runtime.value(QStringLiteral("schemaVersion")).toInt() != 2 &&
+             runtime.value(QStringLiteral("schemaVersion")).toInt() != 3))
             return fail(error, QStringLiteral("声明式题库格式与当前应用不兼容"));
         entry = runtime.value(QStringLiteral("entry")).toString();
         if (!safeRelativePath(entry) || !entry.endsWith(QStringLiteral(".json")))

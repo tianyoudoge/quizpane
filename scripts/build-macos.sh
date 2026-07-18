@@ -206,6 +206,55 @@ if ! find "$STAGED_STUDIO/Contents/Frameworks" -iname '*tesseract*.dylib' -print
   echo "OCR 打包失败：应用包中没有 Tesseract 动态库" >&2
   exit 1
 fi
+# macdeployqt 会在上一步补入 QtPdf/字体栈的间接 dylib。部分 Homebrew 版本会
+# 将 HarfBuzz 对 Graphite2 等二级依赖改写成 App 内路径，却不复制目标库；必须
+# 在所有部署工具运行之后再补一次闭包。不能只硬编码 graphite2，因为 Homebrew
+# 更新字体/图像栈时还可能出现其他同类的二级依赖。
+bundle_missing_helper_dependencies() {
+  local framework_dir="$STAGED_STUDIO/Contents/Frameworks"
+  local homebrew_prefix
+  homebrew_prefix="$(brew --prefix)"
+  local copied source dependency relative destination binary
+  while :; do
+    copied=0
+    while IFS= read -r -d '' binary; do
+      while IFS= read -r dependency; do
+        case "$dependency" in
+          @executable_path/../Frameworks/*)
+            relative="${dependency#@executable_path/../Frameworks/}"
+            destination="$framework_dir/$relative"
+            [[ -e "$destination" ]] && continue
+            source="$homebrew_prefix/lib/${relative##*/}"
+            if [[ ! -e "$source" ]]; then
+              echo "打包失败：缺少 Helper 依赖 $dependency（未在 $source 找到）" >&2
+              exit 1
+            fi
+            mkdir -p "$(dirname "$destination")"
+            cp -L "$source" "$destination"
+            install_name_tool -id "$dependency" "$destination"
+            copied=1
+            ;;
+        esac
+      done < <(otool -L "$binary" | tail -n +2 | awk '{print $1}')
+    done < <(find "$STAGED_STUDIO" -type f -print0)
+    [[ "$copied" == "0" ]] && break
+  done
+
+  while IFS= read -r -d '' binary; do
+    while IFS= read -r dependency; do
+      case "$dependency" in
+        @executable_path/../Frameworks/*)
+          relative="${dependency#@executable_path/../Frameworks/}"
+          if [[ ! -e "$framework_dir/$relative" ]]; then
+            echo "打包失败：Helper 依赖闭包不完整，$binary 缺少 $dependency" >&2
+            exit 1
+          fi
+          ;;
+      esac
+    done < <(otool -L "$binary" | tail -n +2 | awk '{print $1}')
+  done < <(find "$STAGED_STUDIO" -type f -print0)
+}
+bundle_missing_helper_dependencies
 # dylibbundler 在 macdeployqt 之后加入的第三方库尚未剥离符号。签名前统一处理，
 # 减少安装后体积，也让 ZIP 更容易压缩。
 if [[ "$DEBUG_BUILD" != "1" ]]; then

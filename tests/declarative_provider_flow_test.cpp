@@ -1,7 +1,10 @@
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QTemporaryDir>
 #include <QTimer>
 
 #include "quizpane/provider_loader.hpp"
@@ -48,5 +51,45 @@ int main(int argc, char** argv) {
     if (report.value("correctCount").toInt() != 1) return 7;
     const auto solutions = call(loader, "solutions", "attempt.solutions")
                                .value("result").toObject().value("solutions").toArray();
-    return solutions.size() == 1 && solutions.first().toObject().value("correctChoice").toInt() == 2 ? 0 : 8;
+    if (solutions.size() != 1 || solutions.first().toObject().value("correctChoice").toInt() != 2)
+        return 8;
+
+    // 无答案题库不会返回评分或解析，但作答仍可保存、统计并导出到 Host。
+    QTemporaryDir directory;
+    if (!directory.isValid()) return 9;
+    const QJsonObject bank{{"schemaVersion", 3}, {"answerPolicy", "none"}, {"title", "No answer"},
+        {"catalogs", QJsonArray{QJsonObject{{"id", "generated"}, {"title", "No answer"},
+            {"practice", QJsonObject{{"mode", "all"}}}}}},
+        {"questions", QJsonArray{QJsonObject{{"id", "q76"}, {"catalogId", "generated"},
+            {"type", "single_choice"}, {"stem", "第 76 题"},
+            {"options", QJsonArray{QJsonObject{{"id", "a"}, {"text", "甲"}},
+                                    QJsonObject{{"id", "b"}, {"text", "乙"}}}},
+            {"source", QJsonObject{{"document", "original.pdf"}, {"questionNumber", 76},
+                                    {"questionLabel", "76"}}}}}}};
+    const QJsonObject manifest{{"manifestVersion", 2}, {"id", "org.quizpane.no-answer-test"},
+        {"name", "No answer"}, {"version", "1.0.0"}, {"kind", "declarative"},
+        {"runtime", QJsonObject{{"format", "quizpane.bank+json"}, {"schemaVersion", 3},
+            {"entry", "bank.json"}}}, {"permissions", QJsonObject{{"network", false}}}};
+    QFile manifestFile(directory.filePath("manifest.json"));
+    QFile bankFile(directory.filePath("bank.json"));
+    if (!manifestFile.open(QIODevice::WriteOnly) || !bankFile.open(QIODevice::WriteOnly)) return 10;
+    manifestFile.write(QJsonDocument(manifest).toJson());
+    bankFile.write(QJsonDocument(bank).toJson());
+    manifestFile.close();
+    bankFile.close();
+    quizpane::ProviderLoader answerlessLoader;
+    if (!answerlessLoader.load(bankFile.fileName(), &error)) return 11;
+    const auto answerlessAttempt = call(answerlessLoader, "no-answer-create", "attempt.create",
+        {{"categoryId", "generated"}, {"count", 1}}).value("result").toObject();
+    if (answerlessAttempt.value("hasAnswerKey").toBool(true)) return 12;
+    const auto answerlessQuestions = call(answerlessLoader, "no-answer-questions", "attempt.questions",
+        {{"attemptId", answerlessAttempt.value("attemptId")}}).value("result").toObject().value("questions").toArray();
+    if (answerlessQuestions.size() != 1 || answerlessQuestions.first().toObject().contains("correctChoice")) return 13;
+    if (call(answerlessLoader, "no-answer-save", "attempt.saveAnswers", QJsonObject{{"answers", QJsonArray{
+        QJsonObject{{"questionIndex", 0}, {"answer", QJsonObject{{"choice", "0"}}}}}}}).contains("error")) return 14;
+    const auto answerlessReport = call(answerlessLoader, "no-answer-report", "attempt.report")
+        .value("result").toObject();
+    if (answerlessReport.value("hasAnswerKey").toBool(true) ||
+        answerlessReport.contains("correctCount") || answerlessReport.value("answerCount").toInt() != 1) return 15;
+    return 0;
 }

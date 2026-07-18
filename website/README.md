@@ -65,21 +65,44 @@ node website/scripts/build-site.mjs
 - **图标**：导航、联系区和右下角赞赏浮窗使用产品图标
   `src/assets/icons/quizpane-app-icon.png`。
 
-## 发布到服务器
+## 一键发布到服务器
 
-服务器需要先跑过 `deploy/scripts/bootstrap-ubuntu.sh`（见
-[`deploy/README.md`](../deploy/README.md)）。构建产物之后：
+仓库已经提供一键脚本 [`deploy/scripts/build-and-deploy-site.sh`](../deploy/scripts/build-and-deploy-site.sh)。
+它会先构建 `website/dist`，再调用原子发布脚本切换站点版本；无需手动复制文件。
+
+服务器需要先完成一次 `deploy/scripts/bootstrap-ubuntu.sh` 初始化（见
+[`deploy/README.md`](../deploy/README.md)）。之后按实际部署位置选择一种方式：
+
+### 在目标服务器上发布
 
 ```bash
-node website/scripts/build-site.mjs
-sudo ./deploy/scripts/install-artifacts.sh \
-  --version site-$(date +%Y%m%d%H%M) \
-  --site-dist website/dist
+./deploy/scripts/build-and-deploy-site.sh
 ```
 
-或者在本机构建、拷贝到服务器后执行同样的命令；`deploy/scripts/
-build-and-deploy-site.sh` 封装了"本机构建 + 远程安装"两步，适合 CI 或手动
-发布时调用。
+可选地用 `--version site-20260718` 标记本次发布，或用 `--no-restart` 仅安装
+文件、暂不重载 Nginx。
+
+### 从本机或 CI 远程发布
+
+远程服务器应已有本仓库检出目录，部署账号需能免密执行
+`install-artifacts.sh` 的 sudo。执行一次即可构建、本地同步并在远端原子切换：
+
+```bash
+./deploy/scripts/build-and-deploy-site.sh \
+  --remote-host deploy@quizpane.example.com \
+  --remote-repo /srv/quizpane-src \
+  --version site-20260718
+```
+
+发布完成后检查首页与下载元数据：
+
+```bash
+curl -I https://quizpane.example.com/
+curl -s https://quizpane.example.com/api/releases/latest
+```
+
+脚本和网站构建均不上传题库、PDF 或用户数据。完整的 Ubuntu 初始化、HTTPS、
+下载代理和故障排查见 [`deploy/README.md`](../deploy/README.md)。
 
 ## 依赖的后端接口
 

@@ -3,9 +3,11 @@
 #include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QHBoxLayout>
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QListWidget>
+#include <QPixmap>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -129,6 +131,73 @@ void showAbout(QWidget* parent) {
     layout->addWidget(info);
     layout->addWidget(close);
     dialog.setFixedWidth(340);
+    dialog.exec();
+}
+
+void showDonation(QWidget* parent) {
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("赞赏支持"));
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(24, 22, 24, 18);
+    layout->setSpacing(10);
+    auto* title = new QLabel(QStringLiteral("<h2 align='center'>请作者喝杯咖啡</h2>"));
+    auto* description = new QLabel(QStringLiteral(
+        "一个人慢慢把小窗刷题做好并不容易。您的支持，是我继续下去的最大动力。"));
+    description->setAlignment(Qt::AlignCenter);
+    description->setWordWrap(true);
+    auto* code = new QLabel;
+    code->setAlignment(Qt::AlignCenter);
+    auto* caption = new QLabel;
+    caption->setAlignment(Qt::AlignCenter);
+    caption->setStyleSheet(QStringLiteral("color: #7d8794; font-size: 12px;"));
+    auto* paymentRow = new QHBoxLayout;
+    auto* previous = new QPushButton(QStringLiteral("‹"));
+    auto* wechat = new QPushButton(QStringLiteral("微信支付"));
+    auto* alipay = new QPushButton(QStringLiteral("支付宝"));
+    auto* next = new QPushButton(QStringLiteral("›"));
+    wechat->setCheckable(true);
+    alipay->setCheckable(true);
+    paymentRow->addStretch();
+    paymentRow->addWidget(previous);
+    paymentRow->addWidget(wechat);
+    paymentRow->addWidget(alipay);
+    paymentRow->addWidget(next);
+    paymentRow->addStretch();
+    bool showingAlipay = false;
+    const auto updatePayment = [&] {
+        const QString resource = showingAlipay
+            ? QStringLiteral(":/icons/alipay-payment.jpg")
+            : QStringLiteral(":/icons/wechat-payment.jpg");
+        code->setPixmap(QPixmap(resource).scaled(
+            220, 220, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        caption->setText(showingAlipay ? QStringLiteral("支付宝扫码赞赏")
+                                       : QStringLiteral("微信扫码赞赏"));
+        wechat->setChecked(!showingAlipay);
+        alipay->setChecked(showingAlipay);
+    };
+    QObject::connect(previous, &QPushButton::clicked, &dialog, [&] {
+        showingAlipay = !showingAlipay; updatePayment();
+    });
+    QObject::connect(next, &QPushButton::clicked, &dialog, [&] {
+        showingAlipay = !showingAlipay; updatePayment();
+    });
+    QObject::connect(wechat, &QPushButton::clicked, &dialog, [&] {
+        showingAlipay = false; updatePayment();
+    });
+    QObject::connect(alipay, &QPushButton::clicked, &dialog, [&] {
+        showingAlipay = true; updatePayment();
+    });
+    updatePayment();
+    auto* close = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    close->button(QDialogButtonBox::Close)->setText(QStringLiteral("关闭"));
+    QObject::connect(close, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(title);
+    layout->addWidget(description);
+    layout->addWidget(code);
+    layout->addWidget(caption);
+    layout->addLayout(paymentRow);
+    layout->addWidget(close);
+    dialog.setFixedWidth(360);
     dialog.exec();
 }
 

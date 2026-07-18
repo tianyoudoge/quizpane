@@ -1,6 +1,9 @@
 <RCC>
   <qresource prefix="/icons">
     <file alias="app-icon.png">app-icon.png</file>
+    <file alias="donation-placeholder.png">donation-placeholder.png</file>
+    <file alias="wechat-payment.jpg">wechat-payment.jpg</file>
+    <file alias="alipay-payment.jpg">alipay-payment.jpg</file>
   </qresource>
   <qresource prefix="/styles">
     <file alias="desktop.qss">desktop.qss</file>

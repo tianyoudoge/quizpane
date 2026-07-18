@@ -1,6 +1,15 @@
 <RCC>
   <qresource prefix="/icons">
     <file alias="app-icon.png">app-icon.png</file>
+    <file alias="donation-placeholder.png">donation-placeholder.png</file>
+    <file alias="wechat-payment.jpg">wechat-payment.jpg</file>
+    <file alias="alipay-payment.jpg">alipay-payment.jpg</file>
+    <file alias="vendor/anthropic.svg">vendor-icons/anthropic.svg</file>
+    <file alias="vendor/deepseek.svg">vendor-icons/deepseek.svg</file>
+    <file alias="vendor/ollama.svg">vendor-icons/ollama.svg</file>
+    <file alias="vendor/openai.svg">vendor-icons/openai.svg</file>
+    <file alias="vendor/qwen.svg">vendor-icons/qwen.svg</file>
+    <file alias="vendor/zhipu.svg">vendor-icons/zhipu.svg</file>
   </qresource>
   <qresource prefix="/styles">
     <file alias="studio.qss">studio.qss</file>

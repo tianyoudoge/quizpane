@@ -42,11 +42,47 @@ int main(int argc, char** argv) {
     QString error;
     if (!quizpane::validateBank(validBank, &error) || !error.isEmpty()) return 3;
 
-    // v2 是唯一业务 Schema；v1 不兼容、不迁移。
+    // v1 不兼容、不迁移。
     {
         QJsonObject legacy = validBank;
         legacy.insert("schemaVersion", 1);
         if (quizpane::validateBankDetailed(legacy).isEmpty()) return 100;
+    }
+
+    // v3 无答案题库：题干和选项照常校验，但不能存答案/解析，也必须保留原题号。
+    {
+        QJsonObject bank = validBank;
+        bank.insert("schemaVersion", 3);
+        bank.insert("answerPolicy", "none");
+        QJsonArray questions = bank.value("questions").toArray();
+        QJsonObject secondQuestion = questions.first().toObject();
+        secondQuestion.insert("id", QStringLiteral("q-no-answer-2"));
+        questions.append(secondQuestion);
+        for (qsizetype index = 0; index < questions.size(); ++index) {
+            QJsonObject question = questions.at(index).toObject();
+            question.remove("answer");
+            question.remove("solution");
+            question.insert("source", QJsonObject{{"document", "original.pdf"},
+                                                    {"questionNumber", int(index + 1)},
+                                                    {"questionLabel", QString::number(index + 1)}});
+            questions[index] = question;
+        }
+        bank.insert("questions", questions);
+        if (!quizpane::validateBankDetailed(bank).isEmpty()) return 101;
+        const QJsonArray normalizedQuestions = questions;
+        QJsonObject outOfOrder = questions.at(1).toObject();
+        outOfOrder.insert("source", QJsonObject{{"document", "original.pdf"},
+                                                  {"questionNumber", 1},
+                                                  {"questionLabel", "1"}});
+        questions[1] = outOfOrder;
+        bank.insert("questions", questions);
+        if (quizpane::validateBankDetailed(bank).isEmpty()) return 103;
+        questions = normalizedQuestions;
+        QJsonObject invalidQuestion = questions.first().toObject();
+        invalidQuestion.insert("answer", QJsonObject{{"optionIds", QJsonArray{"a"}}});
+        questions[0] = invalidQuestion;
+        bank.insert("questions", questions);
+        if (quizpane::validateBankDetailed(bank).isEmpty()) return 102;
     }
 
     // 重复题目 id：复制第一题但不改 id，应报告为无效。
@@ -100,6 +136,22 @@ int main(int argc, char** argv) {
 
     // 合法的“2 份材料 + 多道子题 + 独立题”必须通过。
     if (!quizpane::validateBankDetailed(validBankWithMaterials).isEmpty()) return 11;
+
+    // 材料下划线是正文的精确 UTF-16 字符范围，可随题库安装包保留；越界、重叠
+    // 或非整数范围必须拒绝，避免渲染时把别的文字错误标记为原卷下划线。
+    {
+        QJsonObject bank = validBankWithMaterials;
+        QJsonArray materials = bank.value("materials").toArray();
+        QJsonObject material = materials.first().toObject();
+        material.insert("underlines", QJsonArray{QJsonObject{{"start", 0}, {"length", 2}}});
+        materials[0] = material;
+        bank.insert("materials", materials);
+        if (!quizpane::validateBankDetailed(bank).isEmpty()) return 121;
+        material.insert("underlines", QJsonArray{QJsonObject{{"start", 999999}, {"length", 1}}});
+        materials[0] = material;
+        bank.insert("materials", materials);
+        if (quizpane::validateBankDetailed(bank).isEmpty()) return 122;
+    }
 
     // 重复材料 ID。
     {

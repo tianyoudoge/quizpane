@@ -19,10 +19,15 @@ StyledDropdown::StyledDropdown(QWidget* parent) : QWidget(parent) {
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(8);
+    currentIcon_ = new QLabel(this);
+    currentIcon_->setObjectName(QStringLiteral("styledDropdownIcon"));
+    currentIcon_->setFixedSize(20, 20);
+    currentIcon_->setAlignment(Qt::AlignCenter);
     currentLabel_ = new QLabel(this);
     currentLabel_->setObjectName(QStringLiteral("styledDropdownLabel"));
     arrow_ = new QLabel(QStringLiteral("▾"), this);
     arrow_->setObjectName(QStringLiteral("styledDropdownArrow"));
+    layout->addWidget(currentIcon_, 0);
     layout->addWidget(currentLabel_, 1);
     layout->addWidget(arrow_, 0);
 }
@@ -128,17 +133,14 @@ void StyledDropdown::showPopup() {
 void StyledDropdown::refreshLabel() {
     if (currentIndex_ < 0 || currentIndex_ >= entries_.size()) {
         currentLabel_->clear();
-        currentLabel_->setPixmap(QPixmap());
+        currentIcon_->clear();
+        currentIcon_->setVisible(false);
         return;
     }
     const Entry& entry = entries_.at(currentIndex_);
     currentLabel_->setText(entry.text);
-    if (!entry.icon.isNull()) {
-        currentLabel_->setPixmap(entry.icon.pixmap(18, 18));
-        currentLabel_->setText(QString());
-        // 图标与文字目前互斥显示在同一个 QLabel 里；三处调用点中只有厂商下拉
-        // 会传入图标，且该场景对齐即可满足需求，不需要额外的图文混排控件。
-    }
+    currentIcon_->setPixmap(entry.icon.pixmap(18, 18));
+    currentIcon_->setVisible(!entry.icon.isNull());
 }
 
 void StyledDropdown::selectRow(int row) {
