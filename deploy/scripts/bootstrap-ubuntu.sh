@@ -60,6 +60,9 @@ if ! id -u quizpane >/dev/null 2>&1; then
 fi
 
 install -d -m 0755 /srv/quizpane/site/releases /srv/quizpane/releases /var/lib/quizpane
+# Nginx 的 www-data 必须能穿透到 current 软链接与其版本目录；系统用户的 home
+# 目录权限在不同 Ubuntu 镜像上并不一致，显式设为可读取静态站而非依赖默认值。
+chmod 0755 /srv/quizpane /srv/quizpane/site /srv/quizpane/site/releases
 install -d -m 0755 /opt/quizpane/release-proxy/releases /var/www/certbot
 chown -R quizpane:quizpane /srv/quizpane/releases /var/lib/quizpane /opt/quizpane/release-proxy
 install -d -o www-data -g www-data -m 0755 /var/cache/nginx/quizpane-meta
