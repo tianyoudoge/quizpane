@@ -1,12 +1,16 @@
 #include "quizpane/studio/document_extractor.hpp"
 
+#include "quizpane/diagnostic_logger.hpp"
+
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QBuffer>
 #include <QColor>
 #include <QImage>
+#include <QImageWriter>
 #include <QPdfDocument>
 #include <QPdfSelection>
 #include <QSet>
@@ -169,10 +173,27 @@ bool hasVisibleInk(const QImage& source) {
 }
 
 QImage renderPdfPage(QPdfDocument* document, int page) {
+    // 原来每页按 2x 渲染后再 PNG 压缩，即使这页最终没有任何图表/材料会进入题库。
+    // 对屏幕预览、原卷局部裁切和 AI 定位而言 1.5x（约 108 DPI）仍有足够的笔画
+    // 细节，却把每页像素量降至原来的 56%，是整理阶段最主要的确定性加速点。
+    constexpr qreal kPreviewScale = 1.5;
     const QSizeF points = document->pagePointSize(page);
-    const QSize pixels(qBound(1, static_cast<int>(std::ceil(points.width() * 2.0)), 5000),
-                       qBound(1, static_cast<int>(std::ceil(points.height() * 2.0)), 5000));
+    const QSize pixels(qBound(1, static_cast<int>(std::ceil(points.width() * kPreviewScale)), 5000),
+                       qBound(1, static_cast<int>(std::ceil(points.height() * kPreviewScale)), 5000));
     return document->render(page, pixels);
+}
+
+bool writePreviewPng(const QImage& image, QByteArray* destination) {
+    if (!destination || image.isNull())
+        return false;
+    QBuffer buffer(destination);
+    if (!buffer.open(QIODevice::WriteOnly))
+        return false;
+    QImageWriter writer(&buffer, "PNG");
+    // 这些 PNG 只是本次生成期间的中间缓存；最终写入题库的是局部裁切后的资源。
+    // 使用低压缩级别显著减少 Windows 上每页 PNG 压缩时间，同时不损失任何像素。
+    writer.setCompression(1);
+    return writer.write(image);
 }
 
 QRectF normalizedSelectionBounds(QPdfDocument* document, int page, int start, int length) {
@@ -374,6 +395,8 @@ bool PdfExtractor::supports(const QString& path) const {
 ExtractedDocument PdfExtractor::extract(const QString& path) const {
     ExtractedDocument result;
     result.sourcePath = path;
+    QElapsedTimer elapsed;
+    elapsed.start();
     QPdfDocument document;
     const QPdfDocument::Error loadError = document.load(path);
     if (loadError != QPdfDocument::Error::None || document.pageCount() <= 0) {
@@ -381,11 +404,11 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
         return result;
     }
     QStringList pages;
+    qint64 previewBytes = 0;
     for (int page = 0; page < document.pageCount(); ++page) {
         QString text = document.getAllText(page).text().trimmed();
         QImage pageImage;
         if (!text.isEmpty()) {
-            pageImage = renderPdfPage(&document, page);
             collectPdfTextAnchors(&document, page, text, &result);
         }
         if (text.isEmpty()) {
@@ -409,15 +432,15 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
 #endif
             }
         }
-        // 不能仅在无文字时 OCR：文字型 PDF 常将图表单独嵌入，文字提取 API
-        // 天然看不见它。以 PNG 保留整页视觉上下文，后续按题号关联时才入包。
-        if (pageImage.isNull())
-            pageImage = renderPdfPage(&document, page);
+        // 扫描页的渲染图要保留，供 OCR 来源复核与图片题回退使用；文字型 PDF
+        // 则在生成器已确认“这页确实含材料/题图/图片选项”后再懒加载。此前对
+        // 每一页都渲染并压缩 PNG，是大题库整理明显变慢的主因。
         if (!pageImage.isNull()) {
             QByteArray png;
-            QBuffer buffer(&png);
-            if (buffer.open(QIODevice::WriteOnly) && pageImage.save(&buffer, "PNG"))
+            if (writePreviewPng(pageImage, &png)) {
+                previewBytes += png.size();
                 result.pageImages.insert(page + 1, png);
+            }
         }
         pages.append(text);
     }
@@ -428,6 +451,12 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
             ? QStringLiteral("PDF 没有可提取的文字内容")
             : QStringLiteral("PDF 所有页面均无法提取：%1").arg(result.warnings.join(QStringLiteral("；")));
     }
+    diagnostic::event(QStringLiteral("extractor"), QStringLiteral("pdf-finished"),
+        {{QStringLiteral("file"), QFileInfo(path).fileName()},
+         {QStringLiteral("pages"), document.pageCount()},
+         {QStringLiteral("ocr"), result.usedOcr},
+         {QStringLiteral("previewBytes"), previewBytes},
+         {QStringLiteral("elapsedMs"), elapsed.elapsed()}});
     return result;
 }
 
@@ -459,8 +488,12 @@ void detectPdfUnderlinesForCandidateLines(
         QImage pageImage;
         if (extracted->pageImages.contains(pageNumber))
             pageImage.loadFromData(extracted->pageImages.value(pageNumber), "PNG");
-        if (pageImage.isNull())
+        if (pageImage.isNull()) {
             pageImage = renderPdfPage(&document, page);
+            QByteArray png;
+            if (writePreviewPng(pageImage, &png))
+                extracted->pageImages.insert(pageNumber, png);
+        }
         const QImage grayPage = pageImage.convertToFormat(QImage::Format_Grayscale8);
         if (grayPage.isNull())
             continue;
@@ -501,6 +534,30 @@ void detectPdfUnderlinesForCandidateLines(
                 break;
             lineStart = lineEnd + 1;
         }
+    }
+}
+
+void ensurePdfPageImages(ExtractedDocument* extracted, const QList<int>& pageNumbers) {
+    if (!extracted || pageNumbers.isEmpty() || !hasSuffix(extracted->sourcePath, {"pdf"}))
+        return;
+    // 大量图题可能共享同一页。先在内存缓存中去重并短路，避免每道题都重新打开
+    // 一次 PDF（Windows 上打开复杂 PDF 本身就会产生可感知的延迟）。
+    QSet<int> requested;
+    for (const int pageNumber : pageNumbers)
+        if (pageNumber > 0 && !extracted->pageImages.contains(pageNumber))
+            requested.insert(pageNumber);
+    if (requested.isEmpty())
+        return;
+    QPdfDocument document;
+    if (document.load(extracted->sourcePath) != QPdfDocument::Error::None)
+        return;
+    for (const int pageNumber : requested) {
+        if (pageNumber > document.pageCount())
+            continue;
+        const QImage image = renderPdfPage(&document, pageNumber - 1);
+        QByteArray png;
+        if (writePreviewPng(image, &png))
+            extracted->pageImages.insert(pageNumber, png);
     }
 }
 

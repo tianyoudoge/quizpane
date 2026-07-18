@@ -5,6 +5,7 @@
 #include "quizpane/studio/rule_based_generator.hpp"
 
 #include <QFileInfo>
+#include <QElapsedTimer>
 #include <QMetaObject>
 #include <QPointer>
 #include <QtConcurrent/QtConcurrentRun>
@@ -35,15 +36,31 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
     const QPointer<GenerationWorkflow> owner(this);
     const bool hasAnswerKey = sources.isEmpty() || sources.first().hasAnswerKey;
     [[maybe_unused]] const auto backgroundTask = QtConcurrent::run([owner, sources, hasAnswerKey] {
+        const auto publishProgress = [owner](WorkflowStage stage, int completed, int total,
+                                             const QString& detail) {
+            if (!owner)
+                return;
+            QMetaObject::invokeMethod(owner.data(), [owner, stage, completed, total, detail] {
+                if (owner && owner->active_)
+                    emit owner->progressChanged({stage, completed, total, 0, 0, detail});
+            }, Qt::QueuedConnection);
+        };
+        QElapsedTimer elapsed;
+        elapsed.start();
         QList<ExtractedDocument> documents;
         ExtractorRegistry registry;
         QString failure;
-        for (const SourceMaterialGroup& source : sources) {
+        for (qsizetype sourceIndex = 0; sourceIndex < sources.size(); ++sourceIndex) {
+            const SourceMaterialGroup& source = sources.at(sourceIndex);
             if (source.hasAnswerKey != hasAnswerKey) {
                 failure = QStringLiteral("同一题库不能混合含答案与无答案资料");
                 break;
             }
             const QString path = source.questionPath;
+            publishProgress(WorkflowStage::Extracting, sourceIndex, sources.size(),
+                            QStringLiteral("正在读取第 %1 / %2 份资料：%3")
+                                .arg(sourceIndex + 1).arg(sources.size())
+                                .arg(QFileInfo(path).fileName()));
             ExtractedDocument document = registry.extract(QFileInfo(path).absoluteFilePath());
             if (!document.error.isEmpty()) {
                 failure = QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error);
@@ -64,9 +81,20 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                 document.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
             }
             documents.append(document);
+            publishProgress(WorkflowStage::Extracting, sourceIndex + 1, sources.size(),
+                            QStringLiteral("已读取第 %1 / %2 份资料，正在继续处理…")
+                                .arg(sourceIndex + 1).arg(sources.size()));
         }
+        publishProgress(WorkflowStage::Chunking, documents.size(), qMax(1, documents.size()),
+                        QStringLiteral("资料读取完成，正在按题号、选项、答案和材料规则整理…"));
+        QElapsedTimer generationElapsed;
+        generationElapsed.start();
         const RuleBasedGenerationResult result = failure.isEmpty()
             ? RuleBasedBankGenerator{}.generate(documents, hasAnswerKey) : RuleBasedGenerationResult{};
+        diagnostic::event(QStringLiteral("workflow"), QStringLiteral("rule-run-finished"),
+            {{QStringLiteral("sources"), documents.size()},
+             {QStringLiteral("generationMs"), generationElapsed.elapsed()},
+             {QStringLiteral("totalMs"), elapsed.elapsed()}});
         if (!owner)
             return;
         QMetaObject::invokeMethod(owner.data(), [owner, result, failure] {

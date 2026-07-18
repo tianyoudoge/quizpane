@@ -7,5 +7,6 @@
   </qresource>
   <qresource prefix="/styles">
     <file alias="desktop.qss">desktop.qss</file>
+    <file alias="desktop-light.qss">desktop-light.qss</file>
   </qresource>
 </RCC>

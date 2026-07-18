@@ -40,8 +40,9 @@ struct ExtractedDocument {
     bool hasPageBoundaries = false;
     // 扫描页经过本地 OCR 时置 true，仅用于提示识别来源，不改变后续解析路径。
     bool usedOcr = false;
-    // 文字 PDF 也可能把统计图、图形推理题嵌为位图。保留渲染后的页图，规则
-    // 生成器会把需要视觉上下文的题目作为题库资源带走，而不是只在整页无文字时 OCR。
+    // 文字 PDF 也可能把统计图、图形推理题嵌为位图。扫描 PDF 会在提取时保留
+    // 渲染页；文字 PDF 的页面则由规则生成器只在确认需要原卷视觉上下文时按需
+    // 载入，避免“全卷每页渲染 + PNG 压缩”拖慢普通纯文字题库。
     QHash<int, QByteArray> pageImages;
     // 对文字型 PDF，保留题号与 A/B/C/D 标签的版面位置。它只用于“文字层没有
     // 选项内容、但选项本身是图或公式”的安全小图裁切。
@@ -87,6 +88,10 @@ class PdfExtractor final : public DocumentExtractor {
 // 几行材料传进来，避免整卷逐字符扫图造成延迟和误召。
 void detectPdfUnderlinesForCandidateLines(
     ExtractedDocument* document, const QHash<int, QStringList>& candidateLinesByPage);
+
+// 为已经确认需要原卷视觉上下文的页面补齐本地 PNG 缓存。仅对 PDF 生效；传入
+// 的页码从 1 开始。重复请求会命中已有缓存，不会再次渲染。
+void ensurePdfPageImages(ExtractedDocument* document, const QList<int>& pageNumbers);
 
 // 制作器唯一需要持有的入口：按扩展名找到合适的 DocumentExtractor 并提取。
 // 找不到匹配格式时返回的 error 会提示具体扩展名，方便用户理解为什么某个

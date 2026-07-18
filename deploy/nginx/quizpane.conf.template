@@ -81,6 +81,70 @@ server {
         add_header Cache-Control "public, max-age=2592000, immutable";
     }
 
+    # 官网可同时挂在个人域名的 /quizpane/ 下。alias 会剥离 URL 前缀；前端的
+    # API 和下载地址以当前页面目录为基准，下面的代理再还原为 release-proxy
+    # 所使用的 /api 和 /download 根路径。
+    location = /quizpane {
+        return 301 /quizpane/;
+    }
+
+    location ^~ /quizpane/assets/ {
+        alias /srv/quizpane/site/current/assets/;
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable";
+    }
+
+    location = /quizpane/api/releases/latest {
+        rewrite ^/quizpane/(.*)$ /$1 break;
+        proxy_pass http://quizpane_release_proxy;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache quizpane_metadata;
+        proxy_cache_methods GET HEAD;
+        proxy_cache_valid 200 5m;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        proxy_cache_lock on;
+        add_header X-QuizPane-Metadata-Cache $upstream_cache_status always;
+    }
+
+    location ^~ /quizpane/api/ {
+        rewrite ^/quizpane/(.*)$ /$1 break;
+        proxy_pass http://quizpane_release_proxy;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /quizpane/download/ {
+        rewrite ^/quizpane/(.*)$ /$1 break;
+        limit_req zone=quizpane_download burst=40 nodelay;
+        limit_conn quizpane_client_connections 8;
+        proxy_pass http://quizpane_release_proxy;
+        proxy_http_version 1.1;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        send_timeout 1h;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Range $http_range;
+        proxy_set_header If-Range $http_if_range;
+    }
+
+    location ^~ /quizpane/ {
+        alias /srv/quizpane/site/current/;
+        index index.html;
+        add_header Cache-Control "no-cache";
+    }
+
     location / {
         root /srv/quizpane/site/current;
         try_files $uri $uri/ /index.html =404;

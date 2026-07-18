@@ -10,6 +10,9 @@
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+  // 官网既可以部署在域名根目录，也可以挂载在 /quizpane/ 之类的子路径下。
+  // document.baseURI 会保留当前目录，避免下载 API 跳回个人主页根路由。
+  const siteUrl = (path) => new URL(path, document.baseURI).toString();
 
   function getPath(obj, path) {
     return path.split(".").reduce((value, key) => (value == null ? undefined : value[key]), obj);
@@ -200,7 +203,7 @@
       link.className = "btn btn-primary";
       link.textContent = "下载";
       if (tag) {
-        link.href = `/download/${encodeURIComponent(tag)}/${encodeURIComponent(platform.asset)}`;
+        link.href = siteUrl(`download/${encodeURIComponent(tag)}/${encodeURIComponent(platform.asset)}`);
       } else {
         link.href = downloads.releaseUrlFallback || "#";
         link.target = "_blank";
@@ -336,7 +339,9 @@
 
   async function fetchRelease() {
     try {
-      const response = await fetch("/api/releases/latest", { headers: { Accept: "application/json" } });
+      const response = await fetch(siteUrl("api/releases/latest"), {
+        headers: { Accept: "application/json" },
+      });
       if (!response.ok) throw new Error(`status ${response.status}`);
       return await response.json();
     } catch {

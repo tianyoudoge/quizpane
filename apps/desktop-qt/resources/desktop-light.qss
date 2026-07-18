@@ -1,0 +1,47 @@
+/* 浅色主题：暖白底、蓝灰文字和低饱和蓝色交互，避免 Windows 原生控件回退到
+   不可预期的前景色。卡片仍保持轻微半透明，保留“小窗”而非传统表单的质感。 */
+QWidget#card { background: rgba(250,251,253,242); border: 1px solid rgba(92,108,124,42); border-radius: 10px; color: #27313b; }
+QWidget#card[uiSize="small"] { font-size: 11px; }
+QWidget#card[uiSize="medium"] { font-size: 12px; }
+QWidget#card[uiSize="large"] { font-size: 13px; }
+QWidget#card QLabel { color: #27313b; }
+QWidget#card QScrollArea, QWidget#card QScrollArea > QWidget > QWidget { background: transparent; border: none; }
+QWidget#card QScrollBar:vertical { background: transparent; width: 7px; margin: 3px 2px; }
+QWidget#card QScrollBar::handle:vertical { background: rgba(63,79,95,70); border-radius: 2px; min-height: 26px; }
+QWidget#card QScrollBar::add-line:vertical, QWidget#card QScrollBar::sub-line:vertical { width: 0; height: 0; }
+QLabel#sourceTitle { color: #536170; font-weight: 500; }
+QLabel#title, QLabel#pageTitle { color: #1f2933; font-weight: 650; }
+QLabel#detail { color: #667482; }
+QLabel#questionText, QWidget#catalogRow, QLabel#resultAnswer { background: rgba(47,78,108,10); border-radius: 7px; padding: 7px; }
+QLabel#questionText { color: #25313d; font-weight: 550; }
+QLabel#solutionQuestion { color: #344252; }
+QLabel#solutionText { color: #4f6055; background: rgba(49,112,73,9); border-radius: 7px; padding: 7px; }
+QWidget#materialCard { background: rgba(47,78,108,8); border-radius: 7px; }
+QLabel#materialCardTitle { color: #354454; font-weight: 600; }
+QLabel#materialCardBody { color: #526171; }
+QPushButton#materialImagePreview { background: rgba(39,56,72,5); border: 1px solid rgba(59,77,94,26); border-radius: 5px; padding: 0; min-width: 0; }
+QPushButton#materialImagePreview:hover { border-color: rgba(48,104,158,130); background: rgba(48,104,158,8); }
+QLabel#materialImagePreviewHint { color: #637282; }
+QPushButton { background: rgba(47,78,108,10); color: #2b3947; border: 1px solid rgba(55,74,92,35); border-radius: 7px; padding: 5px 8px; }
+QPushButton:hover { background: rgba(48,104,158,13); border-color: rgba(48,104,158,92); }
+QPushButton#smallButton { padding: 5px 7px; min-width: 48px; }
+QPushButton#navIconButton, QPushButton#headerIconButton, QPushButton#pinButton, QPushButton#closeButton, QPushButton#materialCardToggle { background: transparent; border: none; padding: 0; }
+QPushButton:disabled { background: transparent; color: rgba(85,99,114,100); }
+QFrame#questionNavigatorPopup { background: rgba(250,251,253,252); border: 1px solid rgba(68,85,103,42); border-radius: 10px; }
+QLabel#questionNavigatorTitle { color: #1f2933; font-weight: 650; font-size: 13px; }
+QLabel#questionNavigatorSummary { color: #687584; font-size: 11px; }
+QScrollArea#questionNavigatorScroll, QScrollArea#questionNavigatorScroll > QWidget > QWidget { background: transparent; border: none; }
+QPushButton#questionNumberButton { background: transparent; color: #344352; border: 1px solid rgba(59,77,94,50); border-radius: 7px; padding: 0; }
+QPushButton#questionNumberButton:hover { background: rgba(48,104,158,12); }
+QPushButton#questionNumberButton[answered="true"] { background: rgba(62,111,154,16); border-color: rgba(62,111,154,52); color: #254e76; }
+QPushButton#questionNumberButton[current="true"] { border: 1px solid #3c7eb8; color: #1f5f96; }
+QFrame#answerOptionCard { background: rgba(47,78,108,8); border-radius: 7px; }
+QFrame#answerOptionCard[checked="true"] { background: rgba(48,104,158,16); }
+QPushButton#answerOption { color: #2f3d4b; background: transparent; border: none; padding: 0; text-align: left; }
+QPushButton#answerOption:checked { color: #175b92; }
+QLabel#answerOptionImage { background: transparent; padding: 0; }
+QCheckBox#includeAnswered { color: #536170; }
+QLabel[correct="true"] { color: #3d7b55; font-weight: 600; }
+QLabel[correct="false"] { color: #a25450; font-weight: 600; }
+QFrame#submitConfirmationBubble { background: rgba(250,251,253,248); border: 1px solid rgba(68,85,103,35); border-radius: 9px; }
+QLabel#submitConfirmationText { background: transparent; color: #334252; }

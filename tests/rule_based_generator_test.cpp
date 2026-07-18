@@ -356,7 +356,14 @@ int main(int argc, char** argv) {
     ExtractedDocument imageOptions;
     imageOptions.sourcePath = QStringLiteral("image-options.pdf");
     imageOptions.hasPageBoundaries = true;
-    imageOptions.pageImages.insert(1, QByteArrayLiteral("png-bytes"));
+    // 页面图片必须是实际可解码的 PNG；生成器不会把损坏的缓存字节当作可用题图。
+    QImage imageOptionsPage(800, 1200, QImage::Format_ARGB32_Premultiplied);
+    imageOptionsPage.fill(Qt::white);
+    QByteArray imageOptionsPng;
+    QBuffer imageOptionsBuffer(&imageOptionsPng);
+    if (!imageOptionsBuffer.open(QIODevice::WriteOnly) ||
+        !imageOptionsPage.save(&imageOptionsBuffer, "PNG")) return 100;
+    imageOptions.pageImages.insert(1, imageOptionsPng);
     imageOptions.plainText = QStringLiteral("1. 请从图中 A、B、C、D 四个图形中选择填入问号处的一项。\n"
                                               "正确答案：C\n");
     const auto imageOptionsResult = RuleBasedBankGenerator{}.generate({imageOptions});

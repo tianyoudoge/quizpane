@@ -10,6 +10,7 @@
 #include "question_navigator.hpp"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCoreApplication>
@@ -520,6 +521,29 @@ void MainWindow::initializeDesktopShell() {
             [this] { applyUiSize(UiSize::Medium); });
     connect(trayLarge, &QAction::triggered, this,
             [this] { applyUiSize(UiSize::Large); });
+    auto addAppearanceActions = [this](QMenu* menu) {
+        auto* actions = new QActionGroup(menu);
+        actions->setExclusive(true);
+        auto* dark = menu->addAction(QStringLiteral("深色模式"));
+        auto* light = menu->addAction(QStringLiteral("浅色模式"));
+        dark->setCheckable(true);
+        light->setCheckable(true);
+        actions->addAction(dark);
+        actions->addAction(light);
+        const bool isLight = AppSettings::colorTheme() == QStringLiteral("light");
+        light->setChecked(isLight);
+        dark->setChecked(!isLight);
+        connect(dark, &QAction::triggered, this, [this] {
+            AppSettings::setColorTheme(QStringLiteral("dark"));
+            applyCardStyle();
+        });
+        connect(light, &QAction::triggered, this, [this] {
+            AppSettings::setColorTheme(QStringLiteral("light"));
+            applyCardStyle();
+        });
+    };
+    auto* trayAppearance = trayMenu_->addMenu(QStringLiteral("外观"));
+    addAppearanceActions(trayAppearance);
     trayMenu_->addAction(QStringLiteral("返回练习列表"), this,
                          &MainWindow::returnToCatalog);
     trayMenu_->addAction(QStringLiteral("赞赏支持…"), this,
@@ -576,6 +600,8 @@ void MainWindow::initializeDesktopShell() {
             [this] { applyUiSize(UiSize::Medium); });
     connect(nativeLarge, &QAction::triggered, this,
             [this] { applyUiSize(UiSize::Large); });
+    QMenu* nativeAppearance = windowMenu->addMenu(QStringLiteral("外观"));
+    addAppearanceActions(nativeAppearance);
     QMenu* practiceMenu = nativeBar->addMenu(QStringLiteral("练习"));
     practiceMenu->addAction(QStringLiteral("返回练习列表"), this,
                             &MainWindow::returnToCatalog);
@@ -2040,7 +2066,10 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 }
 
 void MainWindow::applyCardStyle() {
-    QFile style(QStringLiteral(":/styles/desktop.qss"));
+    const QString path = AppSettings::colorTheme() == QStringLiteral("light")
+        ? QStringLiteral(":/styles/desktop-light.qss")
+        : QStringLiteral(":/styles/desktop.qss");
+    QFile style(path);
     if (!style.open(QIODevice::ReadOnly)) {
         qWarning("Unable to load embedded desktop stylesheet");
         return;

@@ -1259,7 +1259,7 @@ int nextMaterialLine(const QList<MaterialMarker>& materials, int afterLine, int 
     return fallback;
 }
 
-QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceLine>& lines,
+QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& lines,
                           const QuestionAnchor& anchor, int blockEnd, const QString& stableId,
                           const QString& materialId, const QHash<int, QString>& answerKey,
                           const QHash<int, QString>& solutionKey,
@@ -1391,20 +1391,16 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
     const int sourcePage = anchor.line < lines.size() ? lines.at(anchor.line).page : 0;
     const bool hasVisualOptionLabels = sourcePage > 0 &&
         optionRowForQuestion(document, sourcePage, anchor.number).size() == 4;
-    const bool hasRenderableSourcePageImage = sourcePage > 0 &&
-        document.pageImages.contains(sourcePage) &&
-        !QImage::fromData(document.pageImages.value(sourcePage), "PNG").isNull();
     // 只有未能从文字层拆出至少两个选项时，才允许整页视觉上下文参与回退。否则
     // “如图/表”等普通题干会把整页试卷误挂到题干下；资料题尤其会把整段材料重复
     // 显示成图片。
     const bool hasVisualContext = options.size() < 2 && sourcePage > 0 &&
-        document.pageImages.contains(sourcePage) &&
         (visualText.contains(QStringLiteral("图")) || visualText.contains(QStringLiteral("表")) ||
          visualText.contains(QStringLiteral("统计")) || visualText.contains(QStringLiteral("问号")));
     // 图题也可以拥有完全可靠的文字选项。此前为避免普通“图/表”题误挂整页图，
     // 把这类题排除在视觉附件外，因而漏掉了“如图所示”的题干插图。显式的指图
     // 表述是更强的证据，应单独触发，并使用题干插图裁切模式而非选项图片模式。
-    const bool hasStemIllustrationCue = hasRenderableSourcePageImage &&
+    const bool hasStemIllustrationCue = sourcePage > 0 &&
         visualText.contains(QRegularExpression(
             QStringLiteral("如图(?:所示)?|如下图|下图所示|图示|图中|示意图|见图")));
     const bool needsVisualOptions = options.size() < 2 &&
@@ -1512,6 +1508,10 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
     // 图形推理、统计资料和明确提到图/表的题保留原卷可视内容。无可靠选项文字
     // 锚点时，使用“本题到下一题前”的裁切图，而不是把整页试卷挂到题干下。
     if (attachStemImage) {
+        // 纯文字题不会预先渲染 PDF 页。只有这里已经确定需要题图、图表或图片
+        // 选项时才按需载入对应页，避免整理一本普通文字卷时无谓地栅格化整卷。
+        if (sourcePage > 0)
+            ensurePdfPageImages(&document, {sourcePage});
         QStringList stemSourceLines;
         for (const int sourceIndex : stemSourceIndices)
             if (sourceIndex >= 0 && sourceIndex < lines.size())
@@ -1521,7 +1521,7 @@ QJsonObject parseQuestion(const ExtractedDocument& document, const QList<SourceL
             generatedAssets);
         if (!visualImage.isEmpty())
             question.insert("stemImage", visualImage);
-        else {
+        else if (!QImage::fromData(document.pageImages.value(sourcePage), "PNG").isNull()) {
             // 只有测试夹具或损坏 PDF 缺少题号坐标时才保留历史整页回退；真实
             // PDF 一旦有题号锚点必走上面的局部裁切，不能把相邻题目带进来。
             const QString path = QStringLiteral("assets/%1-p%2.png")
@@ -1862,6 +1862,10 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             // 空白横线和嵌入式图片横线；这一层视觉附件确保它们不再丢失，同时
             // 只裁材料范围，绝不把整页试卷错挂到子题题干。
             const bool dataAnalysisMaterial = isInsideDataAnalysisPart(lines, line);
+            QList<int> materialPages;
+            for (int page = firstPage; page <= lastPage; ++page)
+                if (page > 0) materialPages.append(page);
+            ensurePdfPageImages(&document, materialPages);
             QJsonArray images = extractMaterialLayoutImages(
                 document, firstPage, lastPage, lines.at(line).text,
                 lines.at(firstQuestionLine).text, id,

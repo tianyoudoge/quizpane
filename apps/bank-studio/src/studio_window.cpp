@@ -14,6 +14,7 @@
 #include "styled_dropdown.hpp"
 
 #include <QCloseEvent>
+#include <QActionGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QBuffer>
@@ -39,6 +40,7 @@
 #include <QLineEdit>
 #include <QMimeData>
 #include <QMenuBar>
+#include <QMenu>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QJsonDocument>
@@ -82,6 +84,19 @@ QLabel* mutedLabel(const QString& text) {
     label->setObjectName(QStringLiteral("muted"));
     label->setWordWrap(true);
     return label;
+}
+
+QString studioColorTheme() {
+    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    const QString value = settings.value(QStringLiteral("ui/colorTheme"),
+                                         QStringLiteral("dark")).toString();
+    return value == QStringLiteral("light") ? value : QStringLiteral("dark");
+}
+
+void storeStudioColorTheme(const QString& value) {
+    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    settings.setValue(QStringLiteral("ui/colorTheme"),
+                      value == QStringLiteral("light") ? value : QStringLiteral("dark"));
 }
 
 void clearLayout(QLayout* layout) {
@@ -505,6 +520,26 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     });
     auto* settingsMenu = menuBar()->addMenu(QStringLiteral("设置"));
     settingsMenu->addAction(QStringLiteral("模型管理…"), this, &StudioWindow::editModelSettings);
+    auto* appearanceMenu = settingsMenu->addMenu(QStringLiteral("外观"));
+    auto* themeActions = new QActionGroup(appearanceMenu);
+    themeActions->setExclusive(true);
+    auto* darkThemeAction = appearanceMenu->addAction(QStringLiteral("深色模式"));
+    auto* lightThemeAction = appearanceMenu->addAction(QStringLiteral("浅色模式"));
+    darkThemeAction->setCheckable(true);
+    lightThemeAction->setCheckable(true);
+    themeActions->addAction(darkThemeAction);
+    themeActions->addAction(lightThemeAction);
+    const bool lightTheme = studioColorTheme() == QStringLiteral("light");
+    lightThemeAction->setChecked(lightTheme);
+    darkThemeAction->setChecked(!lightTheme);
+    connect(darkThemeAction, &QAction::triggered, this, [this] {
+        storeStudioColorTheme(QStringLiteral("dark"));
+        applyStyle();
+    });
+    connect(lightThemeAction, &QAction::triggered, this, [this] {
+        storeStudioColorTheme(QStringLiteral("light"));
+        applyStyle();
+    });
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
     settingsMenu->addAction(QStringLiteral("查看调试日志…"), this, [] {
         diagnostic::openLogFile();
@@ -2310,7 +2345,10 @@ void StudioWindow::closeEvent(QCloseEvent* event) {
 }
 
 void StudioWindow::applyStyle() {
-    QFile style(QStringLiteral(":/styles/studio.qss"));
+    const QString path = studioColorTheme() == QStringLiteral("light")
+        ? QStringLiteral(":/styles/studio-light.qss")
+        : QStringLiteral(":/styles/studio.qss");
+    QFile style(path);
     if (!style.open(QIODevice::ReadOnly)) {
         qWarning("Unable to load embedded studio stylesheet");
         return;

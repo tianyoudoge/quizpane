@@ -1,3 +1,7 @@
+/* Windows 的原生控件不会稳定继承父 QWidget 的前景色：只给 content 设 color
+   会让 QLabel / CheckBox 回退成黑字，深色背景下几乎不可见。基础颜色必须落到
+   全部控件，再由下方的组件规则覆盖。 */
+QWidget { color: #c8cdd3; }
 QMainWindow, QWidget#content { background: #0c0e12; color: #c8cdd3; }
 QFrame#sidebar { background: #111419; border: none; border-right: 1px solid #252a31; }
 QLabel#brand { font-size: 20px; font-weight: 700; color: #e0e3e7; }
@@ -27,7 +31,26 @@ QPushButton#secondaryButton, QPushButton#textButton { background: transparent; c
 QPushButton#reviewActionButton { background: #20252b; color: #dce1e7; border: 1px solid #414954; border-radius: 7px; padding: 7px 12px; font-weight: 600; }
 QPushButton#reviewActionButton:hover { background: #2a3038; border-color: #717c89; color: #ffffff; }
 QPushButton#reviewActionButton:disabled { color: #747b85; background: #171b20; border-color: #303640; }
-QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget, QWidget#styledDropdown { background: #111419; color: #cfd4da; border: 1px solid #343a42; border-radius: 7px; padding: 8px; selection-background-color: #3b424b; }
+QLineEdit, QComboBox, QListWidget, QTableWidget, QTreeWidget, QTextEdit, QPlainTextEdit,
+QAbstractScrollArea, QWidget#styledDropdown {
+    background: #111419;
+    color: #cfd4da;
+    border: 1px solid #343a42;
+    border-radius: 7px;
+    padding: 8px;
+    selection-background-color: #3b424b;
+    selection-color: #ffffff;
+}
+QScrollArea#sourceScroll, QScrollArea#sourceScroll > QWidget > QWidget {
+    background: transparent;
+    border: none;
+}
+QTextEdit::viewport, QPlainTextEdit::viewport, QListWidget::viewport,
+QTreeWidget::viewport, QTableWidget::viewport { background: #111419; color: #cfd4da; }
+QComboBox QAbstractItemView { background: #171b20; color: #dce1e7; border: 1px solid #454d58; selection-background-color: #343a42; selection-color: #ffffff; }
+QCheckBox, QRadioButton, QGroupBox, QLabel { color: #c8cdd3; }
+QCheckBox::indicator, QRadioButton::indicator { width: 15px; height: 15px; background: #111419; border: 1px solid #59616b; border-radius: 4px; }
+QCheckBox::indicator:checked, QRadioButton::indicator:checked { background: #f25ba6; border-color: #f25ba6; }
 QListWidget::item { padding: 10px; border-bottom: 1px solid #252a31; }
 QListWidget::item:selected { color: #ffffff; background: #343a42; }
 QFrame#styledDropdownPopup { background: #171b20; border: 1px solid #3b424b; border-radius: 8px; }

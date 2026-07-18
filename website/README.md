@@ -34,6 +34,10 @@ python3 -m http.server 8080
 通常不存在，下载区会回退显示"正在获取最新版本…"并把下载按钮指向
 GitHub Release 页面，这是预期行为，不是 bug。
 
+页面也支持部署在域名子路径（例如 `https://xutianyou.cc/quizpane/`）：资源、
+Release API 和下载链接都会以当前页面目录为基准。仓库的 Nginx 模板已包含
+`/quizpane/` 路由与对应代理；访问时务必保留末尾 `/`。
+
 ## 构建
 
 ```bash

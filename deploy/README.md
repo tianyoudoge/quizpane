@@ -122,3 +122,10 @@ GitHub API 临时限流；代理会继续用上一次成功轮询的缓存数据
 metadata 中存在的 asset，完整下载及 SHA-256 校验通过后才公开缓存文件。Nginx
 只缓存 `/api/releases/latest` 这类小 JSON，安装包的 Range 请求由服务自身
 落盘处理，详见 [`release-proxy/README.md`](../release-proxy/README.md)。
+
+## 挂载到个人域名的子路径
+
+Nginx 模板同时提供 `https://域名/quizpane/` 路由，适合把官网挂在个人主页下。
+静态资源、版本 API 和下载代理都会保留该路径前缀；`/quizpane` 会自动跳转到
+`/quizpane/`，确保相对资源路径正确。只需把 `server_name` 改为真实域名并重载
+Nginx，不需要新增 DNS 记录。

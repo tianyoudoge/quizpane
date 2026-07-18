@@ -13,5 +13,6 @@
   </qresource>
   <qresource prefix="/styles">
     <file alias="studio.qss">studio.qss</file>
+    <file alias="studio-light.qss">studio-light.qss</file>
   </qresource>
 </RCC>

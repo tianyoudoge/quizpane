@@ -11,6 +11,10 @@ public:
     static void setWindowPinned(bool value);
     static QString uiSize();
     static void setUiSize(const QString& value);
+    // "dark" / "light"。主题是跨平台 UI 偏好，不依赖各系统的默认控件颜色，
+    // 这样 Windows、macOS 和 Linux 都会得到相同的可读性。
+    static QString colorTheme();
+    static void setColorTheme(const QString& value);
     static QString bossKey();
     static void setBossKey(const QString& value);
     static int autoAdvanceMs();
