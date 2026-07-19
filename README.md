@@ -55,10 +55,10 @@
 |---|---|
 | Mac（M1/M2/M3/M4） | `QuizPane-macos-arm64.dmg` |
 | Intel Mac | `QuizPane-macos-x86_64.dmg` |
-| Windows 10/11 64 位 | `QuizPane-windows-x64.exe` |
+| Windows 10/11 64 位 | `QuizPane-windows-x64-portable.zip` |
 | Linux、统信 UOS、银河麒麟 x64 | `QuizPane-linux-x86_64.deb`；也可选 `.tar.gz` / `.tar.xz` |
 
-Mac 打开 DMG 后把应用拖进“应用程序”；Windows 运行安装程序；Linux 优先安装 `.deb`，也可完整解压后运行 `QuizPane.AppDir/AppRun`。不要只把压缩包里的单个程序文件拖出来运行。
+Mac 打开 DMG 后把应用拖进“应用程序”；Windows 完整解压绿色版 ZIP 后运行 `QuizPane/小窗刷题.exe`；Linux 优先安装 `.deb`，也可完整解压后运行 `QuizPane.AppDir/AppRun`。不要只把压缩包里的单个程序文件拖出来运行。
 
 > Windows 7、Linux ARM64、macOS 10.14/10.15 还没有可用版本。统信 UOS、银河麒麟目前是 Linux x64 兼容构建，尚未完成官方认证和真机验收。
 
@@ -324,7 +324,7 @@ QuizPane is a compact, native desktop quiz window designed to stay in a corner i
 
 ### Install
 
-Each `QuizPane-*` download includes both the floating quiz client and Question Maker. Choose `macos-arm64` for Apple Silicon, `macos-x86_64` for Intel Macs, `windows-x64` for 64-bit Windows 10/11, or `linux-x86_64` for Linux/UOS/Kylin. Question Maker adds finished local banks directly to QuizPane. Windows 7, Linux ARM64, and macOS 10.14/10.15 are not supported by the current release.
+Each `QuizPane-*` download includes both the floating quiz client and Question Maker. Choose `macos-arm64` for Apple Silicon, `macos-x86_64` for Intel Macs, `windows-x64-portable.zip` for 64-bit Windows 10/11, or `linux-x86_64` for Linux/UOS/Kylin. Extract the complete Windows ZIP before running `QuizPane/小窗刷题.exe`; do not run a copied-out executable by itself. Question Maker adds finished local banks directly to QuizPane. Windows 7, Linux ARM64, and macOS 10.14/10.15 are not supported by the current release.
 
 The current build is an unnotarized technical preview. Verify the SHA-256 published with the release and do not disable Gatekeeper globally.
 

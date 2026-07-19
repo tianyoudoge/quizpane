@@ -101,8 +101,8 @@
       {
         "id": "windows-x64",
         "label": "Windows 10 / 11",
-        "sublabel": "64 位",
-        "asset": "QuizPane-windows-x64.exe",
+        "sublabel": "64 位 · 绿色版 ZIP",
+        "asset": "QuizPane-windows-x64-portable.zip",
         "icon": "windows"
       },
       {

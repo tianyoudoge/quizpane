@@ -61,7 +61,7 @@ node website/scripts/build-site.mjs
 - **文案与下载平台**：改 `src/content.json`。`downloads.platforms[].asset`
   必须与 GitHub Release 里实际的 asset 文件名一致（当前对应 README 里列出的
   `QuizPane-macos-arm64.dmg`、`QuizPane-macos-x86_64.dmg`、
-  `QuizPane-windows-x64.exe`、`QuizPane-linux-x86_64.deb`）。
+  `QuizPane-windows-x64-portable.zip`、`QuizPane-linux-x86_64.deb`）。
 - **截图**：`src/assets/screenshots/` 已放入北京卷官网演示题库的导入截图，以及
   资料换行、公式选项和小窗答题演示图；替换文件后同步修改 `content.json` 的
   `shot` 路径和 `index.html` 的 hero 图路径。发布前请确认试卷内容的展示与

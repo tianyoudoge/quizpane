@@ -100,7 +100,7 @@ jobs:
         env:
           VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-binary-cache
         run: |
-          choco install cmake ninja innosetup -y --no-progress
+          choco install cmake ninja -y --no-progress
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install tesseract:x64-windows-static-md
 
       - name: Download OCR language data
@@ -131,8 +131,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release-assets | Out-Null
-          Copy-Item "dist/windows/QuizPane-windows-x64.exe" release-assets/
-          Get-ChildItem release-assets/*.exe | ForEach-Object {
+          Copy-Item "dist/windows/QuizPane-windows-x64-portable.zip" release-assets/
+          Get-ChildItem release-assets/*.zip | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$hash  $($_.Name)" | Add-Content release-assets/SHA256SUMS-windows-x64.txt
           }

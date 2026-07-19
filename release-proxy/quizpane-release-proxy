@@ -349,6 +349,7 @@ async function enforceCacheBudget() {
 const CONTENT_TYPES = {
   ".dmg": "application/x-apple-diskimage",
   ".exe": "application/octet-stream",
+  ".zip": "application/zip",
   ".deb": "application/vnd.debian.binary-package",
   ".tar.gz": "application/gzip",
   ".tar.xz": "application/x-xz",
@@ -427,6 +428,7 @@ async function handleDownload(req, res, tag, assetName) {
   const entry = state.cachedAssets.get(assetKey(tag, assetName));
   const headers = {
     "Content-Type": contentTypeFor(assetName),
+    "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(assetName)}`,
     "Accept-Ranges": "bytes",
     "Cache-Control": "public, max-age=31536000, immutable",
   };

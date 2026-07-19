@@ -67,12 +67,10 @@ foreach ($Language in @("chi_sim", "eng")) {
   if (-not (Test-Path $Source)) { throw "缺少 OCR 语言数据：$Source" }
   Copy-Item $Source $Tessdata -Force
 }
-$Iscc = Get-Command "iscc.exe" -ErrorAction SilentlyContinue
-if (-not $Iscc) { $Iscc = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue }
-if (-not $Iscc) { throw "缺少 Inno Setup 编译器 iscc.exe" }
-$Installer = Join-Path $Dist "QuizPane-windows-x64$PackageSuffix.exe"
-if (Test-Path $Installer) { Remove-Item $Installer -Force }
-& $Iscc.Source "/DSourceDir=$Stage" "/DOutputDir=$Dist" "/DOutputBaseFilename=QuizPane-windows-x64$PackageSuffix" `
-  (Join-Path $Root "packaging/windows/QuizPane.iss")
-if ($LASTEXITCODE -ne 0) { throw "Windows 安装程序生成失败，退出码 $LASTEXITCODE" }
-Write-Host "已生成：$Installer"
+$PortableArchive = Join-Path $Dist "QuizPane-windows-x64-portable$PackageSuffix.zip"
+if (Test-Path $PortableArchive) { Remove-Item $PortableArchive -Force }
+
+# 绿色版必须保留完整部署目录：Qt DLL、插件、OCR 语言数据与两个程序缺一不可。
+# 直接压缩目录本身，使用户解压后得到一个独立文件夹，而不是散落到下载目录。
+Compress-Archive -Path $Stage -DestinationPath $PortableArchive -CompressionLevel Optimal
+Write-Host "已生成绿色版：$PortableArchive"
