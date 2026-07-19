@@ -283,8 +283,26 @@ mkdir -p "$DMG_STAGE"
 ditto "$APP" "$DMG_STAGE/小窗刷题.app"
 ln -s /Applications "$DMG_STAGE/Applications"
 DMG="$DIST_DIR/QuizPane-macos-$(uname -m)$PACKAGE_SUFFIX.dmg"
-rm -f "$DMG"
-hdiutil create -volname "QuizPane" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG"
+create_dmg() {
+  local max_attempts=4
+  local attempt=1
+  while (( attempt <= max_attempts )); do
+    rm -f "$DMG"
+    if hdiutil create -volname "QuizPane" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG"; then
+      return 0
+    fi
+    if (( attempt == max_attempts )); then
+      echo "DMG 创建连续 $max_attempts 次失败" >&2
+      return 1
+    fi
+    # GitHub macOS Intel runner 偶发有遗留 diskimages-help 占用全局服务；
+    # 这与应用内容无关，稍等后重试即可。只重试 hdiutil，不吞掉其余打包错误。
+    echo "hdiutil 暂时忙碌，${attempt}/${max_attempts} 次失败后重试…" >&2
+    sleep "$attempt"
+    ((attempt++))
+  done
+}
+create_dmg
 
 echo "已生成：$DMG"
 du -h "$DMG"
