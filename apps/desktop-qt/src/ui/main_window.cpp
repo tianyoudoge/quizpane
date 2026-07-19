@@ -2032,8 +2032,8 @@ void MainWindow::completeUpdateDownload() {
 
 bool MainWindow::startDownloadedUpdate() {
     const QString workDirectory = QFileInfo(updateDownloadPath_).absolutePath();
-    const QString scriptPath = QDir(workDirectory).filePath(
 #if defined(Q_OS_WIN)
+    const QString scriptPath = QDir(workDirectory).filePath(
         QStringLiteral("apply-update.ps1"));
     const QString destination = QCoreApplication::applicationDirPath();
     const QString restartPath = QCoreApplication::applicationFilePath();
@@ -2075,6 +2075,7 @@ try {
     }
     return true;
 #elif defined(Q_OS_MACOS)
+    const QString scriptPath = QDir(workDirectory).filePath(
         QStringLiteral("apply-update.zsh"));
     const QString destination = QDir::cleanPath(
         QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../../..")));
@@ -2131,7 +2132,7 @@ trap cleanup EXIT
     }
     return true;
 #else
-    Q_UNUSED(scriptPath)
+    Q_UNUSED(workDirectory)
     return false;
 #endif
 }
