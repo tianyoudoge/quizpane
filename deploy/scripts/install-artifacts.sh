@@ -126,7 +126,7 @@ if (( restart )); then
     # 健康的新代理回滚为旧版本。
     proxy_healthy=0
     for attempt in {1..15}; do
-      if curl --fail --silent --show-error http://127.0.0.1:8787/healthz >/dev/null; then
+      if curl --fail --silent http://127.0.0.1:8787/healthz >/dev/null; then
         proxy_healthy=1
         break
       fi
