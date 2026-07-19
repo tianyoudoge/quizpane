@@ -431,7 +431,13 @@ bool storeModelSettings(const ModelSettings& value, QString* error) {
 // ===== 应用外壳与四步向导装配 =====
 
 StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
+#if defined(Q_OS_WIN)
+    // Windows 会把 QApplication 的 display name 追加到窗口标题。这里仅保留产品名，
+    // 避免出现“题库制作器 · 小窗刷题 - 题库制作器”的重复标题。
+    setWindowTitle(QStringLiteral("小窗刷题"));
+#else
     setWindowTitle(QStringLiteral("题库制作器 · 小窗刷题"));
+#endif
     setMinimumSize(820, 600);
     resize(1040, 720);
     setAcceptDrops(true);
@@ -696,6 +702,7 @@ QWidget* StudioWindow::buildSourcePage() {
     sourceScroll_->setFrameShape(QFrame::NoFrame);
     sourceScroll_->setMaximumHeight(320);
     auto* sourceListContent = new QWidget;
+    sourceListContent->setObjectName(QStringLiteral("sourceListContent"));
     sourceListLayout_ = new QVBoxLayout(sourceListContent);
     sourceListLayout_->setContentsMargins(0, 4, 4, 4);
     sourceListLayout_->setSpacing(10);
@@ -812,6 +819,7 @@ QWidget* StudioWindow::buildReviewPage() {
     layout->addWidget(riskCategoryPanel_);
 
     auto* reviewSplit = new QSplitter(Qt::Horizontal);
+    reviewSplit->setObjectName(QStringLiteral("reviewSplit"));
     reviewSplit->setChildrenCollapsible(false);
     auto* navigator = new QWidget;
     auto* navigatorLayout = new QVBoxLayout(navigator);
@@ -852,6 +860,7 @@ QWidget* StudioWindow::buildReviewPage() {
     reviewStemLabel_ = new QLabel(QStringLiteral("题干"));
     detailLayout->addWidget(reviewStemLabel_);
     reviewStemEditor_ = new QTextEdit;
+    reviewStemEditor_->setObjectName(QStringLiteral("reviewStemEditor"));
     reviewStemEditor_->setPlaceholderText(QStringLiteral("题干"));
     reviewStemEditor_->setMinimumHeight(58);
     reviewStemEditor_->setMaximumHeight(240);
@@ -905,6 +914,7 @@ QWidget* StudioWindow::buildReviewPage() {
     questionEditorLayout->addLayout(actions);
     detailLayout->addWidget(reviewQuestionEditorPanel_);
     auto* detailScroll = new QScrollArea;
+    detailScroll->setObjectName(QStringLiteral("reviewDetailScroll"));
     detailScroll->setWidgetResizable(true);
     detailScroll->setFrameShape(QFrame::NoFrame);
     detailScroll->setWidget(detail);
