@@ -15,6 +15,7 @@
 
 #include <QCloseEvent>
 #include <QActionGroup>
+#include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QBuffer>
@@ -48,6 +49,7 @@
 #include <QImage>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPalette>
 #include <QPdfDocument>
 #include <QProgressBar>
 #include <QPixmap>
@@ -2355,7 +2357,40 @@ void StudioWindow::closeEvent(QCloseEvent* event) {
 }
 
 void StudioWindow::applyStyle() {
-    const QString path = studioColorTheme() == QStringLiteral("light")
+    const bool lightTheme = studioColorTheme() == QStringLiteral("light");
+    // Windows 的原生控件（尤其是 CheckBox、禁用 Label、编辑器 viewport）有时
+    // 不继承父 QWidget 的 QSS color。先设应用级 Palette，再加载组件级 QSS，
+    // 让文字、按钮文字和输入文本在三端都有稳定对比度。
+    QPalette palette = QApplication::palette();
+    if (lightTheme) {
+        palette.setColor(QPalette::Window, QColor(QStringLiteral("#f4f6f8")));
+        palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#27313b")));
+        palette.setColor(QPalette::Base, QColor(QStringLiteral("#ffffff")));
+        palette.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#f4f6f8")));
+        palette.setColor(QPalette::Text, QColor(QStringLiteral("#27313b")));
+        palette.setColor(QPalette::Button, QColor(QStringLiteral("#ffffff")));
+        palette.setColor(QPalette::ButtonText, QColor(QStringLiteral("#334252")));
+        palette.setColor(QPalette::Highlight, QColor(QStringLiteral("#d9ebf8")));
+        palette.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#17324a")));
+        palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(QStringLiteral("#8995a0")));
+        palette.setColor(QPalette::Disabled, QPalette::Text, QColor(QStringLiteral("#8995a0")));
+        palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(QStringLiteral("#8995a0")));
+    } else {
+        palette.setColor(QPalette::Window, QColor(QStringLiteral("#0c0e12")));
+        palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#c8cdd3")));
+        palette.setColor(QPalette::Base, QColor(QStringLiteral("#111419")));
+        palette.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#15191e")));
+        palette.setColor(QPalette::Text, QColor(QStringLiteral("#cfd4da")));
+        palette.setColor(QPalette::Button, QColor(QStringLiteral("#20252b")));
+        palette.setColor(QPalette::ButtonText, QColor(QStringLiteral("#cfd4da")));
+        palette.setColor(QPalette::Highlight, QColor(QStringLiteral("#3b424b")));
+        palette.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#ffffff")));
+        palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(QStringLiteral("#8c959f")));
+        palette.setColor(QPalette::Disabled, QPalette::Text, QColor(QStringLiteral("#8c959f")));
+        palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(QStringLiteral("#8c959f")));
+    }
+    QApplication::setPalette(palette);
+    const QString path = lightTheme
         ? QStringLiteral(":/styles/studio-light.qss")
         : QStringLiteral(":/styles/studio.qss");
     QFile style(path);
