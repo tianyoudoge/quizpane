@@ -14,7 +14,9 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -30,16 +32,20 @@
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLocale>
 #include <QMessageBox>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QNetworkReply>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
 #include <QPushButton>
 #include <QPixmap>
 #include <QPainter>
 #include <QProcess>
+#include <QProgressDialog>
 #include <QRadioButton>
 #include <QCheckBox>
 #include <QResizeEvent>
@@ -51,10 +57,12 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QSystemTrayIcon>
+#include <QSysInfo>
 #include <QStyle>
 #include <QTextDocument>
 #include <QTimer>
 #include <QUrl>
+#include <QUuid>
 #include <QVBoxLayout>
 #include <QWindow>
 
@@ -121,6 +129,53 @@ QString userFacingError(const QJsonObject& error) {
         return error.value(QStringLiteral("message")).toString(
             QStringLiteral("题库请求失败"));
     }
+}
+
+constexpr auto kReleaseMetadataUrl = "https://xutianyou.cc/quizpane/api/releases/latest";
+constexpr auto kReleaseDownloadBaseUrl = "https://xutianyou.cc/quizpane/download";
+
+int compareVersionTags(QString left, QString right) {
+    left.remove(QChar(u'v'), Qt::CaseInsensitive);
+    right.remove(QChar(u'v'), Qt::CaseInsensitive);
+    const QStringList leftParts = left.split(QChar(u'.'));
+    const QStringList rightParts = right.split(QChar(u'.'));
+    const int componentCount = std::max(leftParts.size(), rightParts.size());
+    for (int index = 0; index < componentCount; ++index) {
+        bool leftOk = false;
+        bool rightOk = false;
+        const int leftPart = index < leftParts.size() ? leftParts.at(index).toInt(&leftOk) : 0;
+        const int rightPart = index < rightParts.size() ? rightParts.at(index).toInt(&rightOk) : 0;
+        if ((index < leftParts.size() && !leftOk) ||
+            (index < rightParts.size() && !rightOk)) return 0;
+        if (leftPart != rightPart) return leftPart < rightPart ? -1 : 1;
+    }
+    return 0;
+}
+
+QString updateAssetForCurrentPlatform() {
+#if defined(Q_OS_WIN)
+    return QStringLiteral("QuizPane-windows-x64-portable.zip");
+#elif defined(Q_OS_MACOS)
+    const QString arch = QSysInfo::currentCpuArchitecture().toLower();
+    return arch.contains(QStringLiteral("arm"))
+        ? QStringLiteral("QuizPane-macos-arm64.dmg")
+        : QStringLiteral("QuizPane-macos-x86_64.dmg");
+#else
+    return {};
+#endif
+}
+
+QString updateWorkingDirectory(const QString& tag) {
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    return QDir(base).filePath(QStringLiteral("quizpane-update-%1-%2")
+        .arg(tag, QUuid::createUuid().toString(QUuid::WithoutBraces)));
+}
+
+QString updateScriptLogPath() {
+    const QString directory = QStandardPaths::writableLocation(
+        QStandardPaths::AppLocalDataLocation);
+    QDir().mkpath(directory);
+    return QDir(directory).filePath(QStringLiteral("update.log"));
 }
 
 }  // namespace
@@ -458,6 +513,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     applyUiSize(savedSize == QStringLiteral("small") ? UiSize::Small
                 : savedSize == QStringLiteral("large") ? UiSize::Large
                                                          : UiSize::Medium);
+    updateNetworkManager_ = new QNetworkAccessManager(this);
     initializeDesktopShell();
     processPendingProviderDeletions();
 
@@ -548,6 +604,8 @@ void MainWindow::initializeDesktopShell() {
                          &MainWindow::returnToCatalog);
     trayMenu_->addAction(QStringLiteral("赞赏支持…"), this,
                          [this] { ui::showDonation(this); });
+    trayMenu_->addAction(QStringLiteral("检查更新…"), this,
+                         &MainWindow::checkForUpdates);
     trayMenu_->addAction(QStringLiteral("关于小窗刷题"), this,
                          &MainWindow::showAboutDialog);
     trayMenu_->addSeparator();
@@ -582,6 +640,8 @@ void MainWindow::initializeDesktopShell() {
 #endif
     appMenu->addAction(QStringLiteral("赞赏支持…"), this,
                        [this] { ui::showDonation(this); });
+    appMenu->addAction(QStringLiteral("检查更新…"), this,
+                       &MainWindow::checkForUpdates);
     appMenu->addAction(QStringLiteral("关于小窗刷题"), this,
                        &MainWindow::showAboutDialog);
     appMenu->addSeparator();
@@ -1731,6 +1791,8 @@ void MainWindow::showMainMenu() {
     menu.addSeparator();
     menu.addAction(QStringLiteral("赞赏支持…"), this,
                    [this] { ui::showDonation(this); });
+    menu.addAction(QStringLiteral("检查更新…"), this,
+                   &MainWindow::checkForUpdates);
     menu.addAction(QStringLiteral("关于小窗刷题"), this,
                    &MainWindow::showAboutDialog);
     menu.exec(menuButton_->mapToGlobal(QPoint(0, menuButton_->height())));
@@ -1792,6 +1854,302 @@ void MainWindow::configureBossKey() {
 
 void MainWindow::showAboutDialog() {
     ui::showAbout(this);
+}
+
+void MainWindow::checkForUpdates() {
+    if (updateReply_) {
+        QMessageBox::information(this, QStringLiteral("检查更新"),
+            QStringLiteral("正在检查或下载更新，请稍候。"));
+        return;
+    }
+    if (updateAssetForCurrentPlatform().isEmpty()) {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://xutianyou.cc/quizpane/#download")));
+        QMessageBox::information(this, QStringLiteral("检查更新"),
+            QStringLiteral("当前系统请在官网下载对应的更新包。"));
+        return;
+    }
+
+    QNetworkRequest request(QUrl(QString::fromLatin1(kReleaseMetadataUrl)));
+    request.setHeader(QNetworkRequest::UserAgentHeader,
+                      QStringLiteral("QuizPane/%1 update-check")
+                          .arg(QApplication::applicationVersion()));
+    updateReply_ = updateNetworkManager_->get(request);
+    QNetworkReply* reply = updateReply_;
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        if (updateReply_ != reply) return;
+        updateReply_ = nullptr;
+        const QByteArray body = reply->readAll();
+        const QString error = reply->errorString();
+        const bool requestOk = reply->error() == QNetworkReply::NoError;
+        reply->deleteLater();
+        if (!requestOk) {
+            QMessageBox message(QMessageBox::Warning, QStringLiteral("无法检查更新"),
+                QStringLiteral("暂时无法连接更新服务：%1").arg(error),
+                QMessageBox::NoButton, this);
+            QPushButton* openDownload = message.addButton(QStringLiteral("打开下载页"),
+                                                           QMessageBox::AcceptRole);
+            message.addButton(QStringLiteral("稍后再试"), QMessageBox::RejectRole);
+            message.exec();
+            if (message.clickedButton() == openDownload)
+                QDesktopServices::openUrl(QUrl(QStringLiteral("https://xutianyou.cc/quizpane/#download")));
+            return;
+        }
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
+        const QJsonObject release = document.isObject() ? document.object() : QJsonObject{};
+        const QString tag = release.value(QStringLiteral("tag")).toString();
+        const QString asset = updateAssetForCurrentPlatform();
+        const QJsonObject assetInfo = release.value(QStringLiteral("assets")).toObject()
+            .value(asset).toObject();
+        if (parseError.error != QJsonParseError::NoError || tag.isEmpty() || assetInfo.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("无法检查更新"),
+                QStringLiteral("更新服务返回的数据不完整，请前往官网下载。"));
+            return;
+        }
+        if (compareVersionTags(QApplication::applicationVersion(), tag) >= 0) {
+            QMessageBox::information(this, QStringLiteral("检查更新"),
+                QStringLiteral("当前已是最新版本（%1）。")
+                    .arg(QApplication::applicationVersion()));
+            return;
+        }
+        const QString digest = assetInfo.value(QStringLiteral("sha256")).toString().toLower();
+        if (digest.size() != 64) {
+            QMessageBox::warning(this, QStringLiteral("更新包暂不可用"),
+                QStringLiteral("新版没有可验证的 SHA-256 校验值，请前往官网下载。"));
+            return;
+        }
+        QMessageBox message(QMessageBox::Information, QStringLiteral("发现新版本"),
+            QStringLiteral("发现 %1（当前 %2）。\n\n将下载 %3，校验完成后退出并更新程序。"
+                           "题库、练习记录和模型配置不会受到影响。")
+                .arg(tag, QApplication::applicationVersion(), asset),
+            QMessageBox::NoButton, this);
+        QPushButton* update = message.addButton(QStringLiteral("立即更新"),
+                                                QMessageBox::AcceptRole);
+        message.addButton(QStringLiteral("稍后再说"), QMessageBox::RejectRole);
+        message.exec();
+        if (message.clickedButton() == update)
+            downloadAndInstallUpdate(tag, asset, digest);
+    });
+}
+
+void MainWindow::downloadAndInstallUpdate(const QString& tag, const QString& asset,
+                                          const QString& expectedSha256) {
+    const QString workDirectory = updateWorkingDirectory(tag);
+    if (!QDir().mkpath(workDirectory)) {
+        QMessageBox::warning(this, QStringLiteral("无法下载更新"),
+            QStringLiteral("无法创建更新临时目录。"));
+        return;
+    }
+    updateTag_ = tag;
+    updateAsset_ = asset;
+    updateExpectedSha256_ = expectedSha256;
+    updateDownloadPath_ = QDir(workDirectory).filePath(asset);
+    updateDownloadFile_ = new QFile(updateDownloadPath_, this);
+    if (!updateDownloadFile_->open(QIODevice::WriteOnly)) {
+        QMessageBox::warning(this, QStringLiteral("无法下载更新"),
+            QStringLiteral("无法写入更新文件：%1").arg(updateDownloadFile_->errorString()));
+        resetUpdateDownload();
+        return;
+    }
+
+    const QUrl url(QStringLiteral("%1/%2/%3")
+        .arg(QString::fromLatin1(kReleaseDownloadBaseUrl), tag,
+             QString::fromUtf8(QUrl::toPercentEncoding(asset))));
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::UserAgentHeader,
+                      QStringLiteral("QuizPane/%1 updater")
+                          .arg(QApplication::applicationVersion()));
+    updateProgress_ = new QProgressDialog(QStringLiteral("正在下载更新…"),
+        QStringLiteral("取消"), 0, 0, this);
+    updateProgress_->setWindowTitle(QStringLiteral("小窗刷题更新"));
+    updateProgress_->setWindowModality(Qt::WindowModal);
+    updateProgress_->setAutoClose(false);
+    updateProgress_->setAutoReset(false);
+    updateProgress_->show();
+    updateReply_ = updateNetworkManager_->get(request);
+    QNetworkReply* reply = updateReply_;
+    connect(reply, &QNetworkReply::readyRead, this, [this, reply] {
+        if (reply != updateReply_ || !updateDownloadFile_) return;
+        if (updateDownloadFile_->write(reply->readAll()) < 0) reply->abort();
+    });
+    connect(reply, &QNetworkReply::downloadProgress, this,
+            [this](qint64 received, qint64 total) {
+        if (!updateProgress_) return;
+        if (total > 0) {
+            updateProgress_->setRange(0, 1000);
+            updateProgress_->setValue(static_cast<int>(received * 1000 / total));
+            updateProgress_->setLabelText(QStringLiteral("正在下载更新… %1 / %2")
+                .arg(QLocale().formattedDataSize(received), QLocale().formattedDataSize(total)));
+        }
+    });
+    connect(updateProgress_, &QProgressDialog::canceled, reply, &QNetworkReply::abort);
+    connect(reply, &QNetworkReply::finished, this, &MainWindow::completeUpdateDownload);
+}
+
+void MainWindow::completeUpdateDownload() {
+    QNetworkReply* reply = updateReply_;
+    updateReply_ = nullptr;
+    if (!reply) return;
+    if (updateDownloadFile_) {
+        updateDownloadFile_->write(reply->readAll());
+        updateDownloadFile_->close();
+    }
+    const bool downloaded = reply->error() == QNetworkReply::NoError && updateDownloadFile_;
+    const QString error = reply->errorString();
+    reply->deleteLater();
+    if (!downloaded) {
+        QMessageBox::warning(this, QStringLiteral("更新下载失败"),
+            QStringLiteral("更新包未能下载完成：%1").arg(error));
+        resetUpdateDownload();
+        return;
+    }
+
+    QFile archive(updateDownloadPath_);
+    if (!archive.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, QStringLiteral("更新校验失败"),
+            QStringLiteral("无法读取下载的更新包。"));
+        resetUpdateDownload();
+        return;
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    while (!archive.atEnd()) hash.addData(archive.read(1024 * 1024));
+    const QString actualSha256 = QString::fromLatin1(hash.result().toHex());
+    if (actualSha256 != updateExpectedSha256_) {
+        QMessageBox::critical(this, QStringLiteral("更新校验失败"),
+            QStringLiteral("下载文件的 SHA-256 与发布记录不一致，已取消更新。"));
+        resetUpdateDownload();
+        return;
+    }
+    if (!startDownloadedUpdate()) {
+        resetUpdateDownload();
+        return;
+    }
+    QMessageBox::information(this, QStringLiteral("正在更新"),
+        QStringLiteral("更新包已校验。程序退出后将自动替换并重新启动。"));
+    resetUpdateDownload();
+    QTimer::singleShot(0, qApp, &QApplication::quit);
+}
+
+bool MainWindow::startDownloadedUpdate() {
+    const QString workDirectory = QFileInfo(updateDownloadPath_).absolutePath();
+    const QString scriptPath = QDir(workDirectory).filePath(
+#if defined(Q_OS_WIN)
+        QStringLiteral("apply-update.ps1"));
+    const QString destination = QCoreApplication::applicationDirPath();
+    const QString restartPath = QCoreApplication::applicationFilePath();
+    const QString script = QStringLiteral(R"PS(
+param([string]$Package, [string]$Destination, [string]$Restart, [string]$Log)
+$ErrorActionPreference = 'Stop'
+try {
+  Start-Sleep -Seconds 2
+  $work = Join-Path (Split-Path -Parent $Package) 'expanded'
+  Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+  Expand-Archive -LiteralPath $Package -DestinationPath $work -Force
+  $source = Join-Path $work 'QuizPane'
+  if (-not (Test-Path -LiteralPath (Join-Path $source '小窗刷题.exe'))) { throw '更新包结构不正确' }
+  Get-ChildItem -LiteralPath $source -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
+  }
+  Start-Process -FilePath $Restart
+} catch {
+  $_ | Out-File -LiteralPath $Log -Append -Encoding utf8
+}
+)PS");
+    QFile scriptFile(scriptPath);
+    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text) ||
+        scriptFile.write(script.toUtf8()) < 0) {
+        QMessageBox::warning(this, QStringLiteral("无法安装更新"),
+            QStringLiteral("无法创建更新脚本。"));
+        return false;
+    }
+    scriptFile.close();
+    const QString powershell = QStandardPaths::findExecutable(QStringLiteral("powershell.exe"));
+    if (powershell.isEmpty() || !QProcess::startDetached(powershell,
+            {QStringLiteral("-NoProfile"), QStringLiteral("-WindowStyle"),
+             QStringLiteral("Hidden"), QStringLiteral("-ExecutionPolicy"),
+             QStringLiteral("Bypass"), QStringLiteral("-File"), scriptPath,
+             updateDownloadPath_, destination, restartPath, updateScriptLogPath()})) {
+        QMessageBox::warning(this, QStringLiteral("无法安装更新"),
+            QStringLiteral("无法启动 Windows 更新程序。"));
+        return false;
+    }
+    return true;
+#elif defined(Q_OS_MACOS)
+        QStringLiteral("apply-update.zsh"));
+    const QString destination = QDir::cleanPath(
+        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../../..")));
+    const QFileInfo targetInfo(destination);
+    if (!destination.endsWith(QStringLiteral(".app")) ||
+        !QFileInfo(targetInfo.absolutePath()).isWritable()) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(updateDownloadPath_));
+        QMessageBox::information(this, QStringLiteral("更新包已下载"),
+            QStringLiteral("当前应用目录没有写入权限，已打开 DMG。请将其中的小窗刷题拖到“应用程序”覆盖旧版本。"));
+        return false;
+    }
+    const QString script = QStringLiteral(R"ZSH(#!/bin/zsh
+set -eu
+package="$1"
+target="$2"
+log="$3"
+mount="$(mktemp -d /tmp/quizpane-update.XXXXXX)"
+cleanup() { hdiutil detach "$mount" -quiet 2>/dev/null || true; rmdir "$mount" 2>/dev/null || true; }
+trap cleanup EXIT
+{
+  sleep 2
+  hdiutil attach "$package" -nobrowse -readonly -mountpoint "$mount"
+  source="$mount/小窗刷题.app"
+  [[ -d "$source" ]] || { echo '更新包结构不正确'; exit 1; }
+  staging="${target}.updating"
+  backup="${target}.previous"
+  rm -rf "$staging" "$backup"
+  ditto "$source" "$staging"
+  [[ ! -d "$target" ]] || mv "$target" "$backup"
+  if ! mv "$staging" "$target"; then
+    [[ ! -d "$backup" ]] || mv "$backup" "$target"
+    exit 1
+  fi
+  rm -rf "$backup"
+  open "$target"
+} >> "$log" 2>&1
+)ZSH");
+    QFile scriptFile(scriptPath);
+    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text) ||
+        scriptFile.write(script.toUtf8()) < 0) {
+        QMessageBox::warning(this, QStringLiteral("无法安装更新"),
+            QStringLiteral("无法创建更新脚本。"));
+        return false;
+    }
+    scriptFile.close();
+    scriptFile.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                              QFileDevice::ExeOwner);
+    if (!QProcess::startDetached(QStringLiteral("/bin/zsh"),
+                                 {scriptPath, updateDownloadPath_, destination,
+                                  updateScriptLogPath()})) {
+        QMessageBox::warning(this, QStringLiteral("无法安装更新"),
+            QStringLiteral("无法启动 macOS 更新程序。"));
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(scriptPath)
+    return false;
+#endif
+}
+
+void MainWindow::resetUpdateDownload() {
+    if (updateProgress_) {
+        updateProgress_->close();
+        updateProgress_->deleteLater();
+        updateProgress_ = nullptr;
+    }
+    if (updateDownloadFile_) {
+        updateDownloadFile_->deleteLater();
+        updateDownloadFile_ = nullptr;
+    }
+    updateTag_.clear();
+    updateAsset_.clear();
+    updateExpectedSha256_.clear();
+    updateDownloadPath_.clear();
 }
 
 void MainWindow::switchProvider(const InstalledProviderInfo& provider) {

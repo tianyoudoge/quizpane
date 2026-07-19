@@ -16,6 +16,10 @@ class QAction;
 class QButtonGroup;
 class QMenu;
 class QFrame;
+class QFile;
+class QNetworkAccessManager;
+class QNetworkReply;
+class QProgressDialog;
 class QShowEvent;
 class QPushButton;
 class QScrollArea;
@@ -102,6 +106,12 @@ private:
     void showMainMenu();
     void configureBossKey();
     void showAboutDialog();
+    void checkForUpdates();
+    void downloadAndInstallUpdate(const QString& tag, const QString& asset,
+                                  const QString& expectedSha256);
+    void completeUpdateDownload();
+    bool startDownloadedUpdate();
+    void resetUpdateDownload();
     void switchProvider(const InstalledProviderInfo& provider);
     void deleteProvider(const InstalledProviderInfo& provider);
     void exportDeclarativeProvider(const InstalledProviderInfo& provider);
@@ -121,6 +131,17 @@ private:
     QAction* showHideAction_ = nullptr;
     QAction* pinAction_ = nullptr;
     QPoint dragOffset_;
+
+    // Release 元数据和安装包只会在用户手动选择“检查更新”后请求。下载文件放在
+    // 临时目录；更新脚本在本进程退出后才替换程序目录，因此不会碰用户数据目录。
+    QNetworkAccessManager* updateNetworkManager_ = nullptr;
+    QNetworkReply* updateReply_ = nullptr;
+    QFile* updateDownloadFile_ = nullptr;
+    QProgressDialog* updateProgress_ = nullptr;
+    QString updateTag_;
+    QString updateAsset_;
+    QString updateExpectedSha256_;
+    QString updateDownloadPath_;
 
     // ---- 控件引用：实际所有权在 Qt parent/child 对象树中 ----
     QWidget* card_ = nullptr;
