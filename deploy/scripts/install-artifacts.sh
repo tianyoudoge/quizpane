@@ -121,7 +121,18 @@ if (( restart )); then
       echo "Proxy failed to start; restored the previous proxy link. Inspect: journalctl -u quizpane-release-proxy -n 100" >&2
       exit 1
     fi
-    if ! curl --fail --silent --show-error http://127.0.0.1:8787/healthz >/dev/null; then
+    # Type=simple 的 systemd restart 在 Node 真正 bind() 端口前即可返回。首次
+    # 读取缓存/轮询 GitHub 又会让这个窗口更明显；有限轮询避免一次立即 curl 误把
+    # 健康的新代理回滚为旧版本。
+    proxy_healthy=0
+    for attempt in {1..15}; do
+      if curl --fail --silent --show-error http://127.0.0.1:8787/healthz >/dev/null; then
+        proxy_healthy=1
+        break
+      fi
+      sleep 1
+    done
+    if (( ! proxy_healthy )); then
       if [[ -n "$previous_proxy_target" ]]; then
         switch_current /opt/quizpane/release-proxy "$previous_proxy_target"
         systemctl restart quizpane-release-proxy.service || true
