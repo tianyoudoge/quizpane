@@ -54,6 +54,7 @@
 #include <QSignalBlocker>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSlider>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QSystemTrayIcon>
@@ -178,6 +179,68 @@ QString updateScriptLogPath() {
     return QDir(directory).filePath(QStringLiteral("update.log"));
 }
 
+int scaledAlpha(int alpha, int visibility) {
+    return (alpha * qBound(0, visibility, 100) + 50) / 100;
+}
+
+QString backgroundVisibilityStyle(bool light, int visibility) {
+    const int card = scaledAlpha(light ? 242 : 224, visibility);
+    const int cardBorder = scaledAlpha(light ? 42 : 0, visibility);
+    const int surface = scaledAlpha(light ? 10 : 10, visibility);
+    const int material = scaledAlpha(light ? 8 : 9, visibility);
+    const int button = scaledAlpha(light ? 10 : 12, visibility);
+    const int buttonHover = scaledAlpha(light ? 13 : 22, visibility);
+    const int border = scaledAlpha(light ? 35 : 14, visibility);
+    const int optionSelected = scaledAlpha(light ? 16 : 38, visibility);
+    const int scroll = scaledAlpha(light ? 70 : 62, visibility);
+    const QString cardRgb = light ? QStringLiteral("250,251,253")
+                                  : QStringLiteral("12,14,18");
+    const QString surfaceRgb = light ? QStringLiteral("47,78,108")
+                                     : QStringLiteral("255,255,255");
+    const QString buttonRgb = light ? QStringLiteral("47,78,108")
+                                    : QStringLiteral("255,255,255");
+    const QString borderRgb = light ? QStringLiteral("55,74,92")
+                                    : QStringLiteral("255,255,255");
+    const QString selectedRgb = light ? QStringLiteral("48,104,158")
+                                      : QStringLiteral("180,188,198");
+    const QString scrollRgb = light ? QStringLiteral("63,79,95")
+                                    : QStringLiteral("220,225,232");
+
+    // 只覆盖实际铺底的控件。文字颜色不参与透明度计算，因此滑到 0 时仍保持
+    // 清晰可读；导航弹窗和系统菜单属于临时操作界面，维持主题默认底色。
+    return QStringLiteral(R"QSS(
+QWidget#card { background: rgba(%1,%2); border-color: rgba(%3,%4); }
+QWidget#card QScrollBar::handle:vertical { background: rgba(%5,%6); }
+QWidget#card QLabel#questionText,
+QWidget#card QWidget#catalogRow,
+QWidget#card QLabel#resultAnswer { background: rgba(%7,%8); }
+QWidget#card QLabel#solutionText { background: rgba(%9,%10); }
+QWidget#card QWidget#materialCard { background: rgba(%7,%11); }
+QWidget#card QPushButton#materialImagePreview {
+    background: rgba(%12,%13); border-color: rgba(%14,%15);
+}
+QWidget#card QPushButton { background: rgba(%16,%17); border-color: rgba(%14,%15); }
+QWidget#card QPushButton:hover { background: rgba(%16,%18); }
+QWidget#card QFrame#answerOptionCard { background: rgba(%7,%8); }
+QWidget#card QFrame#answerOptionCard[checked="true"] { background: rgba(%19,%20); }
+QWidget#card QPushButton#questionNumberButton { border-color: rgba(%14,%15); }
+QWidget#card QPushButton#questionNumberButton:hover { background: rgba(%16,%18); }
+)QSS")
+        .arg(cardRgb).arg(card)
+        .arg(light ? QStringLiteral("92,108,124") : QStringLiteral("0,0,0")).arg(cardBorder)
+        .arg(scrollRgb).arg(scroll)
+        .arg(surfaceRgb).arg(surface)
+        .arg(light ? QStringLiteral("49,112,73") : QStringLiteral("28,36,33"))
+        .arg(scaledAlpha(light ? 9 : 48, visibility))
+        .arg(material)
+        .arg(light ? QStringLiteral("39,56,72") : QStringLiteral("0,0,0"))
+        .arg(scaledAlpha(light ? 5 : 20, visibility))
+        .arg(borderRgb).arg(scaledAlpha(light ? 26 : 18, visibility))
+        .arg(buttonRgb).arg(button)
+        .arg(buttonHover)
+        .arg(selectedRgb).arg(optionSelected);
+}
+
 }  // namespace
 
 // ===== 窗口与页面装配 =====
@@ -185,6 +248,7 @@ QString updateScriptLogPath() {
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Qt Widgets 通过父子对象树管理控件生命周期；窗口析构时会递归释放子控件。
     pinned_ = AppSettings::windowPinned();
+    backgroundVisibility_ = AppSettings::backgroundVisibility();
     Qt::WindowFlags flags = Qt::FramelessWindowHint |
                             Qt::NoDropShadowWindowHint | Qt::Tool;
     if (pinned_) flags |= Qt::WindowStaysOnTopHint;
@@ -597,6 +661,9 @@ void MainWindow::initializeDesktopShell() {
             AppSettings::setColorTheme(QStringLiteral("light"));
             applyCardStyle();
         });
+        menu->addSeparator();
+        menu->addAction(QStringLiteral("背景透明度…"), this,
+                        &MainWindow::showBackgroundVisibilityDialog);
     };
     auto* trayAppearance = trayMenu_->addMenu(QStringLiteral("外观"));
     addAppearanceActions(trayAppearance);
@@ -1730,6 +1797,72 @@ void MainWindow::showUiSizeMenu() {
     else if (selected == largeAction) applyUiSize(UiSize::Large);
 }
 
+void MainWindow::showBackgroundVisibilityDialog() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("背景透明度"));
+    dialog.setModal(true);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* description = new QLabel(
+        QStringLiteral("滑到最左侧时，卡片和选项蒙版都会消失，文字保持清晰。"), &dialog);
+    description->setWordWrap(true);
+    layout->addWidget(description);
+
+    auto* valueLabel = new QLabel(&dialog);
+    auto* slider = new QSlider(Qt::Horizontal, &dialog);
+    slider->setRange(0, 100);
+    slider->setValue(backgroundVisibility_);
+    slider->setTickInterval(10);
+    slider->setTickPosition(QSlider::TicksBelow);
+    slider->setAccessibleName(QStringLiteral("背景可见度"));
+    layout->addWidget(slider);
+
+    auto updateLabel = [valueLabel](int value) {
+        valueLabel->setText(value == 0 ? QStringLiteral("纯文字")
+                          : QStringLiteral("背景可见度：%1% ").arg(value));
+    };
+    updateLabel(slider->value());
+    layout->addWidget(valueLabel);
+
+    auto* buttons = new QHBoxLayout;
+    auto* reset = new QPushButton(QStringLiteral("恢复默认"), &dialog);
+    auto* done = new QPushButton(QStringLiteral("完成"), &dialog);
+    buttons->addWidget(reset);
+    buttons->addStretch();
+    buttons->addWidget(done);
+    layout->addLayout(buttons);
+
+    int pendingValue = slider->value();
+    QTimer previewTimer(&dialog);
+    previewTimer.setSingleShot(true);
+    connect(slider, &QSlider::valueChanged, &dialog, [this, &pendingValue, &previewTimer,
+                                                        updateLabel](int value) {
+        pendingValue = value;
+        updateLabel(value);
+        // 拖动时至多 150ms 刷一次样式；不是每个滑块像素都 repolish。
+        if (!previewTimer.isActive()) previewTimer.start(150);
+    });
+    connect(&previewTimer, &QTimer::timeout, &dialog, [this, &pendingValue] {
+        applyBackgroundVisibility(pendingValue);
+    });
+    connect(slider, &QSlider::sliderReleased, &dialog, [this, slider, &previewTimer] {
+        previewTimer.stop();
+        applyBackgroundVisibility(slider->value());
+    });
+    connect(reset, &QPushButton::clicked, slider, [slider] { slider->setValue(100); });
+    connect(done, &QPushButton::clicked, &dialog, &QDialog::accept);
+
+    dialog.exec();
+    // 键盘调节或直接关闭对话框也必须提交最后一个值。
+    applyBackgroundVisibility(slider->value());
+}
+
+void MainWindow::applyBackgroundVisibility(int value) {
+    backgroundVisibility_ = qBound(0, value, 100);
+    AppSettings::setBackgroundVisibility(backgroundVisibility_);
+    applyCardStyle();
+}
+
 void MainWindow::showMainMenu() {
     // 菜单每次打开都重新扫描安装目录，避免缓存与磁盘状态不一致。QAction 捕获的
     // InstalledProviderInfo 是值拷贝，菜单关闭后也不会悬空。
@@ -1781,6 +1914,8 @@ void MainWindow::showMainMenu() {
     }
 
     menu.addSeparator();
+    menu.addAction(QStringLiteral("背景透明度…"), this,
+                   &MainWindow::showBackgroundVisibilityDialog);
     menu.addAction(QStringLiteral("老板键设置…"), this,
                    &MainWindow::configureBossKey);
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
@@ -2425,7 +2560,8 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 }
 
 void MainWindow::applyCardStyle() {
-    const QString path = AppSettings::colorTheme() == QStringLiteral("light")
+    const bool light = AppSettings::colorTheme() == QStringLiteral("light");
+    const QString path = light
         ? QStringLiteral(":/styles/desktop-light.qss")
         : QStringLiteral(":/styles/desktop.qss");
     QFile style(path);
@@ -2433,7 +2569,8 @@ void MainWindow::applyCardStyle() {
         qWarning("Unable to load embedded desktop stylesheet");
         return;
     }
-    setStyleSheet(QString::fromUtf8(style.readAll()));
+    setStyleSheet(QString::fromUtf8(style.readAll()) +
+                  backgroundVisibilityStyle(light, backgroundVisibility_));
 }
 
 }  // namespace quizpane

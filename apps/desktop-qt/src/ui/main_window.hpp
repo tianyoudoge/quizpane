@@ -93,6 +93,8 @@ private:
     void setPinned(bool pinned);
     void showUiSizeMenu();
     void applyUiSize(UiSize size);
+    void showBackgroundVisibilityDialog();
+    void applyBackgroundVisibility(int value);
     void lockCompactPracticeHeight();
     int answerViewportMaximumHeight() const;
     void initializeDesktopShell();
@@ -215,6 +217,7 @@ private:
     // ---- 用户偏好与窗口几何 ----
     bool pinned_ = true;
     UiSize uiSize_ = UiSize::Medium;
+    int backgroundVisibility_ = 100;
     int lockedPracticeViewportHeight_ = 0;
     bool draftRestoreChecked_ = false;
     QElapsedTimer visibilityToggleDebounce_;

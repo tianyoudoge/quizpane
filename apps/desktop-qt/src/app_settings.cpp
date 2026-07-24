@@ -6,6 +6,7 @@ namespace quizpane {
 namespace keys {
 constexpr auto kPinned = "window/pinned";
 constexpr auto kUiSize = "ui/size";
+constexpr auto kBackgroundVisibility = "ui/backgroundVisibility";
 constexpr auto kColorTheme = "ui/colorTheme";
 constexpr auto kBossKey = "bossKey/sequence";
 constexpr auto kAutoAdvance = "practice/autoAdvanceMs";
@@ -16,6 +17,12 @@ bool AppSettings::windowPinned() { return QSettings().value(keys::kPinned, true)
 void AppSettings::setWindowPinned(bool value) { QSettings().setValue(keys::kPinned, value); }
 QString AppSettings::uiSize() { return QSettings().value(keys::kUiSize, QStringLiteral("medium")).toString(); }
 void AppSettings::setUiSize(const QString& value) { QSettings().setValue(keys::kUiSize, value); }
+int AppSettings::backgroundVisibility() {
+    return qBound(0, QSettings().value(keys::kBackgroundVisibility, 100).toInt(), 100);
+}
+void AppSettings::setBackgroundVisibility(int value) {
+    QSettings().setValue(keys::kBackgroundVisibility, qBound(0, value, 100));
+}
 QString AppSettings::colorTheme() {
     const QString value = QSettings().value(keys::kColorTheme, QStringLiteral("dark")).toString();
     return value == QStringLiteral("light") ? value : QStringLiteral("dark");
