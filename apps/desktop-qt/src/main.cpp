@@ -9,6 +9,7 @@
 #include <QLocalSocket>
 #include <QNetworkProxyFactory>
 #include <QSet>
+#include <QTimer>
 
 #include <functional>
 #include <exception>
@@ -79,8 +80,13 @@ void sendControlReply(QLocalSocket* socket, bool ok, const QString& error = {}) 
     if (!error.isEmpty()) response.insert(QStringLiteral("error"), error);
     socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
     socket->flush();
-    socket->disconnectFromServer();
-    socket->deleteLater();
+    // 不能在 write 后立即断开：Windows named pipe 可能先把 RemoteClosed 交给
+    // 客户端，导致确认 JSON 尚未来得及读取。客户端收到一行确认后会自行关闭；
+    // 超时兜底则避免恶意或异常客户端长期占用 socket。
+    QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+    QTimer::singleShot(5000, socket, [socket] {
+        if (socket->state() != QLocalSocket::UnconnectedState) socket->disconnectFromServer();
+    });
 }
 
 void installProviderHandoffServer(QLocalServer* server, quizpane::MainWindow* window) {
