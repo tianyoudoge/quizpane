@@ -339,7 +339,10 @@
 
   async function fetchRelease() {
     try {
-      const response = await fetch(siteUrl("api/releases/latest"), {
+      const releaseUrl = new URL(siteUrl("api/releases/latest"), window.location.href);
+      releaseUrl.searchParams.set("refresh", "1");
+      const response = await fetch(releaseUrl, {
+        cache: "no-store",
         headers: { Accept: "application/json" },
       });
       if (!response.ok) throw new Error(`status ${response.status}`);

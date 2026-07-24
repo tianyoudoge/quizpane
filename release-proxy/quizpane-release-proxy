@@ -364,11 +364,12 @@ function contentTypeFor(assetName) {
   return "application/octet-stream";
 }
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, headers = {}) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
+    ...headers,
   });
   res.end(payload);
 }
@@ -404,11 +405,17 @@ async function handleLatestRelease(req, res) {
     const cached = await isCachedOnDisk(release.tag, name);
     assets[name] = { size: info.size, sha256: info.sha256, cached };
   }
+  // "latest" is mutable metadata. Never let a browser, CDN, or reverse proxy
+  // retain it: the in-memory state above is the sole cache for this endpoint.
   sendJson(res, 200, {
     tag: release.tag,
     publishedAt: release.publishedAt,
     htmlUrl: release.htmlUrl,
     assets,
+  }, {
+    "Cache-Control": "no-store, max-age=0, must-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
   });
 }
 
