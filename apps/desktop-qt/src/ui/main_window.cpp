@@ -137,20 +137,53 @@ constexpr auto kReleaseMetadataUrl = "https://xutianyou.cc/quizpane/api/releases
 constexpr auto kReleaseDownloadBaseUrl = "https://xutianyou.cc/quizpane/download";
 
 int compareVersionTags(QString left, QString right) {
-    left.remove(QChar(u'v'), Qt::CaseInsensitive);
-    right.remove(QChar(u'v'), Qt::CaseInsensitive);
-    const QStringList leftParts = left.split(QChar(u'.'));
-    const QStringList rightParts = right.split(QChar(u'.'));
-    const int componentCount = std::max(leftParts.size(), rightParts.size());
+    struct ParsedVersion {
+        QVector<int> components;
+        bool developmentBuild = false;
+        int developmentNumber = 0;
+        bool valid = false;
+    };
+    const auto parse = [](QString value) {
+        ParsedVersion parsed;
+        value = value.trimmed();
+        if (value.startsWith(QChar(u'v'), Qt::CaseInsensitive)) value.remove(0, 1);
+        const int separator = std::min(
+            [&value] { const int index = value.indexOf(QChar(u'_')); return index < 0 ? value.size() : index; }(),
+            [&value] { const int index = value.indexOf(QChar(u'-')); return index < 0 ? value.size() : index; }());
+        const QString numeric = value.left(separator);
+        const QString suffix = separator < value.size() ? value.mid(separator + 1) : QString{};
+        for (const QString& component : numeric.split(QChar(u'.'))) {
+            bool ok = false;
+            const int number = component.toInt(&ok);
+            if (!ok || number < 0) return parsed;
+            parsed.components.append(number);
+        }
+        if (parsed.components.isEmpty()) return parsed;
+        if (!suffix.isEmpty()) {
+            if (!suffix.startsWith(QStringLiteral("dev"), Qt::CaseInsensitive)) return parsed;
+            bool ok = false;
+            const int number = suffix.mid(3).toInt(&ok);
+            if (!ok || number < 1) return parsed;
+            parsed.developmentBuild = true;
+            parsed.developmentNumber = number;
+        }
+        parsed.valid = true;
+        return parsed;
+    };
+    const ParsedVersion leftVersion = parse(left);
+    const ParsedVersion rightVersion = parse(right);
+    if (!leftVersion.valid || !rightVersion.valid) return 0;
+    const int componentCount = std::max(leftVersion.components.size(), rightVersion.components.size());
     for (int index = 0; index < componentCount; ++index) {
-        bool leftOk = false;
-        bool rightOk = false;
-        const int leftPart = index < leftParts.size() ? leftParts.at(index).toInt(&leftOk) : 0;
-        const int rightPart = index < rightParts.size() ? rightParts.at(index).toInt(&rightOk) : 0;
-        if ((index < leftParts.size() && !leftOk) ||
-            (index < rightParts.size() && !rightOk)) return 0;
+        const int leftPart = index < leftVersion.components.size() ? leftVersion.components.at(index) : 0;
+        const int rightPart = index < rightVersion.components.size() ? rightVersion.components.at(index) : 0;
         if (leftPart != rightPart) return leftPart < rightPart ? -1 : 1;
     }
+    // 同一正式版本号时，dev 构建低于正式版；dev1 < dev2。
+    if (leftVersion.developmentBuild != rightVersion.developmentBuild)
+        return leftVersion.developmentBuild ? -1 : 1;
+    if (leftVersion.developmentNumber != rightVersion.developmentNumber)
+        return leftVersion.developmentNumber < rightVersion.developmentNumber ? -1 : 1;
     return 0;
 }
 
