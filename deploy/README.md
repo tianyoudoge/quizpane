@@ -12,7 +12,7 @@
 | `scripts/install-artifacts.sh` | 将 [`website/`](../website/README.md) 构建出的静态站、[`release-proxy/`](../release-proxy/README.md) 的可执行文件原子切换到 `current` 软链接，并重载相关服务。 |
 | `scripts/build-and-deploy-site.sh` | 封装“本机构建 `website/dist` + 调用 `install-artifacts.sh`”，支持本机直接部署或通过 SSH 部署到远程服务器。 |
 | `nginx/quizpane.conf.template` | 网站、API、下载的反向代理和限流规则。 |
-| `nginx/quizpane-global.conf` | 必须在 Nginx `http` 级别加载的 upstream、元数据缓存和限流 zone。 |
+| `nginx/quizpane-global.conf` | 必须在 Nginx `http` 级别加载的 upstream 和限流 zone。 |
 | `systemd/quizpane-release-proxy.service` | 将代理作为非 root 的 `quizpane` 系统服务运行。 |
 | `env/release-proxy.env.example` | 服务运行环境变量样例；部署后的真实文件仅保存在服务器。 |
 
@@ -122,9 +122,10 @@ sudo du -sh /srv/quizpane/releases
 `/healthz` 返回 `status: "degraded"` 通常意味着服务器无法访问 GitHub，或
 GitHub API 临时限流；代理会继续用上一次成功轮询的缓存数据服务用户，不会
 下线。下载代理固定仓库为 `tianyoudoge/quizpane`，仅允许最近一次成功轮询的
-metadata 中存在的 asset，完整下载及 SHA-256 校验通过后才公开缓存文件。Nginx
-只缓存 `/api/releases/latest` 这类小 JSON，安装包的 Range 请求由服务自身
-落盘处理，详见 [`release-proxy/README.md`](../release-proxy/README.md)。
+metadata 中存在的 asset，完整下载及 SHA-256 校验通过后才公开缓存文件。
+`/api/releases/latest` 是不可缓存的可变元数据，由 release-proxy 的轮询内存
+状态直接提供；安装包的 Range 请求由服务自身落盘处理，详见
+[`release-proxy/README.md`](../release-proxy/README.md)。
 
 ## 挂载到个人域名的子路径
 
