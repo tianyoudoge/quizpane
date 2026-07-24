@@ -63,6 +63,7 @@
 #include <QTextDocument>
 #include <QTimer>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QUuid>
 #include <QVBoxLayout>
 #include <QWindow>
@@ -180,7 +181,11 @@ QString updateScriptLogPath() {
 }
 
 int scaledAlpha(int alpha, int visibility) {
-    return (alpha * qBound(0, visibility, 100) + 50) / 100;
+    const int scaled = (alpha * qBound(0, visibility, 100) + 50) / 100;
+    // Qt Widgets 在 Windows 上不能稳定地将 alpha 为 1/2 的白色子控件背景
+    // 合成到半透明顶层窗口，结果会突兀地回退成白块。低于可见阈值时明确使用
+    // 透明色；不要留下“几乎透明”的 rgba 值。
+    return scaled < 3 ? 0 : scaled;
 }
 
 QString backgroundVisibilityStyle(bool light, int visibility) {
@@ -2004,7 +2009,14 @@ void MainWindow::checkForUpdates() {
         return;
     }
 
-    QNetworkRequest request(QUrl(QString::fromLatin1(kReleaseMetadataUrl)));
+    QUrl metadataUrl(QString::fromLatin1(kReleaseMetadataUrl));
+    QUrlQuery metadataQuery;
+    metadataQuery.addQueryItem(QStringLiteral("refresh"), QStringLiteral("1"));
+    metadataUrl.setQuery(metadataQuery);
+    QNetworkRequest request(metadataUrl);
+    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+                         QNetworkRequest::AlwaysNetwork);
+    request.setRawHeader("Cache-Control", "no-cache");
     request.setHeader(QNetworkRequest::UserAgentHeader,
                       QStringLiteral("QuizPane/%1 update-check")
                           .arg(QApplication::applicationVersion()));
@@ -2173,10 +2185,13 @@ bool MainWindow::startDownloadedUpdate() {
     const QString destination = QCoreApplication::applicationDirPath();
     const QString restartPath = QCoreApplication::applicationFilePath();
     const QString script = QStringLiteral(R"PS(
-param([string]$Package, [string]$Destination, [string]$Restart, [string]$Log)
+param([string]$Package, [string]$Destination, [string]$Restart, [string]$Log, [int]$ProcessId)
 $ErrorActionPreference = 'Stop'
 try {
-  Start-Sleep -Seconds 2
+  # 等待当前进程真正退出，而非猜测 2 秒足够。否则 Windows 仍可能锁住 exe/dll，
+  # 覆盖失败后只留下一个看起来“什么也没发生”的更新。
+  $running = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  if ($null -ne $running) { $running | Wait-Process -Timeout 30 -ErrorAction Stop }
   $work = Join-Path (Split-Path -Parent $Package) 'expanded'
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
   Expand-Archive -LiteralPath $Package -DestinationPath $work -Force
@@ -2187,7 +2202,9 @@ try {
   }
   Start-Process -FilePath $Restart
 } catch {
-  $_ | Out-File -LiteralPath $Log -Append -Encoding utf8
+  "[$(Get-Date -Format o)] $_" | Out-File -LiteralPath $Log -Append -Encoding utf8
+  # 覆盖失败时恢复旧程序，避免用户更新后只看到程序消失。
+  if (Test-Path -LiteralPath $Restart) { Start-Process -FilePath $Restart }
 }
 )PS");
     QFile scriptFile(scriptPath);
@@ -2203,7 +2220,8 @@ try {
             {QStringLiteral("-NoProfile"), QStringLiteral("-WindowStyle"),
              QStringLiteral("Hidden"), QStringLiteral("-ExecutionPolicy"),
              QStringLiteral("Bypass"), QStringLiteral("-File"), scriptPath,
-             updateDownloadPath_, destination, restartPath, updateScriptLogPath()})) {
+             updateDownloadPath_, destination, restartPath, updateScriptLogPath(),
+             QString::number(QCoreApplication::applicationPid())})) {
         QMessageBox::warning(this, QStringLiteral("无法安装更新"),
             QStringLiteral("无法启动 Windows 更新程序。"));
         return false;

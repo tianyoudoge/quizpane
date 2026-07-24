@@ -38,6 +38,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache quizpane_metadata;
+        proxy_cache_bypass $arg_refresh;
+        proxy_no_cache $arg_refresh;
         proxy_cache_methods GET HEAD;
         proxy_cache_valid 200 5m;
         proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
@@ -103,6 +105,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache quizpane_metadata;
+        proxy_cache_bypass $arg_refresh;
+        proxy_no_cache $arg_refresh;
         proxy_cache_methods GET HEAD;
         proxy_cache_valid 200 5m;
         proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;

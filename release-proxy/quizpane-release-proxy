@@ -30,6 +30,7 @@ const state = {
   lastPollAt: null,
   lastPollOk: false,
   lastPollError: null,
+  lastOnDemandRefreshAt: 0,
   cachedAssets: new Map(), // "tag/asset" -> { size, sha256, cachedAt, lastAccessedAt }
   inFlightDownloads: new Map(), // "tag/asset" -> Promise<string absolute file path>
 };
@@ -54,7 +55,7 @@ function loadConfig() {
     stateDir,
     cacheMaxBytes: Number.parseInt(env.CACHE_MAX_BYTES || String(30 * 1024 * 1024 * 1024), 10),
     keepReleases: Math.max(1, Number.parseInt(env.KEEP_RELEASES || "2", 10)),
-    pollIntervalSeconds: Math.max(60, Number.parseInt(env.POLL_INTERVAL_SECONDS || "1800", 10)),
+    pollIntervalSeconds: Math.max(60, Number.parseInt(env.POLL_INTERVAL_SECONDS || "300", 10)),
     preheatAssets: (env.PREHEAT_ASSETS || "")
       .split(",")
       .map((s) => s.trim())
@@ -385,7 +386,14 @@ function handleHealthz(_req, res) {
   });
 }
 
-async function handleLatestRelease(_req, res) {
+async function handleLatestRelease(req, res) {
+  // 应用的手动“检查更新”可请求一次按需刷新。全局冷却避免把公开接口变成
+  // GitHub API 放大器；普通官网浏览仍沿用定时轮询的缓存路径。
+  const url = new URL(req.url, "http://internal");
+  if (url.searchParams.get("refresh") === "1" && Date.now() - state.lastOnDemandRefreshAt >= 60 * 1000) {
+    state.lastOnDemandRefreshAt = Date.now();
+    await pollReleases();
+  }
   if (!state.currentTag) {
     sendJson(res, 503, { error: "unavailable" });
     return;
