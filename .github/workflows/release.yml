@@ -11,6 +11,11 @@ on:
         required: false
         default: false
         type: boolean
+      test_extension_only:
+        description: "仅构建浏览器扩展测试包（不发布 Release）"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -20,7 +25,7 @@ env:
 
 jobs:
   macos:
-    if: ${{ !inputs.test_windows_only }}
+    if: ${{ !inputs.test_windows_only && !inputs.test_extension_only }}
     name: macOS ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -78,6 +83,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: ${{ !inputs.test_extension_only }}
     name: Windows 10 and 11 x64
     runs-on: windows-2022
     steps:
@@ -164,7 +170,7 @@ jobs:
           retention-days: 14
 
   linux:
-    if: ${{ !inputs.test_windows_only }}
+    if: ${{ !inputs.test_windows_only && !inputs.test_extension_only }}
     name: Linux x64 (UOS and Kylin compatible)
     runs-on: ubuntu-22.04
     steps:
@@ -227,7 +233,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v') && !inputs.test_windows_only
+    if: startsWith(github.ref, 'refs/tags/v') && !inputs.test_windows_only && !inputs.test_extension_only
     needs: [macos, windows, linux, browser-extension]
     runs-on: ubuntu-22.04
     steps:
@@ -273,6 +279,7 @@ jobs:
       - name: Upload browser extension
         uses: actions/upload-artifact@v7
         with:
-          name: release-browser-extension
+          name: ${{ inputs.test_extension_only && format('QuizPane-course-companion-test-{0}', github.sha) || 'release-browser-extension' }}
           path: release-assets/QuizPane-course-companion.zip
           if-no-files-found: error
+          retention-days: 14
