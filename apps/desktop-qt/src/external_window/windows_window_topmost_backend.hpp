@@ -16,6 +16,7 @@ public:
 
 private:
     void* window_ = nullptr;
+    bool visible_ = true;
 };
 
 }  // namespace quizpane::external_window

@@ -65,6 +65,7 @@ AttachResult WindowsWindowTopmostBackend::attach(const AttachRequest& request) {
         return makeResult(request, false, QStringLiteral("没有找到已绑定的 Chrome 或 Edge 课程小窗"));
     }
     window_ = search.result;
+    visible_ = true;
     if (!SetWindowPos(static_cast<HWND>(window_), HWND_TOPMOST, 0, 0, 0, 0,
                       SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
         const DWORD systemError = GetLastError();
@@ -82,6 +83,7 @@ void WindowsWindowTopmostBackend::detach() {
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
     window_ = nullptr;
+    visible_ = true;
 }
 
 void WindowsWindowTopmostBackend::setPinned(bool pinned) {
@@ -94,18 +96,22 @@ void WindowsWindowTopmostBackend::setPinned(bool pinned) {
 void WindowsWindowTopmostBackend::setVisible(bool visible) {
     HWND window = static_cast<HWND>(window_);
     if (window == nullptr || !IsWindow(window)) return;
-    ShowWindow(window, visible ? SW_SHOWNOACTIVATE : SW_HIDE);
-    if (visible) enforceTopmost();
+    visible_ = visible;
+    enforceTopmost();
 }
 
 bool WindowsWindowTopmostBackend::enforceTopmost() {
     HWND window = static_cast<HWND>(window_);
     if (window == nullptr || !IsWindow(window)) return false;
-    // Chromium may rewrite a popup's z-order while handling focus and display
-    // changes. Reasserting TOPMOST is intentionally non-activating and does not
-    // unhide a boss-key-hidden window.
-    return SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER) != FALSE;
+    // Chromium may rewrite a popup's z-order and visibility while handling
+    // focus/display changes. Keep the native desired state authoritative: a
+    // boss-key-hidden source remains hidden on every guard tick, while restore
+    // makes it visible without stealing keyboard focus.
+    const UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER |
+        (visible_ ? SWP_SHOWWINDOW : SWP_HIDEWINDOW);
+    const BOOL positioned = SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, flags);
+    ShowWindowAsync(window, visible_ ? SW_SHOWNOACTIVATE : SW_HIDE);
+    return positioned != FALSE;
 }
 
 }  // namespace quizpane::external_window
