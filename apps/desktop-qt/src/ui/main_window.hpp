@@ -36,6 +36,12 @@ class QuestionNavigator;
 namespace quizpane {
 
 class GlobalHotkey;
+#if defined(QUIZPANE_HAVE_WEBSOCKETS)
+namespace browser {
+class BrowserBridge;
+struct BrowserStatus;
+}
+#endif
 
 // MainWindow 负责装配页面并把题库请求交给应用服务。成员中的控件指针均为
 // Qt 父子对象树持有的非拥有引用。
@@ -44,6 +50,7 @@ class MainWindow final : public QMainWindow {
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+    ~MainWindow() override;
     bool loadProvider(const QString& path);
     void installProviderPackage(const QString& path);
     bool loadLastProvider();
@@ -117,6 +124,12 @@ private:
     void exportDeclarativeProvider(const InstalledProviderInfo& provider);
     void showProviderOnboarding();
     void processPendingProviderDeletions();
+#if defined(QUIZPANE_HAVE_WEBSOCKETS)
+    void updateCourseCompanion(const browser::BrowserStatus& status);
+    void showCourseCompanion();
+    void continueFromCourseCompanion();
+    void fitCourseCompanionWindow();
+#endif
 
     // ---- 应用服务：值成员由 MainWindow 直接拥有，析构顺序与声明顺序相反 ----
     AppServices services_;
@@ -126,6 +139,9 @@ private:
 
     // ---- 桌面外壳：全局热键、托盘和菜单 ----
     GlobalHotkey* globalHotkey_ = nullptr;
+#if defined(QUIZPANE_HAVE_WEBSOCKETS)
+    browser::BrowserBridge* browserBridge_ = nullptr;
+#endif
     QSystemTrayIcon* trayIcon_ = nullptr;
     QMenu* trayMenu_ = nullptr;
     QAction* showHideAction_ = nullptr;
@@ -155,6 +171,22 @@ private:
     QWidget* catalogPage_ = nullptr;
     QWidget* practicePage_ = nullptr;
     QWidget* solutionPage_ = nullptr;
+#if defined(QUIZPANE_HAVE_WEBSOCKETS)
+    QWidget* courseCompanionPage_ = nullptr;
+    QLabel* courseCompanionTitleLabel_ = nullptr;
+    QLabel* courseCompanionStatusLabel_ = nullptr;
+    QLabel* courseCompanionProgressLabel_ = nullptr;
+    QLabel* courseCompanionNoticeLabel_ = nullptr;
+    QPushButton* courseTogglePlaybackButton_ = nullptr;
+    QPushButton* courseWindowButton_ = nullptr;
+    QPushButton* courseReturnTabButton_ = nullptr;
+    QPushButton* coursePermissionButton_ = nullptr;
+    QFrame* practiceVideoStatusBar_ = nullptr;
+    QLabel* practiceVideoStatusLabel_ = nullptr;
+    QPushButton* practiceVideoDetailsButton_ = nullptr;
+    QWidget* pageBeforeCourseCompanion_ = nullptr;
+    bool browserCourseWasBound_ = false;
+#endif
     QLabel* titleLabel_ = nullptr;
     QLabel* detailLabel_ = nullptr;
     QLabel* qrLabel_ = nullptr;
@@ -220,7 +252,7 @@ private:
     QElapsedTimer visibilityToggleDebounce_;
     QSize standardWindowSize_{380, 560};
     QString qrContent_;
-    QKeySequence bossKey_{QStringLiteral("Ctrl+Shift+H")};
+    QKeySequence bossKey_{QStringLiteral("Ctrl+H")};
     QString currentProviderPath_;
 };
 

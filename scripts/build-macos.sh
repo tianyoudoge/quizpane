@@ -6,6 +6,7 @@ BUILD_DIR="${BUILD_DIR:-$ROOT/build/release-macos}"
 DIST_DIR="${DIST_DIR:-$ROOT/dist/macos}"
 QT_PREFIX="${QT_PREFIX:-$(brew --prefix qt)}"
 QT5COMPAT_PREFIX="${QT5COMPAT_PREFIX:-}"
+QTWEBSOCKETS_PREFIX="${QTWEBSOCKETS_PREFIX:-}"
 TESSDATA_DIR="${TESSDATA_DIR:-$(brew --prefix tesseract)/share/tessdata}"
 TESSDATA_LANG_DIR="${TESSDATA_LANG_DIR:-$(brew --prefix tesseract-lang)/share/tessdata}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
@@ -23,9 +24,19 @@ if [[ -z "$QT5COMPAT_PREFIX" ]]; then
     QT5COMPAT_PREFIX="$(brew --prefix qt5compat)"
   fi
 fi
+if [[ -z "$QTWEBSOCKETS_PREFIX" ]]; then
+  if [[ -d "$QT_PREFIX/lib/cmake/Qt6WebSockets" ]]; then
+    QTWEBSOCKETS_PREFIX="$QT_PREFIX"
+  elif command -v brew >/dev/null 2>&1 && brew list --versions qtwebsockets >/dev/null 2>&1; then
+    QTWEBSOCKETS_PREFIX="$(brew --prefix qtwebsockets)"
+  fi
+fi
 CMAKE_PREFIX_PATH="$QT_PREFIX"
 if [[ -n "$QT5COMPAT_PREFIX" ]]; then
   CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH;$QT5COMPAT_PREFIX"
+fi
+if [[ -n "$QTWEBSOCKETS_PREFIX" ]]; then
+  CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH;$QTWEBSOCKETS_PREFIX"
 fi
 
 # Homebrew 的聚合 qt formula 可能不再直接提供 macdeployqt，而是由 qtbase
@@ -48,7 +59,7 @@ QT_DEPLOY_LIB_PATHS=()
 if [[ -d "$QT_PREFIX/lib" ]]; then
   QT_DEPLOY_LIB_PATHS+=("$QT_PREFIX/lib")
 fi
-for qt_module in qtbase qtsvg qtwebengine; do
+for qt_module in qtbase qtsvg qtwebengine qtwebsockets; do
   if brew list --versions "$qt_module" >/dev/null 2>&1; then
     qt_module_lib="$(brew --prefix "$qt_module")/lib"
     if [[ -d "$qt_module_lib" ]]; then
@@ -83,6 +94,7 @@ resolve_qt_framework() {
 }
 QT_SVG_FRAMEWORK="$(resolve_qt_framework QtSvg qtsvg)"
 QT_PDF_FRAMEWORK="$(resolve_qt_framework QtPdf qtwebengine)"
+QT_WEBSOCKETS_FRAMEWORK="$(resolve_qt_framework QtWebSockets qtwebsockets)"
 
 BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
@@ -165,8 +177,8 @@ deploy_app() {
   rm -f "$deploy_log"
 }
 
-# Homebrew 的 macdeployqt 在 Qt 模块拆分安装时不会始终解析 QtSvg/QtPdf 的
-# rpath；这两个 Framework 是当前 UI 和 PDF 提取的直接依赖，因此明确复制，
+# Homebrew 的 macdeployqt 在 Qt 模块拆分安装时不会始终解析 QtSvg、QtPdf 和
+# QtWebSockets 的 rpath；它们是当前程序的直接依赖，因此明确暴露给部署工具，
 # 后续仍由外层 codesign 统一签名。
 copy_qt_framework() {
   local app_path="$1"
@@ -185,6 +197,7 @@ copy_qt_framework() {
 mkdir -p "$STAGE_ROOT/lib"
 ln -s "$QT_SVG_FRAMEWORK" "$STAGE_ROOT/lib/QtSvg.framework"
 ln -s "$QT_PDF_FRAMEWORK" "$STAGE_ROOT/lib/QtPdf.framework"
+ln -s "$QT_WEBSOCKETS_FRAMEWORK" "$STAGE_ROOT/lib/QtWebSockets.framework"
 deploy_app "$STAGED_APP"
 STAGED_STUDIO="$STAGE_ROOT/QuizPaneQuestionMaker.app"
 ditto "$SOURCE_STUDIO" "$STAGED_STUDIO"
@@ -274,7 +287,19 @@ rm -rf "$STAGE_ROOT/lib"
 # 制作器是主程序的一部分：先签 Helper，再签外层 App，确保 macOS 校验嵌套
 # Bundle 时能够追溯到同一份发行包。
 codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$STUDIO"
-codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
+# ad-hoc 签名默认会把 designated requirement 写成当前二进制的 CDHash。这样每次
+# 更新都会被 macOS 当成一个新应用，屏幕录制 TCC 授权就会失效。没有开发者证书
+# 的本地/CI 构建改为使用稳定的 Bundle ID requirement；一旦用户完成首次授权，
+# 后续更新仍能匹配。存在正式签名身份时保留系统生成的、更严格的 requirement。
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  # 先递归签完 Framework/Helper；稳定 requirement 只能写在外层 App，不能用
+  # --deep 传给嵌套组件（它们各自有不同 Bundle ID）。
+  codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
+  codesign --force --options runtime --sign "$SIGN_IDENTITY" \
+    --requirements '=designated => identifier "org.quizpane.app"' "$APP"
+else
+  codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
+fi
 codesign --verify --deep --strict "$APP"
 
 DMG_STAGE="$BUILD_DIR/dmg-stage"

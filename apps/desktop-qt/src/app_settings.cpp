@@ -24,7 +24,7 @@ void AppSettings::setColorTheme(const QString& value) {
     QSettings().setValue(keys::kColorTheme,
                          value == QStringLiteral("light") ? value : QStringLiteral("dark"));
 }
-QString AppSettings::bossKey() { return QSettings().value(keys::kBossKey, QStringLiteral("Ctrl+Shift+H")).toString(); }
+QString AppSettings::bossKey() { return QSettings().value(keys::kBossKey, QStringLiteral("Ctrl+H")).toString(); }
 void AppSettings::setBossKey(const QString& value) { QSettings().setValue(keys::kBossKey, value); }
 int AppSettings::autoAdvanceMs() { return qBound(0, QSettings().value(keys::kAutoAdvance, 700).toInt(), 10000); }
 QString AppSettings::lastProviderPath() { return QSettings().value(keys::kLastProvider).toString(); }

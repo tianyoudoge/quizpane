@@ -97,6 +97,29 @@ sudo ./deploy/scripts/install-artifacts.sh --version site-20260716 --site-dist /
 两种方式都会先跑 `node website/scripts/build-site.mjs` 重新构建 `website/dist`，
 版本号默认是 `site-<UTC 时间戳>`，可用 `--version` 覆盖。
 
+### GitHub Actions 自动发布官网
+
+仓库的 [`.github/workflows/deploy-website.yml`](../.github/workflows/deploy-website.yml)
+已经把这一步接到 GitHub Actions：**合并到 `master` 后，只要改动了 `website/`、
+`deploy/` 或该工作流，就会构建并原子发布官网。** 当前功能分支不会自动碰线上环境。
+
+在 GitHub 仓库的 `Settings → Environments → production` 中配置以下 secrets 后才会实际
+部署：
+
+| Secret | 内容 |
+| --- | --- |
+| `QUIZPANE_DEPLOY_HOST` | 服务器域名或 IP（不含 `user@`） |
+| `QUIZPANE_DEPLOY_USER` | 专用部署账户，例如 `deploy` |
+| `QUIZPANE_DEPLOY_REMOTE_REPO` | 服务器上仓库检出目录，例如 `/srv/quizpane-src` |
+| `QUIZPANE_DEPLOY_SSH_KEY` | 该部署账户的私钥全文 |
+| `QUIZPANE_DEPLOY_KNOWN_HOSTS` | `ssh-keyscan -H 服务器域名` 的输出，用于固定服务器主机指纹 |
+
+部署账户只应拥有写入静态制品目录及执行
+`sudo deploy/scripts/install-artifacts.sh` 的最小权限；不要把 root 私钥放进
+GitHub Secrets。服务器上的 `QUIZPANE_DEPLOY_REMOTE_REPO` 需要保留本仓库的
+`deploy/scripts/install-artifacts.sh`，并在更新部署脚本后同步更新该检出目录。
+配置完成前，工作流会因缺少 secret 明确失败，不会半途发布。
+
 ### 只发布 Release 代理
 
 ```bash

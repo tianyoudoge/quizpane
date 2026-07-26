@@ -84,20 +84,24 @@
     "title": "下载",
     "note": "通过本站下载代理下载，文件来自 GitHub Release，可核对 SHA-256。",
     "platforms": [
-      {
-        "id": "macos-arm64",
-        "label": "macOS · Apple Silicon",
-        "sublabel": "M1 / M2 / M3 / M4",
-        "asset": "QuizPane-macos-arm64.dmg",
-        "icon": "apple"
-      },
-      {
-        "id": "macos-x86_64",
-        "label": "macOS · Intel",
-        "sublabel": "Intel Mac",
-        "asset": "QuizPane-macos-x86_64.dmg",
-        "icon": "apple"
-      },
+    {
+      "id": "macos",
+      "label": "macOS",
+      "sublabel": "Apple Silicon / Intel",
+      "icon": "apple",
+      "choices": [
+        {
+          "label": "Apple Silicon",
+          "detail": "M1 / M2 / M3 / M4 / M5 芯片 Mac",
+          "asset": "QuizPane-macos-arm64.dmg"
+        },
+        {
+          "label": "Intel Mac",
+          "detail": "搭载 Intel 处理器的 Mac",
+          "asset": "QuizPane-macos-x86_64.dmg"
+        }
+      ]
+    },
       {
         "id": "windows-x64",
         "label": "Windows 10 / 11",
@@ -118,6 +122,33 @@
       "publishedAt": "",
       "size": "",
       "sha256": ""
+    },
+    "browserExtension": {
+      "title": "小窗刷题网课伴侣",
+      "detail": "小窗看视频，一键隐藏。",
+      "asset": "QuizPane-course-companion.zip",
+      "purposeTitle": "它能帮你做什么？",
+      "purpose": "安装后，在课程播放页点一下插件图标，就能把当前页面收进独立的视频小窗。使用小窗刷题的隐藏/显示功能时，它会同步暂停、收起或恢复课程视频；不会下载视频、读取 Cookie 或帮你自动刷课。",
+      "installTitle": "安装方式",
+      "installHint": "先下载并解压扩展 ZIP，再按图片中的 1–4 操作：",
+      "steps": [
+        "在地址栏输入 Chrome 的 chrome://extensions 或 Edge 的 edge://extensions 并打开。",
+        "打开页面左下角的“开发人员模式 / 开发者模式”。",
+        "点击“加载解压缩的扩展 / 加载已解压的扩展程序”，选择刚才解压出来的文件夹。",
+        "看到“小窗刷题网课伴侣”卡片后，确认右侧开关已打开。"
+      ],
+      "useTitle": "安装后怎么用？",
+      "useSteps": [
+        "打开要学习的课程播放页，点击浏览器右上角的小窗刷题网课伴侣图标。",
+        "点击“绑定并进入视频聚焦小窗”，课程视频就会单独显示。",
+        "之后使用小窗刷题的隐藏/显示快捷键，课程小窗也会一起收起或恢复。"
+      ],
+      "updateTitle": "更新已有扩展",
+      "updateSteps": [
+        "下载并解压新版 ZIP，再将文件覆盖到此前已加载的扩展目录。",
+        "回到 chrome://extensions 或 edge://extensions，点击小窗刷题网课伴侣卡片上的“重新加载 / 刷新”。",
+        "重新打开课程页面；如浏览器仍显示旧状态，重启浏览器后即可。"
+      ]
     }
   },
   "privacy": {

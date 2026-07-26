@@ -1,0 +1,52 @@
+name: Deploy QuizPane website
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "website/**"
+      - "deploy/**"
+      - ".github/workflows/deploy-website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quizpane-website-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and atomically deploy website
+    runs-on: ubuntu-22.04
+    environment: production
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Configure deployment SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.QUIZPANE_DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.QUIZPANE_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          test -n "$DEPLOY_SSH_KEY" || { echo "QUIZPANE_DEPLOY_SSH_KEY is not configured" >&2; exit 1; }
+          test -n "$DEPLOY_KNOWN_HOSTS" || { echo "QUIZPANE_DEPLOY_KNOWN_HOSTS is not configured" >&2; exit 1; }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Build and deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.QUIZPANE_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.QUIZPANE_DEPLOY_USER }}
+          DEPLOY_REMOTE_REPO: ${{ secrets.QUIZPANE_DEPLOY_REMOTE_REPO }}
+        run: |
+          test -n "$DEPLOY_HOST" || { echo "QUIZPANE_DEPLOY_HOST is not configured" >&2; exit 1; }
+          test -n "$DEPLOY_USER" || { echo "QUIZPANE_DEPLOY_USER is not configured" >&2; exit 1; }
+          test -n "$DEPLOY_REMOTE_REPO" || { echo "QUIZPANE_DEPLOY_REMOTE_REPO is not configured" >&2; exit 1; }
+          ./deploy/scripts/build-and-deploy-site.sh \
+            --remote-host "$DEPLOY_USER@$DEPLOY_HOST" \
+            --remote-repo "$DEPLOY_REMOTE_REPO" \
+            --version "site-${GITHUB_SHA::12}"

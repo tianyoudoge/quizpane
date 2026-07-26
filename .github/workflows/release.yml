@@ -43,8 +43,11 @@ jobs:
           arch: clang_64
           # Qt5Compat provides QTextCodec/GB18030 fallback; QtPdf is used by
           # the document extractor; QtWebEngine renders supported web content.
-          modules: qt5compat qtpdf qtwebengine
+          modules: qt5compat qtpdf qtwebengine qtwebsockets
           cache: true
+
+      - name: Verify Qt WebSockets
+        run: test -f "$QT_ROOT_DIR/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake"
 
       - name: Build, test and package QuizPane
         env:
@@ -117,8 +120,15 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: win64_msvc2019_64
-          modules: qt5compat qtpdf qtwebengine
+          modules: qt5compat qtpdf qtwebengine qtwebsockets
           cache: true
+
+      - name: Verify Qt WebSockets
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:QT_ROOT_DIR/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake")) {
+            throw "Qt WebSockets module was not installed"
+          }
 
       - name: Build, test and package QuizPane
         shell: pwsh
@@ -164,8 +174,11 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: gcc_64
-          modules: qt5compat qtpdf qtwebengine
+          modules: qt5compat qtpdf qtwebengine qtwebsockets
           cache: true
+
+      - name: Verify Qt WebSockets
+        run: test -f "$QT_ROOT_DIR/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake"
 
       - name: Install Linux deployment tool
         run: |
@@ -205,7 +218,7 @@ jobs:
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos, windows, linux]
+    needs: [macos, windows, linux, browser-extension]
     runs-on: ubuntu-22.04
     steps:
       - name: Download all platform packages
@@ -223,3 +236,32 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "QuizPane ${GITHUB_REF_NAME}" \
             --generate-notes
+
+  browser-extension:
+    name: Browser course companion
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Validate and package extension
+        run: |
+          jq empty integrations/browser-extension/manifest.json
+          node --check integrations/browser-extension/src/service-worker.js
+          node --check integrations/browser-extension/src/content-script.js
+          node --check integrations/browser-extension/src/popup.js
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            bash scripts/package-extension.sh "${GITHUB_REF_NAME#v}"
+          else
+            bash scripts/package-extension.sh
+          fi
+          mkdir -p release-assets
+          cp dist/quizpane-course-companion.zip \
+            release-assets/QuizPane-course-companion.zip
+
+      - name: Upload browser extension
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-browser-extension
+          path: release-assets/QuizPane-course-companion.zip
+          if-no-files-found: error

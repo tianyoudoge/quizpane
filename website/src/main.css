@@ -620,6 +620,11 @@ h3 {
   margin-top: auto;
 }
 
+.extension-download-card { background: linear-gradient(135deg, var(--bg-card), rgba(111, 155, 216, 0.14)); }
+.extension-title-row { display: flex; align-items: center; gap: 0.55rem; }
+.extension-guide-button { display: inline-grid; place-items: center; width: 1.35rem; height: 1.35rem; padding: 0; border: 1px solid var(--accent); border-radius: 50%; background: transparent; color: var(--accent); font-weight: 800; cursor: pointer; }
+.extension-guide-button:hover { background: rgba(111, 155, 216, 0.16); }
+
 @media (max-width: 860px) {
   .download-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -835,6 +840,31 @@ h3 {
 .payment-logo-alipay { background: #1677ff; }
 .payment-arrow { width: 2rem; height: 2rem; border: 1px solid var(--border); border-radius: 50%; background: transparent; color: var(--text); font-size: 1.2rem; cursor: pointer; }
 .payment-arrow:hover, .payment-tab:hover { border-color: var(--accent); }
+
+.extension-install-dialog,
+.macos-download-dialog {
+  width: min(660px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+  overflow: auto;
+  padding: 28px;
+  border: 1px solid rgba(111, 155, 216, 0.45);
+  border-radius: 18px;
+  background: #1b1e24;
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.56);
+}
+.extension-install-dialog::backdrop,
+.macos-download-dialog::backdrop { background: rgba(4, 6, 10, 0.7); }
+.extension-install-dialog h2,
+.macos-download-dialog h2 { margin: 0.1rem 0 1rem; }
+.extension-purpose { margin: 0 0 1rem; padding: 0.9rem 1rem; border: 1px solid rgba(111, 155, 216, 0.35); border-radius: 10px; background: rgba(111, 155, 216, 0.1); }.extension-purpose h3 { margin: 0 0 0.35rem; font-size: 0.95rem; }.extension-purpose p { margin: 0; color: var(--text-muted); font-size: 0.9rem; line-height: 1.65; }
+.extension-install-shot-wrap { position: relative; margin: 1rem 0 1.2rem; }
+.extension-install-shot-link { display: block; border-radius: 8px; cursor: zoom-in; }.extension-install-shot-link:hover .extension-install-shot { border-color: var(--accent); }
+.extension-install-shot { display: block; width: 100%; height: auto; border: 1px solid #485469; border-radius: 8px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28); }
+.extension-step-marker { position: absolute; display: grid; place-items: center; width: 1.7rem; height: 1.7rem; border: 2px solid #fff; border-radius: 50%; background: #e84d4d; color: #fff; font-size: 0.86rem; font-weight: 800; pointer-events: none; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); }
+.marker-one { top: 1.5%; left: 8%; }.marker-two { bottom: 3.5%; left: 16%; }.marker-three { top: 21%; left: 36.5%; }.marker-four { top: 56%; left: 23.5%; }
+.extension-guide-copy { color: var(--text-muted); }.extension-guide-copy h3 { margin: 1.15rem 0 0.45rem; color: var(--text); font-size: 0.96rem; }.extension-guide-copy ol { margin: 0; padding-left: 1.25rem; }.extension-guide-copy li + li { margin-top: 0.4rem; }.extension-guide-hint { margin: 0 0 0.45rem; }
+.macos-download-dialog { width: min(460px, calc(100vw - 32px)); }.macos-download-dialog > p { margin: 0 0 1rem; color: var(--text-muted); }.macos-choice-list { display: grid; gap: 0.65rem; }.macos-choice { display: grid; gap: 0.2rem; padding: 1rem; border: 1px solid var(--border); border-radius: 10px; color: var(--text); text-decoration: none; }.macos-choice:hover { border-color: var(--accent); background: rgba(111, 155, 216, 0.1); }.macos-choice span { color: var(--text-muted); font-size: 0.86rem; }
 
 .footer-links {
   display: flex;

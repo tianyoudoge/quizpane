@@ -14,6 +14,8 @@
   <key>CFBundleVersion</key><string>${PROJECT_VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>小窗刷题需要屏幕录制权限，才能将已打开的课程视频显示为置顶小窗。</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>CFBundleDocumentTypes</key>
   <array><dict>

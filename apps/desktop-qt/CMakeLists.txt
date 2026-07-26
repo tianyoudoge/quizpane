@@ -3,6 +3,11 @@ qt_add_executable(quizpane
     src/app_settings.cpp
     src/app_settings.hpp
     src/app_services.hpp
+    src/browser/browser_protocol.cpp
+    src/browser/browser_protocol.hpp
+    src/external_window/external_window_manager.cpp
+    src/external_window/external_window_manager.hpp
+    src/external_window/external_window_types.hpp
     src/platform/file_association.cpp
     src/platform/file_association.hpp
     src/platform/global_hotkey.cpp
@@ -20,18 +25,27 @@ qt_add_executable(quizpane
     src/ui/app_dialogs.hpp
     resources/resources.qrc
 )
+if(QUIZPANE_HAVE_WEBSOCKETS)
+    target_sources(quizpane PRIVATE
+        src/browser/browser_bridge.cpp
+        src/browser/browser_bridge.hpp
+    )
+endif()
 # Windows SDK 和 Xlib 会定义 max、small、Unsorted 等通用宏。Unity 构建
 # 会把它们泄漏到后续 Qt 源文件，因此平台实现必须保持独立编译。
 set_source_files_properties(
     src/platform/file_association.cpp
     src/platform/global_hotkey.cpp
     src/platform/window_pinning.cpp
+    src/external_window/windows_window_topmost_backend.cpp
     PROPERTIES
     SKIP_UNITY_BUILD_INCLUSION ON)
 if(APPLE)
     enable_language(OBJCXX)
     target_sources(quizpane PRIVATE
         src/platform/window_pinning.mm
+        src/external_window/mac_window_replica_backend.hpp
+        src/external_window/mac_window_replica_backend.mm
         resources/app-icon.icns
         "${PROJECT_SOURCE_DIR}/LICENSE"
     )
@@ -41,10 +55,24 @@ if(APPLE)
         PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources"
     )
-    target_link_libraries(quizpane PRIVATE "-framework Carbon" "-framework AppKit")
+    set_source_files_properties(src/external_window/mac_window_replica_backend.mm PROPERTIES
+        SKIP_UNITY_BUILD_INCLUSION ON
+        COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(quizpane PRIVATE
+        "-framework Carbon"
+        "-framework AppKit"
+        "-framework CoreGraphics"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework QuartzCore"
+        "-framework ScreenCaptureKit")
 elseif(WIN32)
     target_sources(quizpane PRIVATE
         src/platform/window_pinning.cpp
+        src/external_window/windows_window_topmost_backend.hpp
+        src/external_window/windows_window_topmost_backend.cpp
         resources/windows.rc
     )
     target_include_directories(quizpane PRIVATE
@@ -67,6 +95,10 @@ target_link_libraries(quizpane PRIVATE
     Qt6::Network
     Qt6::Widgets
 )
+if(QUIZPANE_HAVE_WEBSOCKETS)
+    target_link_libraries(quizpane PRIVATE Qt6::WebSockets)
+    target_compile_definitions(quizpane PRIVATE QUIZPANE_HAVE_WEBSOCKETS=1)
+endif()
 quizpane_optimize_target(quizpane)
 target_compile_definitions(quizpane PRIVATE
     QUIZPANE_VERSION="${PROJECT_VERSION}"

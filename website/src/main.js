@@ -199,10 +199,13 @@
         meta.textContent = parts.join(" · ");
       }
 
-      const link = document.createElement("a");
+      const link = document.createElement(platform.choices ? "button" : "a");
       link.className = "btn btn-primary";
-      link.textContent = "下载";
-      if (tag) {
+      link.textContent = platform.choices ? "选择机型" : "下载";
+      if (platform.choices) {
+        link.type = "button";
+        link.addEventListener("click", () => openMacosDownloadDialog(platform, release, downloads.releaseUrlFallback));
+      } else if (tag) {
         link.href = siteUrl(`download/${encodeURIComponent(tag)}/${encodeURIComponent(platform.asset)}`);
       } else {
         link.href = downloads.releaseUrlFallback || "#";
@@ -212,6 +215,120 @@
 
       card.append(icon, h3, sub, meta, link);
       grid.append(card);
+    });
+    const extensionCard = createBrowserExtensionCard(downloads.browserExtension, release);
+    if (extensionCard) grid.append(extensionCard);
+  }
+
+  function createBrowserExtensionCard(extension, release) {
+    if (!extension) return null;
+    const card = document.createElement("div");
+    card.className = "download-card extension-download-card";
+    const icon = document.createElement("img");
+    icon.className = "icon";
+    icon.src = "assets/icons/quizpane-app-icon.png";
+    icon.alt = "";
+    icon.width = 28;
+    icon.height = 28;
+    const title = document.createElement("h3");
+    title.textContent = extension.title;
+    const guide = document.createElement("button");
+    guide.type = "button";
+    guide.className = "extension-guide-button";
+    guide.setAttribute("aria-label", "查看安装与更新说明");
+    guide.textContent = "!";
+    guide.addEventListener("click", () => openExtensionInstallDialog());
+    const titleRow = document.createElement("div");
+    titleRow.className = "extension-title-row";
+    titleRow.append(title, guide);
+    const detail = document.createElement("p");
+    detail.className = "sublabel";
+    detail.textContent = extension.detail;
+    const link = document.createElement("a");
+    link.className = "btn btn-primary";
+    link.textContent = "下载";
+    const assetInfo = release?.assets?.[extension.asset];
+    if (release?.tag && assetInfo) {
+      link.href = siteUrl(`download/${encodeURIComponent(release.tag)}/${encodeURIComponent(extension.asset)}`);
+    } else {
+      link.href = `${state.content.site.latestReleaseUrl}/download/${encodeURIComponent(extension.asset)}`;
+      link.target = "_blank";
+      link.rel = "noopener";
+    }
+    link.addEventListener("click", () => window.setTimeout(openExtensionInstallDialog, 0));
+    const meta = document.createElement("p");
+    meta.className = "platform-meta";
+    meta.textContent = assetInfo ? formatBytes(assetInfo.size) : "";
+    card.append(icon, titleRow, detail, meta, link);
+    renderExtensionInstallGuide(extension);
+    return card;
+  }
+
+  function renderGuideSteps(selector, steps) {
+    const list = $(selector);
+    list.innerHTML = "";
+    (steps || []).forEach((step) => {
+      const item = document.createElement("li");
+      item.textContent = step;
+      list.append(item);
+    });
+  }
+
+  function renderExtensionInstallGuide(extension) {
+    $("#extension-purpose-title").textContent = extension.purposeTitle || "它能帮你做什么？";
+    $("#extension-purpose-copy").textContent = extension.purpose || "";
+    $("#extension-guide-install-title").textContent = extension.installTitle || "首次安装";
+    $("#extension-guide-install-hint").textContent = extension.installHint || "";
+    $("#extension-guide-use-title").textContent = extension.useTitle || "安装后怎么用？";
+    $("#extension-guide-update-title").textContent = extension.updateTitle || "更新已有扩展";
+    renderGuideSteps("#extension-guide-install-steps", extension.steps);
+    renderGuideSteps("#extension-guide-use-steps", extension.useSteps);
+    renderGuideSteps("#extension-guide-update-steps", extension.updateSteps);
+  }
+
+  function openExtensionInstallDialog() {
+    const dialog = $("#extension-install-dialog");
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function setupExtensionInstallDialog() {
+    const dialog = $("#extension-install-dialog");
+    $("#extension-install-close").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+  }
+
+  function openMacosDownloadDialog(platform, release, fallbackUrl) {
+    const dialog = $("#macos-download-dialog");
+    const list = $("#macos-choice-list");
+    const tag = release?.tag;
+    list.innerHTML = "";
+    platform.choices.forEach((choice) => {
+      const link = document.createElement("a");
+      link.className = "macos-choice";
+      link.href = tag
+        ? siteUrl(`download/${encodeURIComponent(tag)}/${encodeURIComponent(choice.asset)}`)
+        : fallbackUrl;
+      if (!tag) {
+        link.target = "_blank";
+        link.rel = "noopener";
+      }
+      const title = document.createElement("strong");
+      title.textContent = choice.label;
+      const detail = document.createElement("span");
+      detail.textContent = choice.detail;
+      link.append(title, detail);
+      list.append(link);
+    });
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function setupMacosDownloadDialog() {
+    const dialog = $("#macos-download-dialog");
+    $("#macos-download-close").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
     });
   }
 
@@ -364,6 +481,8 @@
     renderFooter(content.footer);
     setupMobileNav();
     setupSupportDialog();
+    setupExtensionInstallDialog();
+    setupMacosDownloadDialog();
     setupCarousel();
 
     content.downloads.releaseUrlFallback = content.site.latestReleaseUrl;

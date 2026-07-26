@@ -91,7 +91,7 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 - 做完一道单选题会自动进入下一题；要改答案时，手动回到上一题即可。
 - 题目和解析用不同的颜色显示，交卷后更容易扫到重点。
 - 点标题栏的图钉，可以让题目一直留在最上面；不需要时再点一下关闭。
-- 老板键可以在“三横线 → 老板键设置…”里改掉。默认是 `Ctrl + Shift + H`。
+- 老板键可以在“三横线 → 老板键设置…”里改掉。默认是 `Ctrl + H`。
 - 关闭软件不等于丢进度；草稿会保留。需要登录的题库也会分别保留自己的登录状态。
 
 ## 已实现与正在完善
@@ -159,7 +159,7 @@ quizpane/
 └── docs/                  # 架构与构建文档
 ```
 
-需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets、Network、Core5Compat 与 Pdf。
+需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets、Network、WebSockets、Core5Compat 与 Pdf。
 二维码和 ZIP 依赖由 CMake FetchContent 自动拉取，不需要手工复制第三方源码。
 依赖已锁定到不可变 commit。离线构建时可提前准备两份源码，并在配置时传入
 `-DFETCHCONTENT_SOURCE_DIR_QRCODEGEN_SOURCE=/path/to/QR-Code-generator`
@@ -172,10 +172,10 @@ Pull Request CI 使用 `ci` preset（Release + Unity + 全量测试）；正式�
 ## macOS 开发构建
 
 ```bash
-brew install cmake ninja qt qt5compat tesseract tesseract-lang
+brew install cmake ninja qt qt5compat qtwebsockets tesseract tesseract-lang
 git clone git@github.com:tianyoudoge/quizpane.git
 cd quizpane
-export CMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix qt5compat)"
+export CMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix qt5compat);$(brew --prefix qtwebsockets)"
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
@@ -342,7 +342,7 @@ The current build is an unnotarized technical preview. Verify the SHA-256 publis
 3. answer questions in the floating window;
 4. submit the attempt;
 5. review the correct answer and explanation;
-6. press `Ctrl+Shift+H` to hide or restore the window globally.
+6. press `Ctrl+H` to hide or restore the window globally.
 
 ### Build
 
