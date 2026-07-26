@@ -7,6 +7,7 @@
 #endif
 
 #include <memory>
+#include <QTimer>
 
 namespace quizpane::external_window {
 
@@ -28,6 +29,7 @@ public:
     std::unique_ptr<MacWindowReplicaBackend> macBackend;
 #elif defined(Q_OS_WIN)
     std::unique_ptr<WindowsWindowTopmostBackend> windowsBackend;
+    QTimer windowsTopmostGuard;
 #endif
 };
 
@@ -48,6 +50,12 @@ ExternalWindowManager::ExternalWindowManager(QObject* parent)
             &ExternalWindowManager::restoreFrameReady);
 #elif defined(Q_OS_WIN)
     d_->windowsBackend = std::make_unique<WindowsWindowTopmostBackend>();
+    d_->windowsTopmostGuard.setInterval(700);
+    d_->windowsTopmostGuard.setTimerType(Qt::CoarseTimer);
+    connect(&d_->windowsTopmostGuard, &QTimer::timeout, this, [this] {
+        if (d_->state == State::Active && d_->windowsBackend)
+            d_->windowsBackend->enforceTopmost();
+    });
 #endif
 }
 
@@ -65,6 +73,8 @@ void ExternalWindowManager::attach(const AttachRequest& request) {
 #elif defined(Q_OS_WIN)
     const AttachResult result = d_->windowsBackend->attach(request);
     d_->state = result.success ? State::Active : State::Failed;
+    if (result.success) d_->windowsTopmostGuard.start();
+    else d_->windowsTopmostGuard.stop();
     emit stateChanged(d_->state, result.success
         ? QStringLiteral("网页小窗已置顶显示") : result.error);
     emit attachFinished(result);
@@ -82,6 +92,7 @@ void ExternalWindowManager::detach() {
 #if defined(Q_OS_MACOS)
     if (d_->macBackend) d_->macBackend->detach();
 #elif defined(Q_OS_WIN)
+    d_->windowsTopmostGuard.stop();
     if (d_->windowsBackend) d_->windowsBackend->detach();
 #endif
     if (d_->state != State::Idle) {
@@ -95,6 +106,8 @@ void ExternalWindowManager::setPinned(bool pinned) {
     if (d_->macBackend) d_->macBackend->setPinned(pinned);
 #elif defined(Q_OS_WIN)
     if (d_->windowsBackend) d_->windowsBackend->setPinned(pinned);
+    if (pinned && d_->state == State::Active) d_->windowsTopmostGuard.start();
+    else if (!pinned) d_->windowsTopmostGuard.stop();
 #else
     Q_UNUSED(pinned)
 #endif

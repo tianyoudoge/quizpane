@@ -95,6 +95,17 @@ void WindowsWindowTopmostBackend::setVisible(bool visible) {
     HWND window = static_cast<HWND>(window_);
     if (window == nullptr || !IsWindow(window)) return;
     ShowWindow(window, visible ? SW_SHOWNOACTIVATE : SW_HIDE);
+    if (visible) enforceTopmost();
+}
+
+bool WindowsWindowTopmostBackend::enforceTopmost() {
+    HWND window = static_cast<HWND>(window_);
+    if (window == nullptr || !IsWindow(window)) return false;
+    // Chromium may rewrite a popup's z-order while handling focus and display
+    // changes. Reasserting TOPMOST is intentionally non-activating and does not
+    // unhide a boss-key-hidden window.
+    return SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER) != FALSE;
 }
 
 }  // namespace quizpane::external_window

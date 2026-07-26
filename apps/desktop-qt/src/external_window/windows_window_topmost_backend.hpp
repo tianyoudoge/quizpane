@@ -12,6 +12,7 @@ public:
     void detach();
     void setPinned(bool pinned);
     void setVisible(bool visible);
+    [[nodiscard]] bool enforceTopmost();
 
 private:
     void* window_ = nullptr;
