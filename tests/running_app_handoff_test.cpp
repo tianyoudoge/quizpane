@@ -38,8 +38,15 @@ int main(int argc, char** argv) {
     QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
         QLocalSocket* socket = server.nextPendingConnection();
         if (!socket) return;
-        QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
-            const QJsonDocument request = QJsonDocument::fromJson(socket->readLine());
+        const auto handleRequest = [&, socket] {
+            QByteArray buffered = socket->property("handoff-test-buffer").toByteArray();
+            buffered += socket->readAll();
+            const int newline = buffered.indexOf('\n');
+            if (newline < 0) {
+                socket->setProperty("handoff-test-buffer", buffered);
+                return;
+            }
+            const QJsonDocument request = QJsonDocument::fromJson(buffered.left(newline));
             const QJsonObject object = request.object();
             received = request.isObject() &&
                 object.value(QStringLiteral("command")).toString() == QStringLiteral("load-provider") &&
@@ -49,7 +56,12 @@ int main(int argc, char** argv) {
             socket->flush();
             socket->disconnectFromServer();
             socket->deleteLater();
-        });
+        };
+        QObject::connect(socket, &QLocalSocket::readyRead, socket, handleRequest);
+        // Windows named pipes may already contain the complete request by the time
+        // QLocalServer emits newConnection. Do one immediate read so that this
+        // race cannot depend on a second readyRead notification.
+        handleRequest();
     });
 
     QProcess child;
