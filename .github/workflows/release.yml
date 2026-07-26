@@ -5,6 +5,12 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      test_windows_only:
+        description: "仅构建 Windows 测试包（不发布 Release）"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -14,6 +20,7 @@ env:
 
 jobs:
   macos:
+    if: ${{ !inputs.test_windows_only }}
     name: macOS ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -150,11 +157,14 @@ jobs:
       - name: Upload Windows packages
         uses: actions/upload-artifact@v7
         with:
-          name: release-windows-x64
+          # 手工测试构建只保留为 Artifact，不会使用正式版本号或创建 Release。
+          name: ${{ inputs.test_windows_only && format('QuizPane-windows-x64-test-{0}', github.sha) || 'release-windows-x64' }}
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 14
 
   linux:
+    if: ${{ !inputs.test_windows_only }}
     name: Linux x64 (UOS and Kylin compatible)
     runs-on: ubuntu-22.04
     steps:
@@ -217,7 +227,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !inputs.test_windows_only
     needs: [macos, windows, linux, browser-extension]
     runs-on: ubuntu-22.04
     steps:
@@ -238,6 +248,7 @@ jobs:
             --generate-notes
 
   browser-extension:
+    if: ${{ !inputs.test_windows_only }}
     name: Browser course companion
     runs-on: ubuntu-22.04
     steps:
