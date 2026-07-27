@@ -1,6 +1,11 @@
 const BRIDGE_URL = "ws://127.0.0.1:49752/quizpane-browser/v1";
-const MAC_SOURCE_PARK_LEFT = -10_000;
-const MAC_SOURCE_PARK_TOP = 96;
+// macOS 镜像保活：源窗必须保持 CGWindowIsOnscreen=true（实测：完全移出屏幕/
+// 最小化会让 ScreenCaptureKit 立刻 0 帧卡死）。把源窗摆到主屏右下角、大部分
+// 推出屏外，仅留左上角红绿灯那一小条在屏内——实测该形态 isOnScreen 仍 true、
+// 稳态 ~30fps。落点坐标用真实主屏分辨率计算，不靠猜测。
+// 留出可见的小条尺寸（左上角红绿灯区）。
+const MAC_SOURCE_PARK_EXPOSE_W = 70;
+const MAC_SOURCE_PARK_EXPOSE_H = 28;
 const HEARTBEAT_MS = 20_000;
 const RETRY_MS = 2_000;
 const RELEASE_API_URL = "https://api.github.com/repos/tianyoudoge/quizpane/releases/latest";
@@ -328,18 +333,8 @@ async function handleExternalWindowAttached(payload) {
   // Chromium 可能不会提交首帧，最终镜像也无法创建。
   if (payload.success && payload.backend === "macos-captured-replica" && courseWindowId) {
     try {
-      const parked = await chrome.windows.update(courseWindowId, {
-        state: "normal",
-        left: MAC_SOURCE_PARK_LEFT,
-        top: MAC_SOURCE_PARK_TOP,
-        focused: false
-      });
-      console.info("[QuizPane] course source parked after first frame", {
-        windowId: courseWindowId,
-        left: parked.left,
-        top: parked.top,
-        state: parked.state
-      });
+      const parked = await parkMacSourceToCorner(courseWindowId);
+      console.info("[QuizPane] course source parked after first frame", parked);
     } catch (error) {
       console.warn("[QuizPane] cannot park course source", String(error));
     }
@@ -347,6 +342,30 @@ async function handleExternalWindowAttached(payload) {
   }
   await persistState();
   await restoreBindingTitle(binding);
+}
+
+// 把 macOS 镜像的源窗摆到主屏右下角、大部分推出屏外，仅留左上角红绿灯一小条
+// 在屏内（保 CGWindowIsOnscreen=true，否则 ScreenCaptureKit 会 0 帧卡死）。
+// 落点坐标用 chrome.system.display 读真实主屏分辨率计算，不靠猜测。
+async function parkMacSourceToCorner(windowId) {
+  const displays = await chrome.system.display.getInfo();
+  const primary = displays.find(d => d.isPrimary) || displays[0];
+  if (!primary) throw new Error("no-display");
+  const b = primary.bounds;
+  // 窗口左上角放在"屏右下角向内缩 EXPOSE 位置"：窗口向右下延伸的大部分
+  // 落在屏外，只留左上角 EXPOSE_W x EXPOSE_H 在屏内（露红绿灯）。
+  const left = b.left + b.width - MAC_SOURCE_PARK_EXPOSE_W;
+  const top = b.top + b.height - MAC_SOURCE_PARK_EXPOSE_H;
+  const parked = await chrome.windows.update(windowId, {
+    state: "normal",
+    left: Math.round(left),
+    top: Math.round(top),
+    focused: false
+  });
+  return {
+    windowId, left: parked.left, top: parked.top, state: parked.state,
+    screen: { w: b.width, h: b.height }
+  };
 }
 
 function clearBinding() {

@@ -118,6 +118,16 @@ using namespace quizpane::external_window;
     NSUInteger _restoreEpoch;
     BOOL _seeking;
     NSPoint _pointerDown;
+
+    // [QPD] 诊断：源窗帧流统计。统计 SCK 是否在持续产新帧——这是判断源窗
+    // 是否被 Chromium 停止合成的最直接证据（比 occlusionState 更可靠）。
+    NSUInteger _qpdFrameCount;
+    NSUInteger _qpdLastPrintedCount;
+    CMTime _qpdLastPts;
+    dispatch_source_t _qpdStatsTimer;
+    // [QPD] 诊断：目标窗的 windowID，每秒用 CGWindowList 查它的实时 frame/
+    // isOnScreen，以区分"卡死段"与"活跃段"源窗到底在哪、是否被 park 出屏。
+    uint32_t _qpdTargetWindowId;
 }
 
 - (instancetype)initWithOwner:(quizpane::external_window::MacWindowReplicaBackend*)owner {
@@ -294,6 +304,19 @@ using namespace quizpane::external_window;
         if (target == nil && closestBrowserWindow != nil && closestSizeDelta <= 96.0) {
             target = closestBrowserWindow;
         }
+        if (target != nil) {
+            // [QPD] 诊断：源窗定位后的真实状态。isOnScreen 是窗口服务器的可见
+            // 布尔量（非 NSWindow.occlusionState，但足以区分"在屏 vs 被挪走"）。
+            strongSelf->_qpdTargetWindowId = target.windowID;
+            qInfo().noquote() << "[QPD] target resolved"
+                << "title=" << QString::fromNSString(target.title ?: @"(nil)")
+                << "frame=" << target.frame.origin.x << target.frame.origin.y
+                << target.frame.size.width << target.frame.size.height
+                << "isOnScreen=" << target.isOnScreen
+                << "windowID=" << target.windowID
+                << "owner="
+                << QString::fromNSString(target.owningApplication.bundleIdentifier ?: @"(nil)");
+        }
         if (target == nil) {
             if (strongSelf->_targetLookupAttempt < 2) {
                 const NSUInteger retry = ++strongSelf->_targetLookupAttempt;
@@ -348,6 +371,85 @@ using namespace quizpane::external_window;
             strongSelf->_awaitingInitialPresentation = YES;
             strongSelf->_presentationPending = NO;
         }
+        // [QPD] 启动每秒一次的帧流统计定时器。打印"过去 1 秒收到多少帧 +
+        // 最新帧 PTS"，用以判断 SCK 是否在持续从源窗拿到新画面。
+        {
+            __weak QPMacReplicaController* statsWeak = weakSelf;
+            dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                dispatch_get_main_queue());
+            dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC, 0);
+            dispatch_source_set_event_handler(timer, ^{
+                QPMacReplicaController* statsSelf = statsWeak;
+                if (statsSelf == nil) return;
+                NSUInteger total;
+                NSUInteger lastPrinted;
+                NSUInteger lastSerial;
+                CMTime lastPts;
+                @synchronized (statsSelf) {
+                    total = statsSelf->_qpdFrameCount;
+                    lastPrinted = statsSelf->_qpdLastPrintedCount;
+                    lastSerial = statsSelf->_frameSerial;
+                    lastPts = statsSelf->_qpdLastPts;
+                    statsSelf->_qpdLastPrintedCount = total;
+                }
+                const NSUInteger delta = total - lastPrinted;
+                const double ptsSeconds = CMTIME_IS_VALID(lastPts)
+                    ? static_cast<double>(lastPts.value) / static_cast<double>(lastPts.timescale) : -1.0;
+                // [QPD] 每秒查一次源窗实时 frame/isOnScreen。复用 quizpane 已有
+                // 的屏幕录制权限，绕开终端无 TCC 权限拿不到窗口列表的问题。
+                // 用 windowID 单查，开销极小。这能区分卡死段源窗是否被 park 出屏。
+                qint32 srcX = 0, srcY = 0, srcW = 0, srcH = 0;
+                bool srcOnScreen = false;
+                NSString* srcTitle = nil;
+                const uint32_t srcWid = statsSelf->_qpdTargetWindowId;
+                if (srcWid != 0) {
+                    CFArrayRef list = CGWindowListCopyWindowInfo(
+                        kCGWindowListOptionIncludingWindow, static_cast<CGWindowID>(srcWid));
+                    if (list != nil && CFArrayGetCount(list) > 0) {
+                        CFDictionaryRef info = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(list, 0));
+                        CFStringRef titleRef = static_cast<CFStringRef>(
+                            CFDictionaryGetValue(info, kCGWindowName));
+                        if (titleRef != nil) srcTitle = (__bridge NSString*)titleRef;
+                        CFBooleanRef onScreenRef = static_cast<CFBooleanRef>(
+                            CFDictionaryGetValue(info, kCGWindowIsOnscreen));
+                        if (onScreenRef != nil) srcOnScreen = CFBooleanGetValue(onScreenRef);
+                        CFDictionaryRef boundsRef = static_cast<CFDictionaryRef>(
+                            CFDictionaryGetValue(info, kCGWindowBounds));
+                        if (boundsRef != nil) {
+                            CGRectMakeWithDictionaryRepresentation(boundsRef, nullptr);
+                            CFNumberRef xRef = static_cast<CFNumberRef>(
+                                CFDictionaryGetValue(boundsRef, CFSTR("X")));
+                            CFNumberRef yRef = static_cast<CFNumberRef>(
+                                CFDictionaryGetValue(boundsRef, CFSTR("Y")));
+                            CFNumberRef wRef = static_cast<CFNumberRef>(
+                                CFDictionaryGetValue(boundsRef, CFSTR("Width")));
+                            CFNumberRef hRef = static_cast<CFNumberRef>(
+                                CFDictionaryGetValue(boundsRef, CFSTR("Height")));
+                            if (xRef) CFNumberGetValue(xRef, kCFNumberSInt32Type, &srcX);
+                            if (yRef) CFNumberGetValue(yRef, kCFNumberSInt32Type, &srcY);
+                            if (wRef) CFNumberGetValue(wRef, kCFNumberSInt32Type, &srcW);
+                            if (hRef) CFNumberGetValue(hRef, kCFNumberSInt32Type, &srcH);
+                        }
+                    }
+                    if (list != nil) CFRelease(list);
+                }
+                qInfo().noquote() << "[QPD] frame stream"
+                    << "received_delta_1s=" << delta
+                    << "total=" << total
+                    << "serial=" << lastSerial
+                    << "last_pts_s=" << ptsSeconds
+                    << "| src_window"
+                    << "wid=" << srcWid
+                    << "frame=" << srcX << srcY << srcW << srcH
+                    << "isOnScreen=" << srcOnScreen
+                    << "title=" << QString::fromNSString(srcTitle ?: @"(nil)");
+            });
+            strongSelf->_qpdStatsTimer = timer;
+            strongSelf->_qpdFrameCount = 0;
+            strongSelf->_qpdLastPrintedCount = 0;
+            strongSelf->_qpdLastPts = kCMTimeInvalid;
+            dispatch_resume(timer);
+        }
         NSError* streamError = nil;
         if (![strongSelf->_stream addStreamOutput:strongSelf
                                               type:SCStreamOutputTypeScreen
@@ -382,6 +484,15 @@ using namespace quizpane::external_window;
 
 - (void)detach {
     ++_generation;
+    if (_qpdStatsTimer != nil) {
+        dispatch_source_cancel(_qpdStatsTimer);
+        _qpdStatsTimer = nil;
+    }
+    @synchronized (self) {
+        _qpdFrameCount = 0;
+        _qpdLastPrintedCount = 0;
+        _qpdLastPts = kCMTimeInvalid;
+    }
     if (_stream != nil) {
         [_stream stopCaptureWithCompletionHandler:^(__unused NSError* error) {}];
         _stream = nil;
@@ -482,6 +593,12 @@ using namespace quizpane::external_window;
     if (stream != _stream || type != SCStreamOutputTypeScreen || !CMSampleBufferIsValid(sampleBuffer)) return;
     CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     if (pixelBuffer == nil || _textureCache == nil) return;
+    // [QPD] 统计 SCK 收到的帧。PTS 推进 = 源窗在产新画面；PTS 停滞 = 收到的是
+    // 同一帧重复（源窗停渲染的典型表现）。
+    @synchronized (self) {
+        ++_qpdFrameCount;
+        _qpdLastPts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+    }
     CVMetalTextureRef textureRef = nil;
     CVReturn status = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, _textureCache,
                                                                  pixelBuffer, nullptr,
