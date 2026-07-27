@@ -146,9 +146,15 @@ jobs:
       - name: Build, test and package QuizPane
         shell: pwsh
         run: |
-          ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR" `
-            -CMakeToolchainFile "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -VcpkgTargetTriplet "x64-windows-static-md"
+          $BuildArguments = @(
+            "-QtRoot", "$env:QT_ROOT_DIR",
+            "-CMakeToolchainFile", "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            "-VcpkgTargetTriplet", "x64-windows-static-md"
+          )
+          if ("${{ inputs.test_windows_only }}" -eq "true") {
+            $BuildArguments += "-EnableDiagnosticLogging"
+          }
+          & ./scripts/build-windows.ps1 @BuildArguments
 
       - name: Prepare checksums
         shell: pwsh
