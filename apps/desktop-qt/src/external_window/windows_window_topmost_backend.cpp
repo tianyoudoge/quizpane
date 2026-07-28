@@ -97,7 +97,13 @@ AttachResult makeResult(const AttachRequest& request, bool success, const QStrin
 }  // namespace
 
 AttachResult WindowsWindowTopmostBackend::attach(const AttachRequest& request) {
-    detach();
+    // ExternalWindowManager normally detaches before starting a new attach
+    // sequence. Keep this backend safe for direct reuse without adding noisy
+    // detach events to every not-found retry.
+    if (window_ != nullptr || foregroundEventHook_ != nullptr ||
+        objectEventHook_ != nullptr || !bindingToken_.isEmpty()) {
+        detach();
+    }
     diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-attach-search"),
                       {{QStringLiteral("bindingTokenLength"),
                         static_cast<qlonglong>(request.bindingToken.size())}});

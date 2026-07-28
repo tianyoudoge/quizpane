@@ -28,6 +28,8 @@ signals:
     void videoControlRequested(const QString& action, double normalizedPosition);
 
 private:
+    void tryAttachWindows();
+
     class Private;
     Private* d_ = nullptr;
 };
