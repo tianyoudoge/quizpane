@@ -455,8 +455,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 #if defined(QUIZPANE_HAVE_WEBSOCKETS)
     courseCompanionPage_ = new QWidget;
     auto* courseLayout = new QVBoxLayout(courseCompanionPage_);
-    courseLayout->setContentsMargins(0, 14, 0, 0);
-    courseLayout->setSpacing(10);
+    courseLayout->setContentsMargins(0, 8, 0, 0);
+    courseLayout->setSpacing(8);
     auto* courseHeading = new QLabel(QStringLiteral("小窗刷题网课伴侣 · 已连接"));
     courseHeading->setObjectName(QStringLiteral("pageTitle"));
     courseCompanionTitleLabel_ = new QLabel(QStringLiteral("正在读取课程信息…"));
@@ -471,40 +471,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     courseCompanionNoticeLabel_->setObjectName(QStringLiteral("detail"));
     courseCompanionNoticeLabel_->setWordWrap(true);
     courseCompanionNoticeLabel_->hide();
-    auto* courseControls = new QGridLayout;
-    courseControls->setHorizontalSpacing(8);
-    courseControls->setVerticalSpacing(8);
+    auto* courseControls = new QVBoxLayout;
+    courseControls->setContentsMargins(0, 0, 0, 0);
+    courseControls->setSpacing(8);
     courseTogglePlaybackButton_ = new QPushButton(QStringLiteral("暂停"));
-    courseWindowButton_ = new QPushButton(QStringLiteral("收起视频小窗"));
-    courseReturnTabButton_ = new QPushButton(QStringLiteral("放回原浏览器"));
     coursePermissionButton_ = new QPushButton(QStringLiteral("授权屏幕录制"));
     coursePermissionButton_->setObjectName(QStringLiteral("secondaryButton"));
     coursePermissionButton_->hide();
     auto* continuePracticeButton = new QPushButton(QStringLiteral("继续刷题"));
     continuePracticeButton->setObjectName(QStringLiteral("secondaryButton"));
-    courseControls->addWidget(courseTogglePlaybackButton_, 0, 0);
-    courseControls->addWidget(courseWindowButton_, 0, 1);
-    courseControls->addWidget(courseReturnTabButton_, 1, 0, 1, 2);
-    courseControls->addWidget(coursePermissionButton_, 2, 0, 1, 2);
+    courseControls->addWidget(courseTogglePlaybackButton_);
+    courseControls->addWidget(coursePermissionButton_);
     courseLayout->addWidget(courseHeading);
     courseLayout->addWidget(courseCompanionTitleLabel_);
     courseLayout->addWidget(courseCompanionStatusLabel_);
     courseLayout->addWidget(courseCompanionProgressLabel_);
     courseLayout->addWidget(courseCompanionNoticeLabel_);
-    courseLayout->addSpacing(4);
     courseLayout->addLayout(courseControls);
     courseLayout->addWidget(continuePracticeButton);
-    courseLayout->addStretch();
     connect(courseTogglePlaybackButton_, &QPushButton::clicked, this,
             [this] { browserBridge_->requestTogglePlayback(); });
-    connect(courseWindowButton_, &QPushButton::clicked, this, [this] {
-        if (browserBridge_->status().courseWindowVisible)
-            browserBridge_->requestHideCourseWindow();
-        else
-            browserBridge_->requestShowCourseWindow();
-    });
-    connect(courseReturnTabButton_, &QPushButton::clicked, this,
-            [this] { browserBridge_->requestReturnTab(); });
     connect(coursePermissionButton_, &QPushButton::clicked, this, [this] {
         browserBridge_->requestScreenCapturePermission();
     });
@@ -682,33 +668,20 @@ void MainWindow::initializeDesktopShell() {
     browserStatusAction->setEnabled(false);
     auto* togglePlaybackAction = browserMenu->addAction(QStringLiteral("暂停 / 继续"));
     togglePlaybackAction->setEnabled(false);
-    auto* showCourseWindowAction = browserMenu->addAction(QStringLiteral("显示视频聚焦小窗"));
-    showCourseWindowAction->setEnabled(false);
-    auto* returnCourseTabAction = browserMenu->addAction(QStringLiteral("放回原浏览器"));
-    returnCourseTabAction->setEnabled(false);
     connect(togglePlaybackAction, &QAction::triggered, this,
             [this] { browserBridge_->requestTogglePlayback(); });
-    connect(showCourseWindowAction, &QAction::triggered, this,
-            [this] { browserBridge_->requestShowCourseWindow(); });
-    connect(returnCourseTabAction, &QAction::triggered, this,
-            [this] { browserBridge_->requestReturnTab(); });
     connect(browserBridge_, &browser::BrowserBridge::statusChanged, this,
-            [this, browserStatusAction, togglePlaybackAction, showCourseWindowAction,
-             returnCourseTabAction](const browser::BrowserStatus& status) {
+            [this, browserStatusAction, togglePlaybackAction](const browser::BrowserStatus& status) {
                 updateCourseCompanion(status);
                 if (status.connection != browser::ConnectionState::Connected) {
                     browserStatusAction->setText(QStringLiteral("状态：浏览器扩展未连接"));
                     togglePlaybackAction->setEnabled(false);
-                    showCourseWindowAction->setEnabled(false);
-                    returnCourseTabAction->setEnabled(false);
                     return;
                 }
                 const QString videoState = status.videoPlaying
                     ? QStringLiteral("正在播放") : QStringLiteral("已连接");
                 browserStatusAction->setText(QStringLiteral("状态：%1").arg(videoState));
                 togglePlaybackAction->setEnabled(status.courseBound && status.videoDetected);
-                showCourseWindowAction->setEnabled(status.courseBound);
-                returnCourseTabAction->setEnabled(status.courseWindowVisible);
             });
 #endif
     trayMenu_->addAction(QStringLiteral("添加题库…"), this,
@@ -833,8 +806,6 @@ void MainWindow::updateCourseCompanion(const browser::BrowserStatus& status) {
         courseCompanionProgressLabel_->setText({});
         courseCompanionNoticeLabel_->hide();
         courseTogglePlaybackButton_->setEnabled(false);
-        courseWindowButton_->setEnabled(false);
-        courseReturnTabButton_->setEnabled(false);
         coursePermissionButton_->hide();
         practiceVideoStatusBar_->hide();
         return;
@@ -846,8 +817,6 @@ void MainWindow::updateCourseCompanion(const browser::BrowserStatus& status) {
         courseCompanionProgressLabel_->setText({});
         courseCompanionNoticeLabel_->hide();
         courseTogglePlaybackButton_->setEnabled(false);
-        courseWindowButton_->setEnabled(false);
-        courseReturnTabButton_->setEnabled(false);
         coursePermissionButton_->hide();
         practiceVideoStatusBar_->hide();
         return;
@@ -861,15 +830,9 @@ void MainWindow::updateCourseCompanion(const browser::BrowserStatus& status) {
         QStringLiteral("TCC"), Qt::CaseInsensitive) ||
         status.externalWindowError.contains(QStringLiteral("屏幕录制")) ||
         status.externalWindowError.contains(QStringLiteral("捕捉"));
-    const QString windowNotice = !status.externalWindowError.isEmpty()
-        ? screenCapturePermissionProblem
-            ? QStringLiteral("视频小窗需要屏幕录制权限。请点下方按钮授权后再试。")
-            : QStringLiteral("视频小窗暂时无法启动，请点击“显示视频小窗”重试。")
-        : status.externalWindowActive
-            ? QStringLiteral("QuizPane 置顶视频窗已显示")
-            : status.courseWindowVisible
-                ? QStringLiteral("浏览器课程页已打开，正在连接置顶视频小窗…")
-                : QStringLiteral("浏览器课程页已收起");
+    const QString windowNotice = screenCapturePermissionProblem
+        ? QStringLiteral("视频小窗需要屏幕录制权限。请点下方按钮授权后再试。")
+        : QString();
     const QString progress = QStringLiteral("播放进度 %1 / %2")
         .arg(formatVideoTime(status.videoCurrentTimeSeconds),
              formatVideoTime(status.videoDurationSeconds));
@@ -879,14 +842,10 @@ void MainWindow::updateCourseCompanion(const browser::BrowserStatus& status) {
         .arg(playback, status.browserName.isEmpty() ? QStringLiteral("浏览器") : status.browserName));
     courseCompanionProgressLabel_->setText(progress);
     courseCompanionNoticeLabel_->setText(windowNotice);
-    courseCompanionNoticeLabel_->show();
+    courseCompanionNoticeLabel_->setVisible(!windowNotice.isEmpty());
     courseTogglePlaybackButton_->setText(status.videoPlaying ? QStringLiteral("暂停")
                                                           : QStringLiteral("继续播放"));
     courseTogglePlaybackButton_->setEnabled(status.videoDetected);
-    courseWindowButton_->setText(status.courseWindowVisible ? QStringLiteral("收起视频小窗")
-                                                            : QStringLiteral("显示视频小窗"));
-    courseWindowButton_->setEnabled(true);
-    courseReturnTabButton_->setEnabled(status.courseWindowVisible);
     coursePermissionButton_->setText(QStringLiteral("重新授权"));
     coursePermissionButton_->setVisible(screenCapturePermissionProblem);
 
@@ -925,8 +884,8 @@ void MainWindow::fitCourseCompanionWindow() {
     const QMargins rootMargins = root->contentsMargins();
     const int totalHeight = rootMargins.top() + rootMargins.bottom() +
         headerBar_->height() + root->spacing() + courseLayout->sizeHint().height();
-    // 420 留给最短状态，720 是长课程标题/两行提示的上限，避免再次出现大块空白。
-    resize(compactSize.width(), qBound(420, totalHeight, 720));
+    // 课程页只保留播放信息与两个操作，按内容收紧，避免下方留下答题页的空白。
+    resize(compactSize.width(), qBound(320, totalHeight, 560));
     if (isVisible()) move(oldTopRight.x() - width() + 1, oldTopRight.y());
 }
 

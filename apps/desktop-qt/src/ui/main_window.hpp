@@ -178,8 +178,6 @@ private:
     QLabel* courseCompanionProgressLabel_ = nullptr;
     QLabel* courseCompanionNoticeLabel_ = nullptr;
     QPushButton* courseTogglePlaybackButton_ = nullptr;
-    QPushButton* courseWindowButton_ = nullptr;
-    QPushButton* courseReturnTabButton_ = nullptr;
     QPushButton* coursePermissionButton_ = nullptr;
     QFrame* practiceVideoStatusBar_ = nullptr;
     QLabel* practiceVideoStatusLabel_ = nullptr;
