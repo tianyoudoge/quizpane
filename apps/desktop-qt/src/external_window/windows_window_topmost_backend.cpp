@@ -189,10 +189,15 @@ bool WindowsWindowTopmostBackend::enforceTopmost() {
     }
     window = static_cast<HWND>(window_);
 
-    const bool alreadyTopmost =
-        (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    // WS_EX_TOPMOST only records whether this window belongs to the topmost
+    // band of the z-order; it says nothing about whether another topmost
+    // window (Start menu, volume OSD, etc.) has since been brought above it.
+    // GW_HWNDPREV re-walks the live z-order and returns null only when no
+    // window currently sits above this one, so it reflects the window's
+    // actual on-screen front-most state instead of a sticky style bit.
+    const bool actuallyTopmost = GetWindow(window, GW_HWNDPREV) == nullptr;
     const bool windowVisible = IsWindowVisible(window) != FALSE;
-    if (alreadyTopmost && windowVisible == visible_) {
+    if (actuallyTopmost && windowVisible == visible_) {
         QVariantMap details = windowDetails(window);
         details.insert(QStringLiteral("desiredVisible"), visible_);
         diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-topmost-already"), details);
