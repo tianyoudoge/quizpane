@@ -46,6 +46,10 @@ if(APPLE)
         src/platform/window_pinning.mm
         src/external_window/mac_window_replica_backend.hpp
         src/external_window/mac_window_replica_backend.mm
+        src/external_window/mac_window_replica_controller.hpp
+        src/external_window/mac_window_replica_capture.mm
+        src/external_window/mac_window_replica_input.mm
+        src/external_window/mac_window_replica_renderer.mm
         resources/app-icon.icns
         "${PROJECT_SOURCE_DIR}/LICENSE"
     )
@@ -55,7 +59,12 @@ if(APPLE)
         PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources"
     )
-    set_source_files_properties(src/external_window/mac_window_replica_backend.mm PROPERTIES
+    set_source_files_properties(
+        src/external_window/mac_window_replica_backend.mm
+        src/external_window/mac_window_replica_capture.mm
+        src/external_window/mac_window_replica_input.mm
+        src/external_window/mac_window_replica_renderer.mm
+        PROPERTIES
         SKIP_UNITY_BUILD_INCLUSION ON
         COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(quizpane PRIVATE

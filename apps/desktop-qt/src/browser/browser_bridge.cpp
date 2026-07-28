@@ -204,6 +204,7 @@ void BrowserBridge::handleMessage(QWebSocket* socket, const QString& text) {
             bounds.isEmpty()) {
             external_window::AttachResult result;
             result.sessionId = sessionId;
+            result.errorCode = external_window::AttachError::InvalidRequest;
             result.error = QStringLiteral("网页小窗绑定请求无效");
             publishExternalWindowAttached(result);
             return;
@@ -219,6 +220,7 @@ void BrowserBridge::handleMessage(QWebSocket* socket, const QString& text) {
         if (request.browserReportedBounds.width() <= 0 || request.browserReportedBounds.height() <= 0) {
             external_window::AttachResult result;
             result.sessionId = sessionId;
+            result.errorCode = external_window::AttachError::InvalidRequest;
             result.error = QStringLiteral("网页小窗尺寸无效");
             publishExternalWindowAttached(result);
             return;

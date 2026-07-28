@@ -91,6 +91,7 @@ void ExternalWindowManager::attach(const AttachRequest& request) {
     d_->state = State::Failed;
     AttachResult result;
     result.sessionId = request.sessionId;
+    result.errorCode = AttachError::Unsupported;
     result.error = QStringLiteral("当前平台的网页小窗置顶后端尚未启用");
     emit stateChanged(d_->state, result.error);
     emit attachFinished(result);
@@ -109,16 +110,6 @@ void ExternalWindowManager::detach() {
         d_->state = State::Stopped;
         emit stateChanged(d_->state, QStringLiteral("网页小窗已关闭"));
     }
-}
-
-void ExternalWindowManager::setPinned(bool pinned) {
-#if defined(Q_OS_MACOS)
-    if (d_->macBackend) d_->macBackend->setPinned(pinned);
-#elif defined(Q_OS_WIN)
-    if (d_->windowsBackend) d_->windowsBackend->setPinned(pinned);
-#else
-    Q_UNUSED(pinned)
-#endif
 }
 
 void ExternalWindowManager::setVisible(bool visible) {
@@ -168,15 +159,9 @@ void ExternalWindowManager::tryAttachWindows() {
         return;
     }
 
-    const bool targetNotReady =
-        result.error == QStringLiteral("没有找到已绑定的 Chrome 或 Edge 课程小窗");
+    const bool targetNotReady = result.errorCode == AttachError::TargetNotFound;
     const qint64 elapsedMs = d_->windowsAttachElapsed.elapsed();
     if (targetNotReady && elapsedMs < kWindowsAttachTimeoutMs) {
-        diagnostic::event(QStringLiteral("external-window"),
-                          QStringLiteral("windows-attach-retry-scheduled"),
-                          {{QStringLiteral("attempt"), d_->windowsAttachAttempt},
-                           {QStringLiteral("elapsedMs"), elapsedMs},
-                           {QStringLiteral("delayMs"), kWindowsAttachRetryIntervalMs}});
         d_->windowsAttachRetryTimer.start(kWindowsAttachRetryIntervalMs);
         return;
     }

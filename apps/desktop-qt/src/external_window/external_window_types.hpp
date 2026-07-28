@@ -16,6 +16,15 @@ enum class BackendType {
 
 enum class State { Idle, ResolvingTarget, Attached, Starting, Active, Recovering, Failed, Stopped };
 
+enum class AttachError {
+    None,
+    TargetNotFound,
+    TopmostRejected,
+    Unsupported,
+    InvalidRequest,
+    CaptureFailed,
+};
+
 struct Capabilities {
     bool interactive = false;
     bool supportsCapture = false;
@@ -37,6 +46,7 @@ struct AttachResult {
     bool success = false;
     BackendType backend = BackendType::Unsupported;
     Capabilities capabilities;
+    AttachError errorCode = AttachError::None;
     QString error;
 };
 

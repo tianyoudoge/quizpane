@@ -15,7 +15,6 @@ public:
 
     void attach(const AttachRequest& request);
     void detach();
-    void setPinned(bool pinned);
     void setVisible(bool visible);
     void prepareForRestore();
     bool requestScreenCapturePermission();

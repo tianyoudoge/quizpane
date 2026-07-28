@@ -12,12 +12,11 @@ class WindowsWindowTopmostBackend final {
 public:
     AttachResult attach(const AttachRequest& request);
     void detach();
-    void setPinned(bool pinned);
     void setVisible(bool visible);
     [[nodiscard]] bool enforceTopmost();
     // Called by the private WinEvent callback registered for the attached
     // browser popup. It is public only to keep windows.h out of this header.
-    void handleWindowEvent(unsigned long event, void* window);
+    void handleWindowEvent(unsigned long event, void* window, long objectId, long childId);
 
 private:
     [[nodiscard]] bool reacquireWindow();
@@ -29,7 +28,6 @@ private:
     void* objectEventHook_ = nullptr;
     unsigned long browserProcessId_ = 0;
     QString bindingToken_;
-    bool pinned_ = true;
     bool visible_ = true;
     bool enforcing_ = false;
 };

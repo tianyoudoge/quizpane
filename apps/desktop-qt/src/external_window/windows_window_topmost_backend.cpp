@@ -3,6 +3,7 @@
 #include "quizpane/diagnostic_logger.hpp"
 
 #include <windows.h>
+#include <oleacc.h>
 
 #include <QString>
 
@@ -78,18 +79,22 @@ BOOL CALLBACK findWindowCallback(HWND window, LPARAM parameter) {
 }
 
 void CALLBACK windowEventCallback(HWINEVENTHOOK, DWORD event, HWND window,
-                                  LONG, LONG, DWORD, DWORD) {
+                                  LONG objectId, LONG childId, DWORD, DWORD) {
     // The hooks are registered out-of-context on the Qt GUI thread.  The
     // backend owns their lifetime and removes them before it is destroyed.
-    if (eventBackend != nullptr) eventBackend->handleWindowEvent(event, window);
+    if (eventBackend != nullptr)
+        eventBackend->handleWindowEvent(event, window, objectId, childId);
 }
 
-AttachResult makeResult(const AttachRequest& request, bool success, const QString& error = {}) {
+AttachResult makeResult(const AttachRequest& request, bool success,
+                        AttachError errorCode = AttachError::None,
+                        const QString& error = {}) {
     AttachResult result;
     result.sessionId = request.sessionId;
     result.success = success;
     result.backend = BackendType::WindowsNativeTopmost;
     result.capabilities = {false, false, false, false, false};
+    result.errorCode = errorCode;
     result.error = error;
     return result;
 }
@@ -104,19 +109,15 @@ AttachResult WindowsWindowTopmostBackend::attach(const AttachRequest& request) {
         objectEventHook_ != nullptr || !bindingToken_.isEmpty()) {
         detach();
     }
-    diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-attach-search"),
-                      {{QStringLiteral("bindingTokenLength"),
-                        static_cast<qlonglong>(request.bindingToken.size())}});
     WindowSearch search{request.bindingToken};
     EnumWindows(&findWindowCallback, reinterpret_cast<LPARAM>(&search));
     if (search.result == nullptr) {
-        diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-attach-not-found"));
-        return makeResult(request, false, QStringLiteral("没有找到已绑定的 Chrome 或 Edge 课程小窗"));
+        return makeResult(request, false, AttachError::TargetNotFound,
+                          QStringLiteral("没有找到已绑定的 Chrome 或 Edge 课程小窗"));
     }
     window_ = search.result;
     GetWindowThreadProcessId(static_cast<HWND>(window_), &browserProcessId_);
     bindingToken_ = request.bindingToken;
-    pinned_ = true;
     visible_ = true;
     diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-attach-target"),
                       windowDetails(static_cast<HWND>(window_)));
@@ -127,7 +128,8 @@ AttachResult WindowsWindowTopmostBackend::attach(const AttachRequest& request) {
         window_ = nullptr;
         browserProcessId_ = 0;
         bindingToken_.clear();
-        return makeResult(request, false, QStringLiteral("Windows 拒绝将课程小窗置顶（错误 %1）")
+        return makeResult(request, false, AttachError::TopmostRejected,
+                          QStringLiteral("Windows 拒绝将课程小窗置顶（错误 %1）")
             .arg(systemError));
     }
     startEventTracking();
@@ -148,21 +150,7 @@ void WindowsWindowTopmostBackend::detach() {
     window_ = nullptr;
     browserProcessId_ = 0;
     bindingToken_.clear();
-    pinned_ = true;
     visible_ = true;
-}
-
-void WindowsWindowTopmostBackend::setPinned(bool pinned) {
-    pinned_ = pinned;
-    HWND window = static_cast<HWND>(window_);
-    diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-set-pinned"),
-                      {{QStringLiteral("pinned"), pinned},
-                       {QStringLiteral("hwnd"), handleText(window)}});
-    if (window == nullptr || !IsWindow(window)) return;
-    SetWindowPos(window, pinned ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    if (pinned) startEventTracking();
-    else stopEventTracking();
 }
 
 void WindowsWindowTopmostBackend::setVisible(bool visible) {
@@ -176,12 +164,7 @@ void WindowsWindowTopmostBackend::setVisible(bool visible) {
 }
 
 bool WindowsWindowTopmostBackend::enforceTopmost() {
-    if (!pinned_ || enforcing_) {
-        diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-topmost-skipped"),
-                          {{QStringLiteral("pinned"), pinned_},
-                           {QStringLiteral("alreadyEnforcing"), enforcing_}});
-        return false;
-    }
+    if (enforcing_) return false;
     enforcing_ = true;
     struct ResetEnforcing final {
         bool& value;
@@ -204,9 +187,6 @@ bool WindowsWindowTopmostBackend::enforceTopmost() {
     const bool actuallyTopmost = GetWindow(window, GW_HWNDPREV) == nullptr;
     const bool windowVisible = IsWindowVisible(window) != FALSE;
     if (actuallyTopmost && windowVisible == visible_) {
-        QVariantMap details = windowDetails(window);
-        details.insert(QStringLiteral("desiredVisible"), visible_);
-        diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-topmost-already"), details);
         return true;
     }
 
@@ -250,7 +230,7 @@ void WindowsWindowTopmostBackend::startEventTracking() {
         nullptr, &windowEventCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
     const DWORD foregroundError = foregroundEventHook_ == nullptr ? GetLastError() : ERROR_SUCCESS;
     objectEventHook_ = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_LOCATIONCHANGE,
-        nullptr, &windowEventCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
+        nullptr, &windowEventCallback, browserProcessId_, 0, WINEVENT_OUTOFCONTEXT);
     const DWORD objectError = objectEventHook_ == nullptr ? GetLastError() : ERROR_SUCCESS;
     diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-event-hooks"),
                       {{QStringLiteral("foregroundHook"), handleText(static_cast<HWND>(foregroundEventHook_))},
@@ -273,10 +253,15 @@ void WindowsWindowTopmostBackend::stopEventTracking() {
     diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-event-hooks-stopped"));
 }
 
-void WindowsWindowTopmostBackend::handleWindowEvent(unsigned long event, void* rawWindow) {
-    if (!pinned_ || enforcing_) return;
+void WindowsWindowTopmostBackend::handleWindowEvent(unsigned long event, void* rawWindow,
+                                                    long objectId, long childId) {
+    if (enforcing_) return;
     const HWND eventWindow = static_cast<HWND>(rawWindow);
     const HWND currentWindow = static_cast<HWND>(window_);
+    const bool isForegroundEvent = event == EVENT_SYSTEM_FOREGROUND;
+    const bool isWindowObjectEvent =
+        objectId == OBJID_WINDOW && childId == CHILDID_SELF;
+    if (!isForegroundEvent && !isWindowObjectEvent) return;
 
     if (event == EVENT_OBJECT_DESTROY && eventWindow == currentWindow) {
         diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-event-target-destroyed"),
@@ -284,11 +269,7 @@ void WindowsWindowTopmostBackend::handleWindowEvent(unsigned long event, void* r
         window_ = nullptr;
         return;
     }
-    if (event == EVENT_SYSTEM_FOREGROUND || eventWindow == currentWindow) {
-        diagnostic::event(QStringLiteral("external-window"), QStringLiteral("windows-event-relevant"),
-                          {{QStringLiteral("event"), static_cast<qulonglong>(event)},
-                           {QStringLiteral("eventHwnd"), handleText(eventWindow)},
-                           {QStringLiteral("targetHwnd"), handleText(currentWindow)}});
+    if (isForegroundEvent || eventWindow == currentWindow) {
         (void)enforceTopmost();
         return;
     }

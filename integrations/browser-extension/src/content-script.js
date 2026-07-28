@@ -5,8 +5,13 @@
   let bossWasPlaying = false;
   let focusState = null;
   let lastReportedSnapshot = "";
-  let pipButton = null;
   let windowBindingOriginalTitle = null;
+  let disposed = false;
+  let observer = null;
+  let statusTimer = null;
+  const mediaEventNames = [
+    "play", "pause", "ended", "loadedmetadata", "durationchange", "emptied"
+  ];
 
   function visibleArea(video) {
     const rect = video.getBoundingClientRect();
@@ -68,66 +73,6 @@
     return findPlayerRoot(findMainVideo());
   }
 
-  function pictureInPictureAvailable(video) {
-    return Boolean(video && document.pictureInPictureEnabled &&
-      !video.disablePictureInPicture && video.readyState > 0);
-  }
-
-  function ensurePipButton() {
-    if (pipButton?.isConnected) return pipButton;
-    pipButton = document.createElement("button");
-    pipButton.type = "button";
-    pipButton.dataset.quizpanePipButton = "true";
-    pipButton.setAttribute("aria-label", "置顶播放");
-    pipButton.title = "置顶播放（浏览器画中画）";
-    Object.assign(pipButton.style, {
-      position: "fixed", zIndex: "2147483647", display: "none", border: "0",
-      borderRadius: "7px", padding: "7px 10px", color: "#fff", background: "rgba(19, 23, 30, .88)",
-      boxShadow: "0 2px 10px rgba(0, 0, 0, .35)", font: "600 13px system-ui, sans-serif",
-      cursor: "pointer", lineHeight: "18px"
-    });
-    pipButton.addEventListener("click", async event => {
-      // 这里必须是页面中用户真正点击按钮的同步处理函数，不能由桌面端或
-      // service worker 转发；否则 Chrome/Edge 会拒绝进入原生 PiP。
-      event.preventDefault();
-      event.stopPropagation();
-      const video = findMainVideo();
-      if (!pictureInPictureAvailable(video)) return;
-      pipButton.disabled = true;
-      try {
-        if (document.pictureInPictureElement === video) await document.exitPictureInPicture();
-        else await video.requestPictureInPicture();
-      } catch {
-        pipButton.title = "当前课程站点不允许置顶播放";
-      } finally {
-        pipButton.disabled = false;
-        updatePipButton();
-        reportStatus();
-      }
-    }, true);
-    document.body.append(pipButton);
-    return pipButton;
-  }
-
-  function updatePipButton() {
-    const button = ensurePipButton();
-    const video = findMainVideo();
-    if (!pictureInPictureAvailable(video)) {
-      button.style.display = "none";
-      return;
-    }
-    const rect = video.getBoundingClientRect();
-    if (rect.width < 180 || rect.height < 100 || rect.bottom < 0 || rect.top > innerHeight) {
-      button.style.display = "none";
-      return;
-    }
-    button.textContent = document.pictureInPictureElement === video ? "退出置顶" : "置顶播放";
-    // display:none 时 offsetWidth 为 0，先显示再定位才能让按钮完整落在视频右上角。
-    button.style.display = "block";
-    button.style.top = `${Math.max(8, rect.top + 10)}px`;
-    button.style.left = `${Math.max(8, rect.right - button.offsetWidth - 10)}px`;
-  }
-
   function snapshot() {
     const video = findMainVideo();
     // 只发送播放器的时间数字，不读取视频地址、页面正文或任何账户信息。-1 表示
@@ -141,12 +86,12 @@
       videoState: video && !video.paused && !video.ended ? "playing" : "paused",
       videoCurrentTimeSeconds: currentTime,
       videoDurationSeconds: duration,
-      pictureInPicture: document.pictureInPictureElement === video,
       focusMode: Boolean(focusState)
     };
   }
 
   function reportStatus() {
+    if (disposed) return;
     const payload = snapshot();
     const fingerprint = JSON.stringify(payload);
     // 暂停后状态不会变化，不再反复唤醒 service worker；播放期间时间戳每秒变化，
@@ -258,9 +203,6 @@
       [data-quizpane-video-focus-target],
       [data-quizpane-video-focus-target] * { visibility: visible !important; }
       video[data-quizpane-video-focus-target] { object-fit: contain !important; }
-      body[data-quizpane-video-focus] > [data-quizpane-pip-button] {
-        visibility: visible !important; pointer-events: auto !important;
-      }
     `;
     document.head.append(style);
     document.documentElement.dataset.quizpaneVideoFocus = "true";
@@ -276,7 +218,7 @@
     else element.setAttribute("style", previousStyle);
   }
 
-  function exitFocusMode() {
+  function exitFocusMode({ report = true } = {}) {
     if (!focusState) return { success: true, ...snapshot() };
     const { target, targetStyle, htmlStyle, bodyStyle, style } = focusState;
     style.remove();
@@ -289,7 +231,7 @@
     restoreStyle(document.documentElement, htmlStyle);
     restoreStyle(document.body, bodyStyle);
     focusState = null;
-    reportStatus();
+    if (report) reportStatus();
     return { success: true, ...snapshot() };
   }
 
@@ -303,16 +245,37 @@
     return { success: true };
   }
 
-  function restoreWindowBindingTitle() {
+  function restoreWindowBindingTitle({ report = true } = {}) {
     if (windowBindingOriginalTitle !== null) {
       document.title = windowBindingOriginalTitle;
       windowBindingOriginalTitle = null;
-      reportStatus();
+      if (report) reportStatus();
     }
     return { success: true };
   }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  function handleMediaEvent() {
+    if (disposed) return;
+    reportStatus();
+  }
+
+  function disposeController() {
+    if (disposed) return { success: true, disposed: true };
+    disposed = true;
+    observer?.disconnect();
+    clearTimeout(observer?.timer);
+    clearInterval(statusTimer);
+    for (const eventName of mediaEventNames) {
+      document.removeEventListener(eventName, handleMediaEvent, true);
+    }
+    exitFocusMode({ report: false });
+    restoreWindowBindingTitle({ report: false });
+    chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+    delete globalThis.__quizpaneCourseController;
+    return { success: true, disposed: true };
+  }
+
+  function handleRuntimeMessage(message, _sender, sendResponse) {
     let operation;
     switch (message?.type) {
       case "command.boss_hide": operation = pauseForBoss(); break;
@@ -327,37 +290,35 @@
         operation = Promise.resolve(setWindowBindingTitle(message.bindingToken)); break;
       case "command.restore_window_binding_title":
         operation = Promise.resolve(restoreWindowBindingTitle()); break;
+      case "command.dispose_controller":
+        operation = Promise.resolve(disposeController()); break;
       case "command.query_status": operation = Promise.resolve({ success: true, ...snapshot() }); break;
       default: return false;
     }
     operation.then(sendResponse).catch(error => sendResponse({ success: false, error: String(error) }));
     return true;
-  });
+  }
 
-  const observer = new MutationObserver(() => {
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+
+  observer = new MutationObserver(() => {
+    if (disposed) return;
     if (focusState && !focusState.target.isConnected) exitFocusMode();
     clearTimeout(observer.timer);
     observer.timer = setTimeout(() => {
-      updatePipButton();
       reportStatus();
     }, 300);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  for (const eventName of ["play", "pause", "ended", "loadedmetadata", "durationchange", "emptied",
-                           "enterpictureinpicture", "leavepictureinpicture"]) {
-    document.addEventListener(eventName, () => {
-      updatePipButton();
-      reportStatus();
-    }, true);
+  for (const eventName of mediaEventNames) {
+    document.addEventListener(eventName, handleMediaEvent, true);
   }
-  addEventListener("scroll", updatePipButton, { passive: true, capture: true });
-  addEventListener("resize", updatePipButton, { passive: true });
   // timeupdate 在不同课程站点的频率并不一致；播放期间固定每秒同步一次可让
-  // 桌面端进度稳定。暂停时不轮询、不发消息。
-  setInterval(() => {
+  // 桌面端进度稳定。暂停时仍检查播放器状态，但不会重复发送相同状态。
+  statusTimer = setInterval(() => {
+    if (disposed) return;
     const video = findMainVideo();
     if (video && !video.paused && !video.ended) reportStatus();
   }, 1_000);
-  updatePipButton();
   reportStatus();
 })();
