@@ -15,4 +15,8 @@
     <file alias="studio.qss">studio.qss</file>
     <file alias="studio-light.qss">studio-light.qss</file>
   </qresource>
+  <qresource prefix="/icons">
+    <file alias="checkmark-white.svg">icons/checkmark-white.svg</file>
+    <file alias="radio-dot-white.svg">icons/radio-dot-white.svg</file>
+  </qresource>
 </RCC>

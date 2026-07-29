@@ -52,10 +52,12 @@ QTextEdit::viewport, QPlainTextEdit::viewport, QListWidget::viewport,
 QTreeWidget::viewport, QTableWidget::viewport { background: #111419; color: #cfd4da; }
 QComboBox QAbstractItemView { background: #171b20; color: #dce1e7; border: 1px solid #454d58; selection-background-color: #343a42; selection-color: #ffffff; }
 QCheckBox, QRadioButton, QGroupBox, QLabel { color: #c8cdd3; }
-QCheckBox::indicator, QRadioButton::indicator { width: 15px; height: 15px; background: #111419; border: 1px solid #59616b; border-radius: 4px; }
-QCheckBox::indicator:checked, QRadioButton::indicator:checked { background: #f25ba6; border-color: #f25ba6; }
+QCheckBox::indicator { width: 15px; height: 15px; background: #111419; border: 1px solid #59616b; border-radius: 4px; }
+QCheckBox::indicator:checked { background: #f25ba6; border-color: #f25ba6; image: url(:/icons/checkmark-white.svg); }
+QRadioButton::indicator { width: 15px; height: 15px; background: #111419; border: 1px solid #59616b; border-radius: 8px; }
+QRadioButton::indicator:checked { background: #f25ba6; border-color: #f25ba6; image: url(:/icons/radio-dot-white.svg); }
 QTreeView::indicator { width: 15px; height: 15px; background: #111419; border: 1px solid #59616b; border-radius: 4px; }
-QTreeView::indicator:checked { background: #f25ba6; border-color: #f25ba6; }
+QTreeView::indicator:checked { background: #f25ba6; border-color: #f25ba6; image: url(:/icons/checkmark-white.svg); }
 QListWidget::item { padding: 10px; border-bottom: 1px solid #252a31; }
 QListWidget::item:selected { color: #ffffff; background: #343a42; }
 QFrame#styledDropdownPopup { background: #171b20; border: 1px solid #3b424b; border-radius: 8px; }
