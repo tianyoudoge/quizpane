@@ -1,9 +1,7 @@
-const MAC_SOURCE_PARK_EXPOSE_W = 70;
-const MAC_SOURCE_PARK_EXPOSE_H = 28;
 export const ATTACH_TIMEOUT_MS = 30_000;
 
 export function createExternalWindowController(context) {
-  const { chromeApi, state, restored, randomUUID, setTimeoutImpl } = context;
+  const { chromeApi, state, restored, randomUUID, setTimeoutImpl, send } = context;
 
   async function restoreBindingTitle(binding = state.externalWindowBinding) {
     if (!binding?.bindingToken || !state.boundTabId) return;
@@ -92,28 +90,6 @@ export function createExternalWindowController(context) {
     return true;
   }
 
-  async function parkMacSourceToCorner(windowId) {
-    const displays = await chromeApi.system.display.getInfo();
-    const primary = displays.find(display => display.isPrimary) || displays[0];
-    if (!primary) throw new Error("no-display");
-    const bounds = primary.bounds;
-    const left = bounds.left + bounds.width - MAC_SOURCE_PARK_EXPOSE_W;
-    const top = bounds.top + bounds.height - MAC_SOURCE_PARK_EXPOSE_H;
-    const parked = await chromeApi.windows.update(windowId, {
-      state: "normal",
-      left: Math.round(left),
-      top: Math.round(top),
-      focused: false
-    });
-    return {
-      windowId,
-      left: parked.left,
-      top: parked.top,
-      state: parked.state,
-      screen: { w: bounds.width, h: bounds.height }
-    };
-  }
-
   async function handleAttached(payload) {
     if (!state.externalWindowBinding
         || payload.sessionId !== state.externalWindowBinding.sessionId) return;
@@ -124,13 +100,10 @@ export function createExternalWindowController(context) {
     state.externalWindowStatus = payload.success
       ? { backend: payload.backend || "unknown" }
       : { error: payload.error || "无法创建置顶视频小窗" };
-    if (payload.success && payload.backend === "macos-captured-replica"
-        && state.courseWindowId) {
-      try {
-        await parkMacSourceToCorner(state.courseWindowId);
-      } catch (error) {
-        console.warn("[QuizPane] cannot park course source", String(error));
-      }
+    if (payload.success && payload.backend === "macos-captured-replica") {
+      // Chrome 的 windows.update 会拒绝把普通 popup 挪到只露标题栏的位置。
+      // 诊断包由桌面端在首帧后以 Accessibility API 做可回滚验证；扩展不再
+      // 二次写 bounds，避免把本机的真实结果覆盖掉。
       state.courseWindowMinimized = false;
     }
     await context.persistState();

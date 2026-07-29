@@ -7,6 +7,7 @@ import {
   ATTACH_TIMEOUT_MS,
   createExternalWindowController
 } from "../../integrations/browser-extension/src/external-window.js";
+import { createTabCaptureKeeper } from "../../integrations/browser-extension/src/tab-capture-keeper.js";
 
 function createHarness(overrides = {}) {
   const calls = [];
@@ -133,6 +134,60 @@ test("pending external attach restores the temporary title after timeout", async
   assert.ok(harness.calls.some(call =>
     call[0] === "tabs.sendMessage"
       && call[2].type === "command.restore_window_binding_title"));
+});
+
+test("macOS attach leaves source-window parking to the desktop accessibility probe", async () => {
+  const harness = createHarness();
+  harness.state.externalWindowBinding = {
+    sessionId: "session-1",
+    bindingToken: "binding-1",
+    pending: true
+  };
+
+  await harness.externalWindow.handleAttached({
+    sessionId: "session-1",
+    success: true,
+    backend: "macos-captured-replica"
+  });
+
+  assert.equal(harness.state.courseWindowMinimized, false);
+  assert.ok(!harness.calls.some(call =>
+    call[0] === "windows.update" && call[1] === 12
+      && Object.hasOwn(call[2], "left")));
+});
+
+test("tab capture keeper obtains the stream ID before creating the offscreen consumer", async () => {
+  const calls = [];
+  const keeper = createTabCaptureKeeper({
+    chromeApi: {
+      tabCapture: {
+        getMediaStreamId: async options => {
+          calls.push(["stream-id", options]);
+          return "stream-1";
+        }
+      },
+      runtime: {
+        getContexts: async options => {
+          calls.push(["contexts", options]);
+          return [];
+        },
+        sendMessage: async message => calls.push(["message", message])
+      },
+      offscreen: {
+        createDocument: async options => calls.push(["offscreen", options])
+      }
+    },
+    send: (type, payload) => calls.push(["bridge", type, payload]),
+    isMacOS: () => true
+  });
+
+  assert.deepEqual(await keeper.start(7), { success: true });
+  assert.deepEqual(calls.map(call => call[0]), [
+    "stream-id", "contexts", "offscreen", "message", "bridge"
+  ]);
+  assert.deepEqual(calls[0][1], { targetTabId: 7 });
+  assert.equal(calls[3][1].type, "tab-capture-keeper.start");
+  assert.equal(calls[3][1].payload.streamId, "stream-1");
 });
 
 test("boss hide and restore keep the window state machine consistent", async () => {

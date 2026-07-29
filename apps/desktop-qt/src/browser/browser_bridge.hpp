@@ -3,6 +3,7 @@
 #include "../external_window/external_window_types.hpp"
 
 #include <QJsonObject>
+#include <QHash>
 #include <QObject>
 #include <QWebSocketServer>
 
@@ -72,6 +73,8 @@ private:
     QString pendingBossRestoreRequestId_;
     bool bossRestoreCommandCompleted_ = false;
     bool bossRestoreFrameReady_ = false;
+    // 仅追踪从镜像 UI 发出的播放/进度控制，用于诊断一次手势是否真的到达扩展。
+    QHash<QString, QString> pendingVideoControls_;
 };
 
 }  // namespace quizpane::browser

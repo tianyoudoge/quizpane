@@ -1,4 +1,5 @@
 #include "mac_window_replica_controller.hpp"
+#include "quizpane/diagnostic_logger.hpp"
 
 #include <QMetaObject>
 
@@ -50,6 +51,11 @@
 @implementation QPMacReplicaController (InputForwarding)
 
 - (void)emitVideoControl:(const QString&)action position:(double)position {
+    quizpane::diagnostic::event(QStringLiteral("mac-mirror-input"),
+                      QStringLiteral("control-emitted"),
+                      {{QStringLiteral("sessionId"), _request.sessionId},
+                       {QStringLiteral("action"), action},
+                       {QStringLiteral("position"), position}});
     auto* owner = _owner;
     if (owner == nullptr) return;
     QMetaObject::invokeMethod(owner, [owner, action, position] {
@@ -63,6 +69,15 @@
     if (phase == 0) {
         _pointerDown = point;
         _seeking = point.y <= 56.0;
+        quizpane::diagnostic::event(QStringLiteral("mac-mirror-input"),
+                          QStringLiteral("pointer-down"),
+                          {{QStringLiteral("sessionId"), _request.sessionId},
+                           {QStringLiteral("x"), point.x},
+                           {QStringLiteral("y"), point.y},
+                           {QStringLiteral("position"), position},
+                           {QStringLiteral("viewWidth"), viewSize.width},
+                           {QStringLiteral("viewHeight"), viewSize.height},
+                           {QStringLiteral("seeking"), _seeking}});
         if (_seeking) {
             _lastSeekEmissionTime = CFAbsoluteTimeGetCurrent();
             [self emitVideoControl:QStringLiteral("seek") position:position];
@@ -73,6 +88,13 @@
         const CFTimeInterval now = CFAbsoluteTimeGetCurrent();
         if (phase == 2 || now - _lastSeekEmissionTime >= (1.0 / 30.0)) {
             _lastSeekEmissionTime = now;
+            quizpane::diagnostic::event(QStringLiteral("mac-mirror-input"),
+                              phase == 2 ? QStringLiteral("seek-finished")
+                                         : QStringLiteral("seek-dragged"),
+                              {{QStringLiteral("sessionId"), _request.sessionId},
+                               {QStringLiteral("x"), point.x},
+                               {QStringLiteral("y"), point.y},
+                               {QStringLiteral("position"), position}});
             [self emitVideoControl:QStringLiteral("seek") position:position];
         }
         if (phase == 2) _seeking = NO;
@@ -82,7 +104,20 @@
         const double distance = std::hypot(
             point.x - _pointerDown.x, point.y - _pointerDown.y);
         if (distance <= 8.0) {
+            quizpane::diagnostic::event(QStringLiteral("mac-mirror-input"),
+                              QStringLiteral("pointer-click"),
+                              {{QStringLiteral("sessionId"), _request.sessionId},
+                               {QStringLiteral("x"), point.x},
+                               {QStringLiteral("y"), point.y},
+                               {QStringLiteral("distance"), distance}});
             [self emitVideoControl:QStringLiteral("toggle") position:-1.0];
+        } else {
+            quizpane::diagnostic::event(QStringLiteral("mac-mirror-input"),
+                              QStringLiteral("pointer-drag-ignored"),
+                              {{QStringLiteral("sessionId"), _request.sessionId},
+                               {QStringLiteral("x"), point.x},
+                               {QStringLiteral("y"), point.y},
+                               {QStringLiteral("distance"), distance}});
         }
     }
 }

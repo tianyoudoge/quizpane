@@ -23,6 +23,9 @@ int main() {
                      &parsed, &error)) return 5;
     if (!isExtensionMessageType(QStringLiteral("event.status_snapshot")) ||
         !isExtensionMessageType(QStringLiteral("externalWindow.attach")) ||
+        !isExtensionMessageType(QStringLiteral("externalWindow.source_parked")) ||
+        !isExtensionMessageType(QStringLiteral("externalWindow.source_input")) ||
+        !isExtensionMessageType(QStringLiteral("externalWindow.tab_capture")) ||
         !isExtensionMessageType(QStringLiteral("externalWindow.detach")) ||
         isExtensionMessageType(QStringLiteral("command.boss_hide"))) return 6;
     if (!isDesktopCommandType(QStringLiteral("command.boss_restore")) ||

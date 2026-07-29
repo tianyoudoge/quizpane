@@ -38,6 +38,7 @@ export function createCourseBindingController(context) {
   }
 
   function clearBinding() {
+    context.tabCaptureKeeper?.stop();
     context.externalWindow.detach();
     state.boundTabId = null;
     state.courseState = context.emptyCourseState();
@@ -54,6 +55,9 @@ export function createCourseBindingController(context) {
     if (!state.boundTabId) return { success: false, error: "no-bound-course" };
     if (state.courseWindowId) return showCourseWindow();
     try {
+      // 这个调用必须贴近用户点击扩展的事件链：tabCapture 只允许由用户操作启动。
+      // 它只是实验性保活，不影响创建 popup 或现有 SCK 镜像的成功与否。
+      const captureStart = context.tabCaptureKeeper?.start(state.boundTabId);
       const tab = await chromeApi.tabs.get(state.boundTabId);
       state.originWindowId = tab.windowId;
       state.originTabIndex = tab.index;
@@ -69,6 +73,7 @@ export function createCourseBindingController(context) {
       await context.persistState();
       const focus = await forwardCommand("command.enter_focus_mode");
       const playback = await forwardCommand("command.ensure_playing");
+      await captureStart;
       await context.externalWindow.attach(popup);
       context.publishStatus();
       return {
@@ -178,6 +183,7 @@ export function createCourseBindingController(context) {
     await restored;
     if (!state.boundTabId) return { success: false, error: "no-bound-course" };
     await forwardCommand("command.exit_focus_mode");
+    await context.tabCaptureKeeper?.stop();
     context.externalWindow.detach();
     try {
       if (state.originWindowId !== null) {

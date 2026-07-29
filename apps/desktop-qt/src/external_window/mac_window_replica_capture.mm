@@ -1,4 +1,5 @@
 #include "mac_window_replica_controller.hpp"
+#include "quizpane/diagnostic_logger.hpp"
 
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -21,6 +22,12 @@ namespace {
 
 constexpr int kMaxCaptureWidth = 1920;
 constexpr int kMaxCaptureHeight = 1080;
+// 这是当前扩展过去试图保留的标题栏面积。Chrome 扩展 API 会拒绝这个位置，
+// 而 AX 只在诊断包中作为一次受控验证使用：窗口仍是 normal，且至少有一角
+// 落在屏幕内，随后用帧流健康检查决定是否保留这个位置。
+constexpr CGFloat kAccessibilityParkExposeWidth = 70.0;
+constexpr CGFloat kAccessibilityParkExposeHeight = 28.0;
+constexpr NSUInteger kAccessibilityParkMinimumFreshFrames = 10;
 
 AttachResult failureResult(const AttachRequest& request, const QString& error,
                            AttachError errorCode = AttachError::CaptureFailed) {
@@ -42,6 +49,41 @@ bool supportedBrowserBundle(NSString* bundleIdentifier) {
         @"com.microsoft.edgemac",
     ]];
     return [supported containsObject:bundleIdentifier];
+}
+
+NSDictionary* windowInfoForId(CGWindowID windowId) {
+    if (windowId == kCGNullWindowID) return nil;
+    CFArrayRef rawWindows = CGWindowListCopyWindowInfo(kCGWindowListOptionAll,
+                                                        kCGNullWindowID);
+    if (rawWindows == nullptr) return nil;
+    NSArray* windows = CFBridgingRelease(rawWindows);
+    for (NSDictionary* info in windows) {
+        if ([info[(id)kCGWindowNumber] unsignedIntValue] == windowId) return info;
+    }
+    return nil;
+}
+
+QString axErrorName(AXError error) {
+    switch (error) {
+    case kAXErrorSuccess: return QStringLiteral("success");
+    case kAXErrorFailure: return QStringLiteral("failure");
+    case kAXErrorIllegalArgument: return QStringLiteral("illegal-argument");
+    case kAXErrorInvalidUIElement: return QStringLiteral("invalid-ui-element");
+    case kAXErrorInvalidUIElementObserver: return QStringLiteral("invalid-ui-element-observer");
+    case kAXErrorCannotComplete: return QStringLiteral("cannot-complete");
+    case kAXErrorAttributeUnsupported: return QStringLiteral("attribute-unsupported");
+    case kAXErrorActionUnsupported: return QStringLiteral("action-unsupported");
+    case kAXErrorNotificationUnsupported: return QStringLiteral("notification-unsupported");
+    case kAXErrorNotImplemented: return QStringLiteral("not-implemented");
+    case kAXErrorNotificationAlreadyRegistered: return QStringLiteral("notification-already-registered");
+    case kAXErrorNotificationNotRegistered: return QStringLiteral("notification-not-registered");
+    case kAXErrorAPIDisabled: return QStringLiteral("api-disabled");
+    case kAXErrorNoValue: return QStringLiteral("no-value");
+    case kAXErrorParameterizedAttributeUnsupported:
+        return QStringLiteral("parameterized-attribute-unsupported");
+    case kAXErrorNotEnoughPrecision: return QStringLiteral("not-enough-precision");
+    default: return QStringLiteral("unknown-%1").arg(static_cast<int>(error));
+    }
 }
 
 }  // namespace
@@ -164,6 +206,20 @@ using namespace quizpane::external_window;
         // 窗口操作必须切回主线程，否则 NSPanel 会触发 Objective-C abort。
         dispatch_async(dispatch_get_main_queue(), ^{
         if (strongSelf->_reported || generation != strongSelf->_generation) return;
+        strongSelf->_sourceWindowId = target.windowID;
+        strongSelf->_sourceProcessId = target.owningApplication.processID;
+        NSDictionary* sourceInfo = windowInfoForId(target.windowID);
+        const bool sourceOnScreen = [sourceInfo[(id)kCGWindowIsOnscreen] boolValue];
+        quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("target-resolved"),
+                          {{QStringLiteral("sessionId"), strongSelf->_request.sessionId},
+                           {QStringLiteral("windowId"), static_cast<qulonglong>(target.windowID)},
+                           {QStringLiteral("pid"), static_cast<qlonglong>(target.owningApplication.processID)},
+                           {QStringLiteral("titleMatched"), target.title != nil &&
+                            [target.title containsString:strongSelf->_request.bindingToken.toNSString()]},
+                           {QStringLiteral("width"), target.frame.size.width},
+                           {QStringLiteral("height"), target.frame.size.height},
+                           {QStringLiteral("isOnScreen"), sourceOnScreen}});
         [strongSelf showPanelForBounds:strongSelf->_request.browserReportedBounds];
         SCContentFilter* filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
         SCStreamConfiguration* config = [SCStreamConfiguration new];
@@ -233,7 +289,35 @@ using namespace quizpane::external_window;
         [_stream stopCaptureWithCompletionHandler:^(__unused NSError* error) {}];
         _stream = nil;
     }
+    if (_sourceWasAccessibilityParked && _sourceAxWindow != nullptr &&
+        _sourceHasOriginalPosition) {
+        AXValueRef restoreValue = AXValueCreate(static_cast<AXValueType>(kAXValueCGPointType),
+                                                &_sourceOriginalPosition);
+        const AXError restoreError = AXUIElementSetAttributeValue(
+            _sourceAxWindow, kAXPositionAttribute, restoreValue);
+        if (restoreValue != nullptr) CFRelease(restoreValue);
+        quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("ax-park-restore-on-detach"),
+                          {{QStringLiteral("success"), restoreError == kAXErrorSuccess},
+                           {QStringLiteral("error"), axErrorName(restoreError)}});
+    }
+    if (_sourceAxWindow != nullptr) {
+        CFRelease(_sourceAxWindow);
+        _sourceAxWindow = nullptr;
+    }
+    _sourceWindowId = kCGNullWindowID;
+    _sourceProcessId = 0;
+    _sourceHasOriginalPosition = NO;
+    _sourceWasAccessibilityParked = NO;
     if (_panel != nil) {
+        quizpane::diagnostic::event(QStringLiteral("mac-mirror"), QStringLiteral("panel-detach"),
+                          {{QStringLiteral("sessionId"), _request.sessionId},
+                           {QStringLiteral("visible"), _panel.isVisible},
+                           {QStringLiteral("left"), _panel.frame.origin.x},
+                           {QStringLiteral("top"), _panel.frame.origin.y},
+                           {QStringLiteral("width"), _panel.frame.size.width},
+                           {QStringLiteral("height"), _panel.frame.size.height},
+                           {QStringLiteral("level"), static_cast<qlonglong>(_panel.level)}});
         [_panel orderOut:nil];
         _panel = nil;
         _metalView = nil;
@@ -257,6 +341,183 @@ using namespace quizpane::external_window;
     }
 }
 
+- (void)beginAccessibilitySourceParkingProbe {
+#ifndef QUIZPANE_DIAGNOSTIC_LOGGING
+    // 正式包不主动索取辅助功能授权。这条实验仅在用户安装的诊断包中开启。
+    return;
+#else
+    if (_sourceWindowId == kCGNullWindowID || _sourceProcessId <= 0 ||
+        _sourceAxWindow != nullptr) {
+        return;
+    }
+
+    const NSDictionary* promptOptions = @{
+        (__bridge id)kAXTrustedCheckOptionPrompt : @YES,
+    };
+    const bool trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)promptOptions);
+    quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                      QStringLiteral("ax-authorization"),
+                      {{QStringLiteral("sessionId"), _request.sessionId},
+                       {QStringLiteral("trusted"), trusted},
+                       {QStringLiteral("promptRequested"), true}});
+    if (!trusted) {
+        quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("ax-park-unavailable"),
+                          {{QStringLiteral("reason"), QStringLiteral("accessibility-not-trusted")}});
+        return;
+    }
+
+    AXUIElementRef app = AXUIElementCreateApplication(_sourceProcessId);
+    CFTypeRef rawWindows = nullptr;
+    const AXError listError = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, &rawWindows);
+    if (app != nullptr) CFRelease(app);
+    if (listError != kAXErrorSuccess || rawWindows == nullptr ||
+        CFGetTypeID(rawWindows) != CFArrayGetTypeID()) {
+        if (rawWindows != nullptr) CFRelease(rawWindows);
+        quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("ax-park-unavailable"),
+                          {{QStringLiteral("reason"), QStringLiteral("windows-unreadable")},
+                           {QStringLiteral("error"), axErrorName(listError)}});
+        return;
+    }
+
+    AXUIElementRef matched = nullptr;
+    NSString* token = _request.bindingToken.toNSString();
+    for (id item in (__bridge NSArray*)rawWindows) {
+        AXUIElementRef window = (__bridge AXUIElementRef)item;
+        CFTypeRef rawTitle = nullptr;
+        const AXError titleError = AXUIElementCopyAttributeValue(window, kAXTitleAttribute, &rawTitle);
+        const NSString* title = titleError == kAXErrorSuccess && rawTitle != nullptr &&
+            CFGetTypeID(rawTitle) == CFStringGetTypeID() ? (__bridge NSString*)rawTitle : nil;
+        const BOOL isMatch = title != nil && [title containsString:token];
+        if (rawTitle != nullptr) CFRelease(rawTitle);
+        if (isMatch) {
+            matched = (AXUIElementRef)CFRetain(window);
+            break;
+        }
+    }
+    CFRelease(rawWindows);
+    if (matched == nullptr) {
+        quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("ax-park-unavailable"),
+                          {{QStringLiteral("reason"), QStringLiteral("bound-window-not-found")},
+                           {QStringLiteral("pid"), static_cast<qlonglong>(_sourceProcessId)}});
+        return;
+    }
+
+    Boolean settable = false;
+    const AXError settableError = AXUIElementIsAttributeSettable(
+        matched, kAXPositionAttribute, &settable);
+    CFTypeRef rawPosition = nullptr;
+    const AXError readError = AXUIElementCopyAttributeValue(
+        matched, kAXPositionAttribute, &rawPosition);
+    CGPoint originalPosition = CGPointZero;
+    const BOOL hasPosition = readError == kAXErrorSuccess && rawPosition != nullptr &&
+        AXValueGetType((AXValueRef)rawPosition) == kAXValueCGPointType &&
+        AXValueGetValue((AXValueRef)rawPosition,
+                        static_cast<AXValueType>(kAXValueCGPointType), &originalPosition);
+    if (rawPosition != nullptr) CFRelease(rawPosition);
+    if (settableError != kAXErrorSuccess || !settable || !hasPosition) {
+        CFRelease(matched);
+        quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("ax-park-unavailable"),
+                          {{QStringLiteral("reason"), QStringLiteral("position-not-writable")},
+                           {QStringLiteral("settable"), static_cast<bool>(settable)},
+                           {QStringLiteral("settableError"), axErrorName(settableError)},
+                           {QStringLiteral("readError"), axErrorName(readError)}});
+        return;
+    }
+
+    CGDirectDisplayID display = CGMainDisplayID();
+    CGDirectDisplayID containingDisplay = kCGNullDirectDisplay;
+    const CGPoint sourceCenter = CGPointMake(originalPosition.x + 1.0, originalPosition.y + 1.0);
+    if (CGGetDisplaysWithPoint(sourceCenter, 1, &containingDisplay, nullptr) == kCGErrorSuccess &&
+        containingDisplay != kCGNullDirectDisplay) {
+        display = containingDisplay;
+    }
+    const CGRect displayBounds = CGDisplayBounds(display);
+    const CGPoint requestedPosition = CGPointMake(
+        CGRectGetMaxX(displayBounds) - kAccessibilityParkExposeWidth,
+        CGRectGetMaxY(displayBounds) - kAccessibilityParkExposeHeight);
+    AXValueRef requestedValue = AXValueCreate(static_cast<AXValueType>(kAXValueCGPointType),
+                                              &requestedPosition);
+    const AXError writeError = AXUIElementSetAttributeValue(
+        matched, kAXPositionAttribute, requestedValue);
+    if (requestedValue != nullptr) CFRelease(requestedValue);
+
+    CFTypeRef rawActualPosition = nullptr;
+    const AXError actualReadError = AXUIElementCopyAttributeValue(
+        matched, kAXPositionAttribute, &rawActualPosition);
+    CGPoint actualPosition = CGPointZero;
+    const BOOL hasActualPosition = actualReadError == kAXErrorSuccess && rawActualPosition != nullptr &&
+        AXValueGetType((AXValueRef)rawActualPosition) == kAXValueCGPointType &&
+        AXValueGetValue((AXValueRef)rawActualPosition,
+                        static_cast<AXValueType>(kAXValueCGPointType), &actualPosition);
+    if (rawActualPosition != nullptr) CFRelease(rawActualPosition);
+
+    quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                      QStringLiteral("ax-park-result"),
+                      {{QStringLiteral("success"), writeError == kAXErrorSuccess && hasActualPosition},
+                       {QStringLiteral("writeError"), axErrorName(writeError)},
+                       {QStringLiteral("readError"), axErrorName(actualReadError)},
+                       {QStringLiteral("requestedLeft"), requestedPosition.x},
+                       {QStringLiteral("requestedTop"), requestedPosition.y},
+                       {QStringLiteral("actualLeft"), actualPosition.x},
+                       {QStringLiteral("actualTop"), actualPosition.y},
+                       {QStringLiteral("originalLeft"), originalPosition.x},
+                       {QStringLiteral("originalTop"), originalPosition.y},
+                       {QStringLiteral("displayWidth"), displayBounds.size.width},
+                       {QStringLiteral("displayHeight"), displayBounds.size.height}});
+    if (writeError != kAXErrorSuccess || !hasActualPosition) {
+        CFRelease(matched);
+        return;
+    }
+
+    _sourceAxWindow = matched;
+    _sourceOriginalPosition = originalPosition;
+    _sourceHasOriginalPosition = YES;
+    _sourceWasAccessibilityParked = YES;
+    @synchronized (self) {
+        _sourceParkBaselineFrame = _frameSerial;
+    }
+    const NSUInteger generation = _generation;
+    __weak QPMacReplicaController* weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+                   dispatch_get_main_queue(), ^{
+        QPMacReplicaController* strongSelf = weakSelf;
+        if (strongSelf == nil || generation != strongSelf->_generation ||
+            !strongSelf->_sourceWasAccessibilityParked) return;
+        NSUInteger currentFrame = 0;
+        @synchronized (strongSelf) { currentFrame = strongSelf->_frameSerial; }
+        const NSUInteger freshFrames = currentFrame - strongSelf->_sourceParkBaselineFrame;
+        NSDictionary* sourceInfo = windowInfoForId(strongSelf->_sourceWindowId);
+        const bool onScreen = [sourceInfo[(id)kCGWindowIsOnscreen] boolValue];
+        const bool healthy = onScreen && freshFrames >= kAccessibilityParkMinimumFreshFrames;
+        quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("ax-park-health"),
+                          {{QStringLiteral("healthy"), healthy},
+                           {QStringLiteral("isOnScreen"), onScreen},
+                           {QStringLiteral("freshFrames"), static_cast<qulonglong>(freshFrames)},
+                           {QStringLiteral("baselineFrame"),
+                            static_cast<qulonglong>(strongSelf->_sourceParkBaselineFrame)},
+                           {QStringLiteral("currentFrame"), static_cast<qulonglong>(currentFrame)}});
+        if (healthy || strongSelf->_sourceAxWindow == nullptr ||
+            !strongSelf->_sourceHasOriginalPosition) return;
+        AXValueRef restoreValue = AXValueCreate(static_cast<AXValueType>(kAXValueCGPointType),
+                                                &strongSelf->_sourceOriginalPosition);
+        const AXError restoreError = AXUIElementSetAttributeValue(
+            strongSelf->_sourceAxWindow, kAXPositionAttribute, restoreValue);
+        if (restoreValue != nullptr) CFRelease(restoreValue);
+        strongSelf->_sourceWasAccessibilityParked = NO;
+        quizpane::diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("ax-park-rollback"),
+                          {{QStringLiteral("success"), restoreError == kAXErrorSuccess},
+                           {QStringLiteral("error"), axErrorName(restoreError)},
+                           {QStringLiteral("reason"), QStringLiteral("source-frame-stalled")}});
+    });
+#endif
+}
+
 - (void)activateMirrorPanel {
     if (_panel == nil) return;
     // 等价于用户从 Edge 点击回 QuizPane：浏览器课程窗仍保持 normal，
@@ -265,10 +526,23 @@ using namespace quizpane::external_window;
     [NSApp activateIgnoringOtherApps:YES];
     [_panel makeKeyAndOrderFront:nil];
     [_panel makeFirstResponder:_metalView];
+    quizpane::diagnostic::event(QStringLiteral("mac-mirror"), QStringLiteral("panel-activated"),
+                      {{QStringLiteral("sessionId"), _request.sessionId},
+                       {QStringLiteral("visible"), _panel.isVisible},
+                       {QStringLiteral("key"), _panel.isKeyWindow},
+                       {QStringLiteral("left"), _panel.frame.origin.x},
+                       {QStringLiteral("top"), _panel.frame.origin.y},
+                       {QStringLiteral("width"), _panel.frame.size.width},
+                       {QStringLiteral("height"), _panel.frame.size.height},
+                       {QStringLiteral("level"), static_cast<qlonglong>(_panel.level)}});
 }
 
 - (void)setVisible:(BOOL)visible {
     if (_panel == nil) return;
+    quizpane::diagnostic::event(QStringLiteral("mac-mirror"), QStringLiteral("panel-visibility-request"),
+                      {{QStringLiteral("visible"), static_cast<bool>(visible)},
+                       {QStringLiteral("panelVisible"), _panel.isVisible},
+                       {QStringLiteral("frameSerial"), static_cast<qulonglong>(_frameSerial)}});
     if (visible) {
         // orderOut 后仅 orderFront 不会恢复 MTKView 的首响应者状态，鼠标事件会
         // 落空。恢复老板键时重新让镜像面板成为可交互窗口。
@@ -284,7 +558,12 @@ using namespace quizpane::external_window;
 }
 
 - (void)prepareForRestore {
-    if (_panel == nil || _stream == nil) return;
+    if (_panel == nil || _stream == nil) {
+        quizpane::diagnostic::event(QStringLiteral("boss-restore"), QStringLiteral("prepare-skipped"),
+                          {{QStringLiteral("hasPanel"), _panel != nil},
+                           {QStringLiteral("hasStream"), _stream != nil}});
+        return;
+    }
     NSUInteger epoch;
     @synchronized (self) {
         _awaitingRestorePresentation = YES;
@@ -293,6 +572,12 @@ using namespace quizpane::external_window;
         epoch = ++_restoreEpoch;
         qInfo() << "[QuizPane][BossRestore] awaiting frame after"
                 << _restoreBaselineFrame << "epoch" << epoch;
+        quizpane::diagnostic::event(QStringLiteral("boss-restore"), QStringLiteral("prepare"),
+                          {{QStringLiteral("baselineFrame"),
+                            static_cast<qulonglong>(_restoreBaselineFrame)},
+                           {QStringLiteral("epoch"), static_cast<qulonglong>(epoch)},
+                           {QStringLiteral("hasCachedTexture"), _latestTexture != nil},
+                           {QStringLiteral("panelVisible"), _panel.isVisible}});
     }
     [_panel orderOut:nil];
 
@@ -311,8 +596,25 @@ using namespace quizpane::external_window;
         if (shouldFallback) {
             qInfo() << "[QuizPane][BossRestore] no fresh frame; presenting cached frame"
                     << "epoch" << epoch;
+            quizpane::diagnostic::event(QStringLiteral("boss-restore"),
+                              QStringLiteral("cached-frame-fallback"),
+                              {{QStringLiteral("epoch"), static_cast<qulonglong>(epoch)},
+                               {QStringLiteral("frameSerial"),
+                                static_cast<qulonglong>(strongSelf->_frameSerial)},
+                               {QStringLiteral("presentationPending"),
+                                strongSelf->_presentationPending}});
             [strongSelf activateMirrorPanel];
             [strongSelf->_metalView draw];
+        } else {
+            quizpane::diagnostic::event(QStringLiteral("boss-restore"),
+                              QStringLiteral("cached-frame-fallback-skipped"),
+                              {{QStringLiteral("epoch"), static_cast<qulonglong>(epoch)},
+                               {QStringLiteral("awaiting"),
+                                strongSelf->_awaitingRestorePresentation},
+                               {QStringLiteral("hasCachedTexture"),
+                                strongSelf->_latestTexture != nil},
+                               {QStringLiteral("presentationPending"),
+                                strongSelf->_presentationPending}});
         }
     });
 }

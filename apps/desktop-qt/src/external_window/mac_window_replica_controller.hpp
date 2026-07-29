@@ -3,6 +3,7 @@
 #include "mac_window_replica_backend.hpp"
 
 #import <AppKit/AppKit.h>
+#import <ApplicationServices/ApplicationServices.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
@@ -34,6 +35,13 @@
     NSUInteger _frameSerial;
     NSUInteger _restoreBaselineFrame;
     NSUInteger _restoreEpoch;
+    CGWindowID _sourceWindowId;
+    pid_t _sourceProcessId;
+    AXUIElementRef _sourceAxWindow;
+    CGPoint _sourceOriginalPosition;
+    BOOL _sourceHasOriginalPosition;
+    BOOL _sourceWasAccessibilityParked;
+    NSUInteger _sourceParkBaselineFrame;
     BOOL _seeking;
     NSPoint _pointerDown;
     CFTimeInterval _lastSeekEmissionTime;
@@ -44,6 +52,7 @@
 - (void)setVisible:(BOOL)visible;
 - (void)prepareForRestore;
 - (void)activateMirrorPanel;
+- (void)beginAccessibilitySourceParkingProbe;
 - (void)invalidateOwner;
 - (void)notifyResult:(const quizpane::external_window::AttachResult&)result;
 @end

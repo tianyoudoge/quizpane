@@ -9,6 +9,7 @@
   let disposed = false;
   let observer = null;
   let statusTimer = null;
+  let sourcePointerDown = null;
   const mediaEventNames = [
     "play", "pause", "ended", "loadedmetadata", "durationchange", "emptied"
   ];
@@ -99,6 +100,35 @@
     if (fingerprint === lastReportedSnapshot) return;
     lastReportedSnapshot = fingerprint;
     chrome.runtime.sendMessage({ type: "content-status", payload }).catch(() => {});
+  }
+
+  // 仅记录课程 popup 内的鼠标轨迹摘要（坐标比例、目标标签和拖动距离）；不读取
+  // 页面文字、视频画面、输入内容或链接。它用于和桌面镜像的转发事件对照。
+  function reportSourcePointer(kind, event, distance = -1) {
+    chrome.runtime.sendMessage({
+      type: "content-source-pointer",
+      payload: {
+        kind,
+        x: Math.round(Math.max(0, Math.min(1, event.clientX / Math.max(1, innerWidth))) * 1000) / 1000,
+        y: Math.round(Math.max(0, Math.min(1, event.clientY / Math.max(1, innerHeight))) * 1000) / 1000,
+        target: String(event.target?.tagName || "unknown").toLowerCase(),
+        distance: distance < 0 ? -1 : Math.round(distance * 10) / 10
+      }
+    }).catch(() => {});
+  }
+
+  function handleSourcePointerDown(event) {
+    if (disposed || !event.isTrusted) return;
+    sourcePointerDown = { x: event.clientX, y: event.clientY };
+    reportSourcePointer("down", event);
+  }
+
+  function handleSourcePointerUp(event) {
+    if (disposed || !event.isTrusted) return;
+    const down = sourcePointerDown;
+    sourcePointerDown = null;
+    const distance = down ? Math.hypot(event.clientX - down.x, event.clientY - down.y) : -1;
+    reportSourcePointer(distance > 8 ? "drag-end" : "click", event, distance);
   }
 
   async function pauseForBoss() {
@@ -268,6 +298,8 @@
     for (const eventName of mediaEventNames) {
       document.removeEventListener(eventName, handleMediaEvent, true);
     }
+    document.removeEventListener("pointerdown", handleSourcePointerDown, true);
+    document.removeEventListener("pointerup", handleSourcePointerUp, true);
     exitFocusMode({ report: false });
     restoreWindowBindingTitle({ report: false });
     chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
@@ -300,6 +332,9 @@
   }
 
   chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+
+  document.addEventListener("pointerdown", handleSourcePointerDown, true);
+  document.addEventListener("pointerup", handleSourcePointerUp, true);
 
   observer = new MutationObserver(() => {
     if (disposed) return;

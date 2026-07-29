@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "让小窗刷题的老板键暂停或恢复当前课程页面的视频。",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "tabs", "scripting", "alarms", "system.display"],
+  "permissions": ["storage", "tabs", "scripting", "alarms", "system.display", "offscreen", "tabCapture"],
   "host_permissions": ["http://127.0.0.1/*", "https://api.github.com/*"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {

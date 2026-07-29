@@ -1,4 +1,5 @@
 #include "mac_window_replica_controller.hpp"
+#include "quizpane/diagnostic_logger.hpp"
 
 #import <QuartzCore/QuartzCore.h>
 
@@ -111,6 +112,14 @@ quizpane::external_window::AttachResult successResult(
     _metalView.delegate = self;
     [_panel setContentView:_metalView];
     [_panel orderOut:nil];
+    quizpane::diagnostic::event(QStringLiteral("mac-mirror"), QStringLiteral("panel-created"),
+                      {{QStringLiteral("sessionId"), _request.sessionId},
+                       {QStringLiteral("left"), _panel.frame.origin.x},
+                       {QStringLiteral("top"), _panel.frame.origin.y},
+                       {QStringLiteral("width"), _panel.frame.size.width},
+                       {QStringLiteral("height"), _panel.frame.size.height},
+                       {QStringLiteral("level"), static_cast<qlonglong>(_panel.level)},
+                       {QStringLiteral("visible"), _panel.isVisible}});
 }
 
 - (void)stream:(SCStream*)stream
@@ -175,9 +184,51 @@ quizpane::external_window::AttachResult successResult(
             }
         }
     }
+    if (confirmingInitial || confirmingRestore) {
+        // MTKView 在 Panel 已 orderOut 时仍可能用缓存纹理完成一次绘制。此前这条
+        // 路径会把恢复握手标为完成，却从未重新 orderFront，导致老板键恢复后镜像
+        // 窗口继续隐藏。开始确认呈现前统一把 Panel 前置，缓存帧和新帧行为一致。
+        const auto presentPanel = ^{
+            [self activateMirrorPanel];
+            quizpane::diagnostic::event(QStringLiteral("mac-mirror"),
+                                        QStringLiteral("presentation-panel-front"),
+                                        {{QStringLiteral("initial"), confirmingInitial},
+                                         {QStringLiteral("restore"), confirmingRestore},
+                                         {QStringLiteral("restoreEpoch"),
+                                          static_cast<qulonglong>(restoreEpoch)},
+                                         {QStringLiteral("panelVisible"), _panel.isVisible},
+                                         {QStringLiteral("panelLevel"),
+                                          static_cast<qlonglong>(_panel.level)}});
+        };
+        if ([NSThread isMainThread]) presentPanel();
+        else dispatch_async(dispatch_get_main_queue(), presentPanel);
+    }
     MTLRenderPassDescriptor* pass = view.currentRenderPassDescriptor;
     id<CAMetalDrawable> drawable = view.currentDrawable;
-    if (texture == nil || pass == nil || drawable == nil) return;
+    if (texture == nil || pass == nil || drawable == nil) {
+        if (confirmingInitial || confirmingRestore) {
+            BOOL clearedPending = NO;
+            @synchronized (self) {
+                if (_presentationPending && _restoreEpoch == restoreEpoch) {
+                    _presentationPending = NO;
+                    clearedPending = YES;
+                }
+            }
+            quizpane::diagnostic::event(QStringLiteral("mac-mirror"),
+                              QStringLiteral("presentation-unavailable"),
+                              {{QStringLiteral("initial"), confirmingInitial},
+                               {QStringLiteral("restore"), confirmingRestore},
+                               {QStringLiteral("hasTexture"), texture != nil},
+                               {QStringLiteral("hasRenderPass"), pass != nil},
+                               {QStringLiteral("hasDrawable"), drawable != nil},
+                               {QStringLiteral("panelVisible"), _panel.isVisible},
+                               {QStringLiteral("presentationPending"), _presentationPending},
+                               {QStringLiteral("clearedPending"), clearedPending},
+                               {QStringLiteral("restoreEpoch"),
+                                static_cast<qulonglong>(restoreEpoch)}});
+        }
+        return;
+    }
     id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
     id<MTLRenderCommandEncoder> encoder =
         [commandBuffer renderCommandEncoderWithDescriptor:pass];
@@ -206,10 +257,19 @@ quizpane::external_window::AttachResult successResult(
                     strongSelf->_presentationPending = NO;
                 }
                 if (finishInitial) {
+                    // 只有镜像确实完成首帧呈现后才进行 AX 停靠探针；若辅助功能
+                    // 拒绝、Chrome 拒绝或帧流变慢，探针都会自行回滚而不影响 attach。
+                    [strongSelf beginAccessibilitySourceParkingProbe];
                     [strongSelf notifyResult:successResult(strongSelf->_request)];
                 } else if (finishRestore) {
                     qInfo() << "[QuizPane][BossRestore] Metal presentation completed"
                             << "epoch" << restoreEpoch;
+                    quizpane::diagnostic::event(QStringLiteral("boss-restore"),
+                                      QStringLiteral("metal-presentation-completed"),
+                                      {{QStringLiteral("epoch"),
+                                        static_cast<qulonglong>(restoreEpoch)},
+                                       {QStringLiteral("frameSerial"),
+                                        static_cast<qulonglong>(strongSelf->_frameSerial)}});
                     auto* owner = strongSelf->_owner;
                     if (owner != nullptr) owner->reportRestoreFrameReady();
                 }

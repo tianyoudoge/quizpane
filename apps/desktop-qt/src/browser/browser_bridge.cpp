@@ -2,6 +2,7 @@
 
 #include "browser_protocol.hpp"
 #include "../external_window/external_window_manager.hpp"
+#include "quizpane/diagnostic_logger.hpp"
 
 #include <QCoreApplication>
 #include <QHostAddress>
@@ -34,7 +35,14 @@ BrowserBridge::BrowserBridge(QObject* parent)
                 QJsonObject payload{{QStringLiteral("action"), action}};
                 if (normalizedPosition >= 0.0)
                     payload.insert(QStringLiteral("position"), normalizedPosition);
-                sendCommand(QStringLiteral("command.video_control"), payload);
+                const QString requestId = sendCommand(QStringLiteral("command.video_control"), payload);
+                diagnostic::event(QStringLiteral("mac-mirror-input"),
+                                  QStringLiteral("browser-command-sent"),
+                                  {{QStringLiteral("requestId"), requestId},
+                                   {QStringLiteral("action"), action},
+                                   {QStringLiteral("position"), normalizedPosition},
+                                   {QStringLiteral("sent"), !requestId.isEmpty()}});
+                if (!requestId.isEmpty()) pendingVideoControls_.insert(requestId, action);
             });
     connect(externalWindowManager_, &external_window::ExternalWindowManager::restoreFrameReady,
             this, [this] {
@@ -69,6 +77,9 @@ void BrowserBridge::requestBossHide() {
     pendingBossRestoreRequestId_.clear();
     bossRestoreCommandCompleted_ = false;
     bossRestoreFrameReady_ = false;
+    diagnostic::event(QStringLiteral("boss-restore"), QStringLiteral("hide-requested"),
+                      {{QStringLiteral("externalWindowActive"),
+                        status_.externalWindowActive}});
     externalWindowManager_->setVisible(false);
     sendCommand(QStringLiteral("command.boss_hide"));
 }
@@ -78,10 +89,15 @@ void BrowserBridge::requestBossRestore() {
     // 第一张关键帧可能早于命令回执到达，后续静止画面便不会再产生新帧。
     bossRestoreCommandCompleted_ = false;
     bossRestoreFrameReady_ = false;
+    diagnostic::event(QStringLiteral("boss-restore"), QStringLiteral("restore-requested"),
+                      {{QStringLiteral("externalWindowActive"),
+                        status_.externalWindowActive}});
     externalWindowManager_->prepareForRestore();
     pendingBossRestoreRequestId_ = sendCommand(QStringLiteral("command.boss_restore"));
     qInfo() << "[QuizPane][BossRestore] restore requested"
             << pendingBossRestoreRequestId_;
+    diagnostic::event(QStringLiteral("boss-restore"), QStringLiteral("browser-command-sent"),
+                      {{QStringLiteral("requestId"), pendingBossRestoreRequestId_}});
 #else
     externalWindowManager_->setVisible(true);
     sendCommand(QStringLiteral("command.boss_restore"));
@@ -228,6 +244,51 @@ void BrowserBridge::handleMessage(QWebSocket* socket, const QString& text) {
         externalWindowManager_->attach(request);
         return;
     }
+    if (type == QStringLiteral("externalWindow.source_parked")) {
+        const QJsonObject requested = payload.value(QStringLiteral("requested")).toObject();
+        const QJsonObject actual = payload.value(QStringLiteral("actual")).toObject();
+        diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("park-result"),
+                          {{QStringLiteral("sessionId"),
+                            payload.value(QStringLiteral("sessionId")).toString()},
+                           {QStringLiteral("success"),
+                            payload.value(QStringLiteral("success")).toBool()},
+                           {QStringLiteral("windowId"),
+                            static_cast<qlonglong>(payload.value(QStringLiteral("windowId")).toDouble(-1))},
+                           {QStringLiteral("requestedLeft"), requested.value(QStringLiteral("left")).toInt()},
+                           {QStringLiteral("requestedTop"), requested.value(QStringLiteral("top")).toInt()},
+                           {QStringLiteral("actualLeft"), actual.value(QStringLiteral("left")).toInt()},
+                           {QStringLiteral("actualTop"), actual.value(QStringLiteral("top")).toInt()},
+                           {QStringLiteral("state"), payload.value(QStringLiteral("state")).toString()},
+                           {QStringLiteral("error"), payload.value(QStringLiteral("error")).toString()}});
+        return;
+    }
+    if (type == QStringLiteral("externalWindow.source_input")) {
+        diagnostic::event(QStringLiteral("mac-source-window"),
+                          QStringLiteral("browser-input"),
+                          {{QStringLiteral("sessionId"),
+                            payload.value(QStringLiteral("sessionId")).toString()},
+                           {QStringLiteral("kind"), payload.value(QStringLiteral("kind")).toString()},
+                           {QStringLiteral("x"), payload.value(QStringLiteral("x")).toDouble(-1)},
+                           {QStringLiteral("y"), payload.value(QStringLiteral("y")).toDouble(-1)},
+                           {QStringLiteral("target"), payload.value(QStringLiteral("target")).toString()},
+                           {QStringLiteral("distance"), payload.value(QStringLiteral("distance")).toDouble(-1)}});
+        return;
+    }
+    if (type == QStringLiteral("externalWindow.tab_capture")) {
+        diagnostic::event(QStringLiteral("tab-capture"),
+                          payload.value(QStringLiteral("event")).toString(),
+                          {{QStringLiteral("tabId"),
+                            static_cast<qlonglong>(payload.value(QStringLiteral("tabId")).toDouble(-1))},
+                           {QStringLiteral("videoState"), payload.value(QStringLiteral("videoState")).toString()},
+                           {QStringLiteral("audioState"), payload.value(QStringLiteral("audioState")).toString()},
+                           {QStringLiteral("framesPerSecond"),
+                            payload.value(QStringLiteral("framesPerSecond")).toInt(-1)},
+                           {QStringLiteral("videoTracks"), payload.value(QStringLiteral("videoTracks")).toInt(-1)},
+                           {QStringLiteral("audioTracks"), payload.value(QStringLiteral("audioTracks")).toInt(-1)},
+                           {QStringLiteral("error"), payload.value(QStringLiteral("error")).toString()}});
+        return;
+    }
     if (type == QStringLiteral("externalWindow.detach")) {
         externalWindowManager_->detach();
         BrowserStatus next = status_;
@@ -238,18 +299,33 @@ void BrowserBridge::handleMessage(QWebSocket* socket, const QString& text) {
     }
     if (type == QStringLiteral("result")) {
         const QString requestId = message.value(QStringLiteral("requestId")).toString();
+        const bool commandSuccess = payload.value(QStringLiteral("success")).toBool();
+        const QString commandError = payload.value(QStringLiteral("error")).toString();
+        if (const auto it = pendingVideoControls_.find(requestId);
+            it != pendingVideoControls_.end()) {
+            diagnostic::event(QStringLiteral("mac-mirror-input"),
+                              QStringLiteral("browser-command-result"),
+                              {{QStringLiteral("requestId"), requestId},
+                               {QStringLiteral("action"), it.value()},
+                               {QStringLiteral("success"), commandSuccess},
+                               {QStringLiteral("error"), commandError}});
+            pendingVideoControls_.erase(it);
+        }
 #if defined(Q_OS_MACOS)
         if (!pendingBossRestoreRequestId_.isEmpty() &&
             requestId == pendingBossRestoreRequestId_) {
             bossRestoreCommandCompleted_ = true;
-            qInfo() << "[QuizPane][BossRestore] browser restore completed"
-                    << payload.value(QStringLiteral("success")).toBool();
+            qInfo() << "[QuizPane][BossRestore] browser restore completed" << commandSuccess;
+            diagnostic::event(QStringLiteral("boss-restore"),
+                              QStringLiteral("browser-command-completed"),
+                              {{QStringLiteral("requestId"), requestId},
+                               {QStringLiteral("success"), commandSuccess},
+                               {QStringLiteral("frameReady"), bossRestoreFrameReady_}});
             finishBossRestoreIfReady();
         }
 #endif
         emit commandCompleted(requestId,
-                              payload.value(QStringLiteral("success")).toBool(),
-                              payload.value(QStringLiteral("error")).toString());
+                              commandSuccess, commandError);
     }
 }
 
@@ -293,6 +369,7 @@ void BrowserBridge::finishBossRestoreIfReady() {
     pendingBossRestoreRequestId_.clear();
     bossRestoreCommandCompleted_ = false;
     bossRestoreFrameReady_ = false;
+    diagnostic::event(QStringLiteral("boss-restore"), QStringLiteral("handshake-complete"));
     sendCommand(QStringLiteral("command.finalize_boss_restore"));
 #endif
 }
@@ -318,6 +395,7 @@ void BrowserBridge::disconnectClient(QWebSocket* socket) {
     pendingBossRestoreRequestId_.clear();
     bossRestoreCommandCompleted_ = false;
     bossRestoreFrameReady_ = false;
+    pendingVideoControls_.clear();
     externalWindowManager_->detach();
     BrowserStatus next;
     setStatus(next);

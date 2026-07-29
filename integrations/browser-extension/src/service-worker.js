@@ -1,6 +1,7 @@
 import { createBridgeClient } from "./bridge-client.js";
 import { createCourseBindingController } from "./course-binding.js";
 import { createExternalWindowController } from "./external-window.js";
+import { createTabCaptureKeeper } from "./tab-capture-keeper.js";
 import { createUpdateChecker, UPDATE_ALARM } from "./update-checker.js";
 
 function emptyCourseState() {
@@ -69,6 +70,12 @@ const context = {
 const course = createCourseBindingController(context);
 const externalWindow = createExternalWindowController(context);
 context.externalWindow = externalWindow;
+const tabCaptureKeeper = createTabCaptureKeeper({
+  chromeApi: chrome,
+  send: (...args) => bridge.send(...args),
+  isMacOS: () => navigator.userAgent.includes("Macintosh")
+});
+context.tabCaptureKeeper = tabCaptureKeeper;
 
 const bridge = createBridgeClient({
   browserName,
@@ -128,7 +135,9 @@ chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === UPDATE_ALARM) updateChecker.checkForUpdate();
 });
 chrome.tabs.onRemoved.addListener(tabId => {
-  if (tabId === state.boundTabId) course.clearBinding();
+  if (tabId !== state.boundTabId) return;
+  tabCaptureKeeper.stop();
+  course.clearBinding();
 });
 chrome.windows.onRemoved.addListener(windowId => {
   if (windowId !== state.courseWindowId) return;
@@ -147,6 +156,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     await restored;
     if (request?.type === "content-status" && sender.tab?.id === state.boundTabId) {
       course.updateCourseState(request.payload);
+      return { ok: true };
+    }
+    if (request?.type === "content-source-pointer" && sender.tab?.id === state.boundTabId &&
+        state.externalWindowBinding?.sessionId) {
+      bridge.send("externalWindow.source_input", {
+        sessionId: state.externalWindowBinding.sessionId,
+        ...request.payload
+      });
+      return { ok: true };
+    }
+    if (request?.type === "tab-capture-keeper.event") {
+      bridge.send("externalWindow.tab_capture", request.payload || {});
       return { ok: true };
     }
     if (request?.type === "bind-current-tab") {

@@ -54,6 +54,9 @@ bool isExtensionMessageType(const QString& type) {
            type == QStringLiteral("event.video_state_changed") ||
            type == QStringLiteral("event.control_error") ||
            type == QStringLiteral("externalWindow.attach") ||
+           type == QStringLiteral("externalWindow.source_parked") ||
+           type == QStringLiteral("externalWindow.source_input") ||
+           type == QStringLiteral("externalWindow.tab_capture") ||
            type == QStringLiteral("externalWindow.detach") ||
            type == QStringLiteral("result");
 }
