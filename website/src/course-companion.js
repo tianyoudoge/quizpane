@@ -145,7 +145,7 @@
   }
 
   async function init() {
-    const response = await fetch("content.json");
+    const response = await fetch(siteUrl("content.json"));
     const content = await response.json();
     const course = content.courseCompanion;
     const extension = content.downloads.browserExtension;

@@ -125,7 +125,7 @@
       "id": "macos",
       "label": "macOS",
       "sublabel": "Apple Silicon / Intel",
-      "icon": "apple",
+      "icon": "assets/icons/apple.svg",
       "choices": [
         {
           "label": "Apple Silicon",
@@ -144,14 +144,14 @@
         "label": "Windows 10 / 11",
         "sublabel": "64 位 · 绿色版 ZIP",
         "asset": "QuizPane-windows-x64-portable.zip",
-        "icon": "windows"
+        "icon": "assets/icons/windows.svg"
       },
       {
         "id": "linux-x86_64",
         "label": "Linux / 统信 UOS / 银河麒麟",
         "sublabel": "x64 · .deb / .tar.xz",
         "asset": "QuizPane-linux-x86_64.deb",
-        "icon": "linux"
+        "icon": "assets/icons/linux.svg"
       }
     ],
     "fallback": {

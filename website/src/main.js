@@ -180,7 +180,7 @@
 
       const icon = document.createElement("img");
       icon.className = "icon";
-      icon.src = `assets/icons/${platform.icon}.svg`;
+      icon.src = platform.icon;
       icon.alt = "";
       icon.width = 28;
       icon.height = 28;
@@ -386,7 +386,7 @@
   }
 
   async function init() {
-    const response = await fetch("content.json");
+    const response = await fetch(siteUrl("content.json"));
     const content = await response.json();
     state.content = content;
 

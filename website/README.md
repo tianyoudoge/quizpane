@@ -48,10 +48,10 @@ node website/scripts/build-site.mjs
 零依赖 Node 脚本（Node 18+ 即可），做的事情：
 
 1. 把 `src/` 整个拷贝到 `dist/`；
-2. 对 `main.css`、`main.js` 按内容生成哈希后缀（如 `main.170978eb8b.css`），
-   并同步改写 `index.html` 里的引用，方便设置长缓存（Nginx 模板对 `/assets/`
-   之外的 `/` 走 `no-cache`，但更新静态站时新旧文件名不同可以避免旧资源被
-   浏览器缓存卡住）；
+2. 对 `assets/` 下的图片、图标、截图等文件，以及页面加载的 CSS/JS，按内容生成
+   哈希后缀并同步改写 HTML、JS 和 `content.json` 中的引用。Nginx 可让这些文件
+   长期缓存；HTML、`content.json` 则保持稳定路径并使用 `no-cache`，确保页面和
+   下载信息能及时更新；
 3. 不做打包、压缩、Sass/TS 编译——保持源码即产物、易于审查。
 
 产物在 `website/dist/`，其中 `index.html` 是 `deploy/scripts/install-artifacts.sh
