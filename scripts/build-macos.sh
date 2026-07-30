@@ -59,7 +59,7 @@ QT_DEPLOY_LIB_PATHS=()
 if [[ -d "$QT_PREFIX/lib" ]]; then
   QT_DEPLOY_LIB_PATHS+=("$QT_PREFIX/lib")
 fi
-for qt_module in qtbase qtsvg qtwebengine qtwebsockets qtvirtualkeyboard; do
+for qt_module in qtbase qtsvg qtwebengine qtwebsockets; do
   if brew list --versions "$qt_module" >/dev/null 2>&1; then
     qt_module_lib="$(brew --prefix "$qt_module")/lib"
     if [[ -d "$qt_module_lib" ]]; then
@@ -89,14 +89,12 @@ resolve_qt_framework() {
       return 0
     fi
   fi
-  echo "缺少 Qt Framework：$framework（QT_PREFIX=$QT_PREFIX）" >&2
+  echo "缺少 Qt Framework：${framework}（QT_PREFIX=${QT_PREFIX}）" >&2
   return 1
 }
 QT_SVG_FRAMEWORK="$(resolve_qt_framework QtSvg qtsvg)"
 QT_PDF_FRAMEWORK="$(resolve_qt_framework QtPdf qtwebengine)"
 QT_WEBSOCKETS_FRAMEWORK="$(resolve_qt_framework QtWebSockets qtwebsockets)"
-QT_VIRTUAL_KEYBOARD_FRAMEWORK="$(resolve_qt_framework QtVirtualKeyboard qtvirtualkeyboard)"
-QT_VIRTUAL_KEYBOARD_QML_FRAMEWORK="$(resolve_qt_framework QtVirtualKeyboardQml qtvirtualkeyboard)"
 
 BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
@@ -203,8 +201,6 @@ mkdir -p "$STAGE_ROOT/lib"
 ln -s "$QT_SVG_FRAMEWORK" "$STAGE_ROOT/lib/QtSvg.framework"
 ln -s "$QT_PDF_FRAMEWORK" "$STAGE_ROOT/lib/QtPdf.framework"
 ln -s "$QT_WEBSOCKETS_FRAMEWORK" "$STAGE_ROOT/lib/QtWebSockets.framework"
-ln -s "$QT_VIRTUAL_KEYBOARD_FRAMEWORK" "$STAGE_ROOT/lib/QtVirtualKeyboard.framework"
-ln -s "$QT_VIRTUAL_KEYBOARD_QML_FRAMEWORK" "$STAGE_ROOT/lib/QtVirtualKeyboardQml.framework"
 deploy_app "$STAGED_APP"
 STAGED_STUDIO="$STAGE_ROOT/QuizPaneQuestionMaker.app"
 ditto "$SOURCE_STUDIO" "$STAGED_STUDIO"
