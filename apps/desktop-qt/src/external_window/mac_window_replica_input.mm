@@ -50,6 +50,11 @@
 
 @implementation QPMacReplicaController (InputForwarding)
 
+// 镜像面板只显示画面，不接收 Chromium 的真实 DOM 事件，因此这里把鼠标
+// 交互重新解释成两种语义再转发给 Qt 侧处理：按在底部进度条区域
+// （y <= 56pt）算作拖动进度条（seek，按 30fps 节流上报避免刷屏）；
+// 其余区域按下-抬起位移小于 8pt 算作一次点击（toggle 播放/暂停），
+// 位移更大则视为普通拖拽，不触发任何操作。
 - (void)emitVideoControl:(const QString&)action position:(double)position {
     quizpane::diagnostic::event(QStringLiteral("mac-mirror-input"),
                       QStringLiteral("control-emitted"),

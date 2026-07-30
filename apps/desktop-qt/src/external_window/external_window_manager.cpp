@@ -142,6 +142,10 @@ State ExternalWindowManager::state() const { return d_->state; }
 
 void ExternalWindowManager::tryAttachWindows() {
 #if defined(Q_OS_WIN)
+    // Windows 没有 macOS 那种"目标窗口尚未出现就重试几次"的内建机制，
+    // 这里手写一个轮询：每 50ms 尝试一次 attach，直到成功或 2 秒超时。
+    // 需要重试是因为 Chromium 创建 popup 窗口和把 document.title 同步
+    // 到原生窗口标题之间有短暂延迟，第一次 EnumWindows 可能还找不到它。
     if (!d_->windowsAttachPending || !d_->windowsBackend) return;
 
     ++d_->windowsAttachAttempt;

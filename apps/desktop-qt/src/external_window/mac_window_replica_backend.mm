@@ -5,6 +5,9 @@
 namespace quizpane::external_window {
 
 MacWindowReplicaBackend::MacWindowReplicaBackend(QObject* parent) : QObject(parent) {
+    // __bridge_retained：把 ARC 管理的 Objective-C 对象转成裸指针，同时让
+    // ARC 放弃这块内存的自动释放权，改由 C++ 侧手动持有（析构里的
+    // CFBridgingRelease 是唯一归还所有权的地方，二者必须成对出现）。
     controller_ = (__bridge_retained void*)[[QPMacReplicaController alloc] initWithOwner:this];
 }
 

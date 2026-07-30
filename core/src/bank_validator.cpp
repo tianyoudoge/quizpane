@@ -8,6 +8,12 @@
 namespace quizpane {
 namespace {
 
+// 全文校验风格：不是"发现第一个错误就 throw/return"，而是
+// 尽量收集完整的 errors 列表再返回给调用方（题库制作器要能
+// 一次性把所有问题列出来，而不是让用户改一个报一个）。因此
+// 下面大量用 continue 而不是提前 return，每个 continue 前
+// 都已经把这一项的错误 append 进 errors。
+
 const QStringList& practiceModes() {
     static const QStringList modes{"all", "sequential", "random"};
     return modes;
@@ -23,6 +29,8 @@ bool validId(const QString& id) {
     return pattern.match(id).hasMatch();
 }
 
+// Schema 用"白名单键集合"而非"逐字段可选校验"来防止额外字段：JSON 本身
+// 不像强类型语言那样会在多余字段上报错，这里手动补上这道防线。
 bool hasOnlyKeys(const QJsonObject& object, const QSet<QString>& allowed) {
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
         if (!allowed.contains(it.key())) return false;
@@ -65,6 +73,8 @@ bool validAsset(const QJsonValue& value) {
         (!asset.contains("crop") || validNormalizedCrop(asset.value("crop")));
 }
 
+// 返回值是校验通过的 catalogId 集合，供后续 validateMaterials/题目校验做
+// 外键式的引用检查（question.catalogId、material.catalogId 是否存在）。
 QSet<QString> validateCatalogs(const QJsonArray& catalogs, QList<BankValidationError>* errors) {
     QSet<QString> catalogIds;
     for (const auto& value : catalogs) {
@@ -198,9 +208,11 @@ QHash<QString, QJsonObject> validateMaterials(const QJsonArray& materials, const
     return materialsById;
 }
 
-// 校验单道题的选项、答案、review、source 子结构。materialId 相关的引用规则
-// （不存在的材料、分类不一致、正文完整复制进 stem）由调用方在此之前处理，
-// 因为需要访问 materialsById，不属于"题目内部结构"的范畴。
+// 校验单道题的选项、答案、review、source 子结构；hasAnswerKey
+// 对应题库级别的 answerPolicy（无答案题库不应出现答案相关
+// 字段）。materialId 相关的引用规则（材料不存在、分类不一致、
+// 正文被完整复制进 stem）需要访问 materialsById，由调用方
+// 在此之前单独处理，不属于"题目内部结构"的范畴。
 void validateQuestionCommon(const QJsonObject& question, int index, const QString& id,
                             bool hasAnswerKey, QList<BankValidationError>* errors) {
     const auto options = question.value("options").toArray();

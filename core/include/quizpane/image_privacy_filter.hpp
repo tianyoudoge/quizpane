@@ -22,9 +22,9 @@ struct ImagePrivacyResult {
     qsizetype processedPixels = 0;
 };
 
-// Converts neutral near-white pixels to transparency in one linear pass.
-// Colored pixels and dark information are preserved. No OpenCV or convolution
-// is used, making the operation suitable for low-end desktop hardware.
+// 单像素扫描把近白背景转成透明（O(width*height)，一次遍历），保留彩色和
+// 深色内容；不用 OpenCV，也不做卷积/边缘检测，纯定点数运算，低端设备也能跑。
+// 具体判定逻辑（色度 chroma + 亮度 luma 双阈值）见 .cpp 实现。
 ImagePrivacyResult removeNearWhiteBackground(
     const QImage& source,
     const WhiteBackgroundOptions& options = {});

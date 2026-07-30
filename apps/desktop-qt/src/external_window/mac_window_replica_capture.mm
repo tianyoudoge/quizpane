@@ -22,9 +22,9 @@ namespace {
 
 constexpr int kMaxCaptureWidth = 1920;
 constexpr int kMaxCaptureHeight = 1080;
-// 这是当前扩展过去试图保留的标题栏面积。Chrome 扩展 API 会拒绝这个位置，
-// 而 AX 只在诊断包中作为一次受控验证使用：窗口仍是 normal，且至少有一角
-// 落在屏幕内，随后用帧流健康检查决定是否保留这个位置。
+// AX 停靠只暴露源窗右下角这么大的区域：窗口仍是 normal 状态，
+// 且至少有一角留在屏幕内，因此不会被 Chrome 扩展 API 判定为
+// "移出屏幕"而拒绝（详见 beginAccessibilitySourceParkingProbe）。
 constexpr CGFloat kAccessibilityParkExposeWidth = 70.0;
 constexpr CGFloat kAccessibilityParkExposeHeight = 28.0;
 constexpr NSUInteger kAccessibilityParkMinimumFreshFrames = 10;
@@ -126,6 +126,10 @@ using namespace quizpane::external_window;
     [self detach];
     _request = request;
     _reported = NO;
+    // _generation 是这次 attach 尝试的"代号"：下面一连串异步回调（窗口查找、
+    // SCStream 建立、首帧确认）在被调度之后，用户可能已经调用 detach 或
+    // 发起新一轮 attach。回调触发时先比对 generation 是否还等于当前值，
+    // 不相等就说明这次尝试已经作废，直接丢弃结果，不去动已经被替换的状态。
     const NSUInteger generation = ++_generation;
     if (!@available(macOS 13.0, *)) {
         [self notifyFailure:QStringLiteral("网页视频置顶需要 macOS 13 或更高版本")];
@@ -341,11 +345,27 @@ using namespace quizpane::external_window;
     }
 }
 
+// 尝试通过 macOS 辅助功能（Accessibility, AX）API 把源浏览器窗口“停靠”到
+// 当前屏幕右下角，只留一角（kAccessibilityParkExposeWidth ×
+// kAccessibilityParkExposeHeight）暴露在屏幕内，其余部分移出可视区域。
+// 目的：绕开我们之前尝试的“扩展 API 移窗”方案——Chrome 扩展会拒绝把窗口整体
+// 移出屏幕的请求，但只要窗口仍是 normal 状态且至少一角在屏幕内，AX 层面的移动
+// 就不会被拒绝。停靠后由帧流健康检查（ax-park-health，见下方 dispatch_after）
+// 决定这次停靠是否保留：如果 2 秒内没有收到足够的新镜像帧（说明源窗口可能已
+// 经不在前台渲染），会自动回滚到原始位置。
+//
+// 这是面向所有用户分发的正式功能，在任何构建配置下都无条件
+// 执行——不与 QUIZPANE_DIAGNOSTIC_LOGGING（诊断日志/调试符号
+// 开关）绑定。首次调用会触发 AXIsProcessTrustedWithOptions
+// (kAXTrustedCheckOptionPrompt: YES) 弹出系统级"允许辅助功能
+// 访问"授权对话框，这是预期内的一次性用户交互，不做特殊规避。
+//
+// 平台差异：Windows 侧没有对应功能。Windows 使用
+// WindowsWindowTopmostBackend（windows_window_topmost_backend.cpp），
+// 通过 SetWindowPos(..., HWND_TOPMOST, ...) 维持源窗口置顶/
+// 可见状态，不依赖任何需要授权弹窗的 API，因此也没有类似的
+// 门控问题。
 - (void)beginAccessibilitySourceParkingProbe {
-#ifndef QUIZPANE_DIAGNOSTIC_LOGGING
-    // 正式包不主动索取辅助功能授权。这条实验仅在用户安装的诊断包中开启。
-    return;
-#else
     if (_sourceWindowId == kCGNullWindowID || _sourceProcessId <= 0 ||
         _sourceAxWindow != nullptr) {
         return;
@@ -515,7 +535,6 @@ using namespace quizpane::external_window;
                            {QStringLiteral("error"), axErrorName(restoreError)},
                            {QStringLiteral("reason"), QStringLiteral("source-frame-stalled")}});
     });
-#endif
 }
 
 - (void)activateMirrorPanel {

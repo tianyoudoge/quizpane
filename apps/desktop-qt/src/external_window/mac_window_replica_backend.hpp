@@ -6,6 +6,11 @@
 
 namespace quizpane::external_window {
 
+// Qt/C++ 与 Objective-C++（QPMacReplicaController，实现在
+// mac_window_replica_capture.mm 等 .mm 文件）之间的桥接层。这个
+// 头文件本身是纯 C++，不出现任何 AppKit/ObjC 类型，controller_
+// 用 void* 存放桥接后的 Objective-C 对象指针（.mm 里 __bridge
+// 转换），这样引用这个类的 .cpp 文件不需要能编译 Objective-C++。
 class MacWindowReplicaBackend final : public QObject {
     Q_OBJECT
 

@@ -125,6 +125,10 @@ quizpane::external_window::AttachResult successResult(
 - (void)stream:(SCStream*)stream
     didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
     ofType:(SCStreamOutputType)type {
+    // ScreenCaptureKit 在 _captureQueue（后台串行队列）上持续回调这里，
+    // 把每一帧从 CVPixelBuffer 转成可以被 Metal 采样的纹理并缓存下来；
+    // 真正的绘制发生在 MTKView 的 drawInMTKView（由系统按帧率驱动）里，
+    // 这里只负责"喂"最新一帧，两者通过 @synchronized 保护的成员变量解耦。
     if (stream != _stream || type != SCStreamOutputTypeScreen
         || !CMSampleBufferIsValid(sampleBuffer)) return;
     CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
@@ -169,6 +173,10 @@ quizpane::external_window::AttachResult successResult(
 }
 
 - (void)drawInMTKView:(MTKView*)view {
+    // MTKView 按 preferredFramesPerSecond 定期回调这里；大多数帧只是把
+    // 最新纹理画上去，但 attach 成功后的第一帧、以及老板键恢复后的第一帧，
+    // 需要在真正呈现完成（GPU 提交并确认，见下方 addCompletedHandler）
+    // 之后才通知外部"镜像已就绪"，这两个标志位就是用来只在那一帧做确认。
     id<MTLTexture> texture = nil;
     BOOL confirmingInitial = NO;
     BOOL confirmingRestore = NO;

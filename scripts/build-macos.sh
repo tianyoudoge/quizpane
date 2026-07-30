@@ -59,7 +59,7 @@ QT_DEPLOY_LIB_PATHS=()
 if [[ -d "$QT_PREFIX/lib" ]]; then
   QT_DEPLOY_LIB_PATHS+=("$QT_PREFIX/lib")
 fi
-for qt_module in qtbase qtsvg qtwebengine qtwebsockets; do
+for qt_module in qtbase qtsvg qtwebengine qtwebsockets qtvirtualkeyboard; do
   if brew list --versions "$qt_module" >/dev/null 2>&1; then
     qt_module_lib="$(brew --prefix "$qt_module")/lib"
     if [[ -d "$qt_module_lib" ]]; then
@@ -95,6 +95,8 @@ resolve_qt_framework() {
 QT_SVG_FRAMEWORK="$(resolve_qt_framework QtSvg qtsvg)"
 QT_PDF_FRAMEWORK="$(resolve_qt_framework QtPdf qtwebengine)"
 QT_WEBSOCKETS_FRAMEWORK="$(resolve_qt_framework QtWebSockets qtwebsockets)"
+QT_VIRTUAL_KEYBOARD_FRAMEWORK="$(resolve_qt_framework QtVirtualKeyboard qtvirtualkeyboard)"
+QT_VIRTUAL_KEYBOARD_QML_FRAMEWORK="$(resolve_qt_framework QtVirtualKeyboardQml qtvirtualkeyboard)"
 
 BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
@@ -140,7 +142,10 @@ STAGED_APP="$STAGE_ROOT/QuizPane.app"
 ditto "$SOURCE_APP" "$STAGED_APP"
 deploy_app() {
   local app_path="$1"
-  local deploy_args=("$MACDEPLOYQT" "$app_path" -always-overwrite)
+  # 每次都在全新的 staging App 上部署，强制覆盖只会让 macdeployqt 在同一个
+  # Framework 的多条依赖边上重复改写 install name；Qt 6.11 在此场景会竞争
+  # 临时文件并报 "cannot rename ... .XXXXXX"。
+  local deploy_args=("$MACDEPLOYQT" "$app_path")
   # Homebrew 第三方 dylib 可能带着已因 install_name 改写而失效的 ad-hoc 签名。
   # macdeployqt 默认会在部署中途验证它并提前失败；最终本来就会统一签整个 App，
   # 因此支持 -no-codesign 的 Qt 版本先关闭中途签名。旧版没有该参数时保持默认。
@@ -198,6 +203,8 @@ mkdir -p "$STAGE_ROOT/lib"
 ln -s "$QT_SVG_FRAMEWORK" "$STAGE_ROOT/lib/QtSvg.framework"
 ln -s "$QT_PDF_FRAMEWORK" "$STAGE_ROOT/lib/QtPdf.framework"
 ln -s "$QT_WEBSOCKETS_FRAMEWORK" "$STAGE_ROOT/lib/QtWebSockets.framework"
+ln -s "$QT_VIRTUAL_KEYBOARD_FRAMEWORK" "$STAGE_ROOT/lib/QtVirtualKeyboard.framework"
+ln -s "$QT_VIRTUAL_KEYBOARD_QML_FRAMEWORK" "$STAGE_ROOT/lib/QtVirtualKeyboardQml.framework"
 deploy_app "$STAGED_APP"
 STAGED_STUDIO="$STAGE_ROOT/QuizPaneQuestionMaker.app"
 ditto "$SOURCE_STUDIO" "$STAGED_STUDIO"
