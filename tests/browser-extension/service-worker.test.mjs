@@ -257,7 +257,7 @@ test("extension update notice leads to the official download page", async () => 
       return ({
       ok: true,
       json: async () => ({
-        tag: "v0.4.0",
+        tag: "v0.4.1",
         assets: { "QuizPane-course-companion.zip": { size: 1 } }
       })
       });
