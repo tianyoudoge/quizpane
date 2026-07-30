@@ -6,6 +6,7 @@ param(
     [string]$VcpkgTargetTriplet = "",
     [string]$TessdataDir = $env:TESSDATA_DIR,
     [switch]$DebugBuild,
+    [switch]$EnableDiagnosticLogging,
     [switch]$VerboseLogs
 )
 $ErrorActionPreference = "Stop"
@@ -15,7 +16,7 @@ $Root = (Resolve-Path "$PSScriptRoot/..").Path
 $Build = Join-Path $Root $BuildDir
 $Dist = Join-Path $Root $DistDir
 $BuildType = if ($DebugBuild) { "RelWithDebInfo" } else { "Release" }
-$DiagnosticLogging = if ($DebugBuild) { "ON" } else { "OFF" }
+$DiagnosticLogging = if ($DebugBuild -or $EnableDiagnosticLogging) { "ON" } else { "OFF" }
 $PackageSuffix = if ($DebugBuild) { "-debug" } else { "" }
 if ($VerboseLogs -and -not $DebugBuild) {
   throw "-VerboseLogs 只能与 -DebugBuild 一起使用"

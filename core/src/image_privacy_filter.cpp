@@ -33,12 +33,17 @@ ImagePrivacyResult removeNearWhiteBackground(
             const int originalAlpha = qAlpha(pixel);
             const int maximum = qMax(red, qMax(green, blue));
             const int minimum = qMin(red, qMin(green, blue));
+            // chroma 越小越接近灰阶/白色，越大说明颜色越鲜艳（饱和）。
             const int chroma = maximum - minimum;
+            // ITU-R BT.601 灰度权重的定点数近似（>>8 相当于 /256）。
             const int luma = (77 * red + 150 * green + 29 * blue) >> 8;
 
             int alpha = originalAlpha;
             if (originalAlpha > 0 && chroma <= protectedChroma &&
                 luma > opaqueLuma) {
+                // chroma 低（接近灰白）且 luma 高（接近白）才判定为背景像素；
+                // 彩色像素（chroma 大，比如红色印章、彩色插图）永远不会被这条
+                // 分支命中，从而被完整保留——这是与简单"抠白底"的关键区别。
                 const int coverage = qBound(
                     0, ((transparentLuma - luma) * 255) / lumaRange, 255);
                 alpha = (originalAlpha * coverage + 127) / 255;
@@ -63,6 +68,8 @@ ImagePrivacyResult removeNearWhiteBackground(
 
     ImagePrivacyResult result;
     result.processedPixels = qsizetype(output.width()) * output.height();
+    // right/bottom 仍为初始的 -1，说明整张图没有一个像素达到 contentAlpha
+    // 阈值——即整图都被判定为背景，返回 1x1 透明占位图而不是原图或空图。
     if (right < left || bottom < top) {
         result.image = QImage(1, 1, QImage::Format_ARGB32);
         result.image.fill(Qt::transparent);

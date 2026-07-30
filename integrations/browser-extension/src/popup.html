@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="popup.css">
+    <title>小窗刷题网课伴侣</title>
+  </head>
+  <body>
+    <main>
+      <h1>小窗刷题网课伴侣</h1>
+      <p id="connection">正在连接本机 QuizPane…</p>
+      <p id="course">尚未绑定课程页面</p>
+      <section id="update" class="update" hidden aria-live="polite">
+        <strong id="update-title"></strong>
+        <p id="update-detail"></p>
+        <button id="open-update" class="secondary" type="button">查看更新与安装说明</button>
+      </section>
+      <p id="privacy-note">绑定后仅在本机读取当前页面标题和视频播放状态，用于暂停、恢复和视频聚焦小窗控制；不会上传课程内容、Cookie 或视频地址。</p>
+      <button id="bind">绑定并进入视频聚焦小窗</button>
+      <button id="toggle" hidden>暂停 / 继续</button>
+      <button id="show-window" hidden>显示视频聚焦小窗</button>
+      <button id="return-tab" class="secondary" hidden>放回原浏览器</button>
+      <button id="unbind" class="secondary" hidden>解除绑定</button>
+      <button id="check-update" class="text-button" type="button">检查扩展更新</button>
+      <p id="error" role="alert"></p>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

@@ -110,7 +110,7 @@ void installProviderHandoffServer(QLocalServer* server, quizpane::MainWindow* wi
     }
     QObject::connect(server, &QLocalServer::newConnection, server, [server, window] {
         while (QLocalSocket* socket = server->nextPendingConnection()) {
-            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, window] {
+            const auto handleRequest = [socket, window] {
                 QByteArray buffered = socket->property("quizpane-control-buffer").toByteArray();
                 buffered += socket->readAll();
                 if (buffered.size() > 16 * 1024) {
@@ -145,7 +145,11 @@ void installProviderHandoffServer(QLocalServer* server, quizpane::MainWindow* wi
                 quizpane::diagnostic::event(QStringLiteral("handoff"), QStringLiteral("provider-accepted"),
                     {{QStringLiteral("file"), QFileInfo(path).fileName()}});
                 sendControlReply(socket, true);
-            });
+            };
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, handleRequest);
+            // Windows can deliver pipe data before the readyRead connection above
+            // is installed. Consume already-buffered data immediately as well.
+            handleRequest();
         }
     });
     quizpane::diagnostic::event(QStringLiteral("handoff"), QStringLiteral("server-ready"),

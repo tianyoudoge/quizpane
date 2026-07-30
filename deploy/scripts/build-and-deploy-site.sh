@@ -72,9 +72,10 @@ if [[ -z "$remote_host" ]]; then
   exit 0
 fi
 
-echo "Syncing website/dist to $remote_host:$remote_repo/website/dist..."
-ssh "$remote_host" "mkdir -p '$remote_repo/website'"
+echo "Syncing website/dist and deployment scripts to $remote_host:$remote_repo..."
+ssh "$remote_host" "mkdir -p '$remote_repo/website' '$remote_repo/deploy/scripts'"
 rsync -az --delete "$repo_root/website/dist/" "$remote_host:$remote_repo/website/dist/"
+rsync -az --delete "$repo_root/deploy/scripts/" "$remote_host:$remote_repo/deploy/scripts/"
 
 remote_cmd="sudo $(printf '%q' "$remote_repo/deploy/scripts/install-artifacts.sh")"
 for arg in "${install_args[@]}" "$remote_repo/website/dist"; do

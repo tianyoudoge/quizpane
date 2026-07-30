@@ -1,0 +1,14 @@
+:root { color: #202124; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { margin: 0; width: 270px; }
+main { padding: 16px; }
+h1 { font-size: 16px; margin: 0 0 12px; }
+p { margin: 8px 0; }
+button { background: #2b6de0; border: 0; border-radius: 6px; color: #fff; cursor: pointer; margin-top: 8px; padding: 8px 10px; width: 100%; }
+button.secondary { background: #eef1f5; color: #333; }
+button.text-button { width: auto; margin-top: 12px; padding: 0; background: transparent; color: #2b6de0; text-align: left; }
+button:disabled { cursor: wait; opacity: 0.65; }
+.update { margin: 10px 0; padding: 10px; border: 1px solid #f0b429; border-radius: 8px; background: #fff8e6; color: #6b4800; }
+.update p { margin: 4px 0 0; font-size: 12px; }
+.update button { margin-top: 8px; }
+#error { color: #b3261e; min-height: 1.45em; }
+#privacy-note { color: #5f6368; font-size: 12px; }

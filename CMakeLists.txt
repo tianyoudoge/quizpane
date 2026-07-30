@@ -90,7 +90,10 @@ if(QUIZPANE_PORTABLE_CPU_BASELINE)
     endif()
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network Concurrent)
+# 网课伴侣是桌面端的正式功能，所有构建（本地、CI 和发布）都必须具备
+# Qt WebSockets。缺少模块时在配置阶段明确失败，避免悄悄产出没有浏览器联动的包。
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network Concurrent WebSockets)
+set(QUIZPANE_HAVE_WEBSOCKETS ON)
 if(QUIZPANE_BUILD_BANK_STUDIO)
     # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
     # （QStringConverter 内置编码不含 GB18030），其余模块不需要它。

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">小窗刷题网课伴侣</title>
+  <defs>
+    <linearGradient id="bg" x1="16" y1="8" x2="114" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5367e8"/>
+      <stop offset="1" stop-color="#263da7"/>
+    </linearGradient>
+    <clipPath id="portrait"><rect x="12" y="12" width="104" height="104" rx="23"/></clipPath>
+  </defs>
+  <rect x="5" y="5" width="118" height="118" rx="29" fill="url(#bg)"/>
+  <!-- 直接使用 QuizPane 既有的柴犬角色，避免扩展出现第二套品牌形象。 -->
+  <g clip-path="url(#portrait)">
+    <image href="shiba-source.png" x="-38" y="-12" width="205" height="205"/>
+  </g>
+  <rect x="12" y="12" width="104" height="104" rx="23" fill="none" stroke="#fff" stroke-opacity=".2" stroke-width="3"/>
+  <circle cx="98" cy="31" r="16" fill="#fff" stroke="#263da7" stroke-width="3"/>
+  <path d="m94 22 13 9-13 9Z" fill="#e98436"/>
+</svg>

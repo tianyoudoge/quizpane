@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>小窗刷题网课伴侣 · 课程视频小窗</title>
+<meta name="description" content="小窗刷题网课伴侣：把课程视频收进小窗，和小窗刷题一起收起或恢复。" />
+<meta name="theme-color" content="#14161a" />
+<link rel="icon" href="assets/icons/quizpane-app-icon.png" type="image/png" />
+<link rel="stylesheet" href="main.css" />
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html#top">
+      <img class="brand-logo" src="assets/icons/quizpane-app-icon.png" alt="小窗刷题产品图标" width="36" height="36" />
+      <span>小窗刷题</span>
+    </a>
+    <nav class="topnav" aria-label="页面导航">
+      <a href="#course-install">开始使用</a>
+      <a href="#course-guide">安装说明</a>
+      <a href="index.html#download">下载桌面端</a>
+      <a href="index.html">返回官网</a>
+      <button class="support-nav-action" id="top-support-open" type="button" aria-haspopup="dialog">赞赏支持</button>
+    </nav>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav">
+      <span class="sr-only">打开菜单</span><span aria-hidden="true"></span>
+    </button>
+  </div>
+  <nav id="mobile-nav" class="mobile-nav" aria-label="移动端导航" hidden>
+    <a href="#course-install">开始使用</a>
+    <a href="#course-guide">安装说明</a>
+    <a href="index.html#download">下载桌面端</a>
+    <a href="index.html">返回官网</a>
+    <button class="support-nav-action" id="mobile-support-open" type="button" aria-haspopup="dialog">赞赏支持</button>
+  </nav>
+</header>
+
+<main id="main">
+  <section class="course-page-hero">
+    <div class="course-page-hero-inner">
+      <a class="back-link" href="index.html">← 返回小窗刷题官网</a>
+      <div class="course-companion-inner">
+        <div class="course-copy">
+          <p class="section-kicker" data-bind="courseCompanion.eyebrow"></p>
+          <h1 data-bind="courseCompanion.title"></h1>
+          <p class="course-description" data-bind="courseCompanion.description"></p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" id="course-download" href="#course-guide" data-bind="courseCompanion.primaryCta"></a>
+            <a class="btn btn-ghost" href="#course-install" data-bind="courseCompanion.secondaryCta"></a>
+          </div>
+          <p class="course-download-meta" id="course-download-meta"></p>
+          <ul class="course-benefits" id="course-benefits"></ul>
+        </div>
+
+        <div class="course-visual" aria-label="课程页面进入视频小窗的示意图">
+          <div class="browser-window">
+            <div class="browser-top"><span></span><span></span><span></span><i></i></div>
+            <div class="browser-content">
+              <p>正在学习</p>
+              <div class="browser-video"><span class="play-symbol">▶</span></div>
+              <div class="browser-lines"><i></i><i></i><i></i></div>
+            </div>
+          </div>
+          <div class="visual-connector" aria-hidden="true"><span>点击图标</span><i>→</i></div>
+          <div class="video-pane">
+            <div class="video-pane-top"><span>课程视频</span><i>●</i></div>
+            <div class="video-pane-screen"><span class="play-symbol">▶</span></div>
+            <div class="video-pane-controls"><i></i><span>12:30 / 45:00</span></div>
+          </div>
+          <div class="visual-status"><span></span>与小窗刷题一起收放</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="course-install" class="course-install" aria-labelledby="course-install-title">
+    <div class="course-install-heading">
+      <p class="section-kicker">开始使用</p>
+      <h2 id="course-install-title" data-bind="courseCompanion.stepsTitle"></h2>
+    </div>
+    <ol class="course-install-steps" id="course-install-steps"></ol>
+    <p class="course-compatibility" id="course-compatibility"></p>
+  </section>
+
+  <section id="course-guide" class="course-guide" aria-labelledby="course-guide-title">
+    <div class="course-guide-heading">
+      <p class="section-kicker">安装说明</p>
+      <h2 id="course-guide-title">下载后，照着做就行</h2>
+      <p>网课伴侣需要和已经打开的小窗刷题一起使用。第一次添加到浏览器后，以后不用重复安装。</p>
+    </div>
+    <div class="course-guide-grid">
+      <div class="course-guide-card">
+        <h3>添加到浏览器</h3>
+        <ol id="course-install-details"></ol>
+      </div>
+      <div class="course-guide-card">
+        <h3>打开课程后怎么用</h3>
+        <ol id="course-use-details"></ol>
+      </div>
+    </div>
+    <p class="course-note" id="course-purpose"></p>
+  </section>
+</main>
+
+<aside class="support-float" aria-label="支持小窗刷题">
+  <button id="support-open" type="button" aria-haspopup="dialog"><span aria-hidden="true">☕</span><span>赞赏支持</span></button>
+</aside>
+
+<dialog id="support-dialog" class="support-dialog" aria-labelledby="support-title">
+  <button class="support-close" id="support-close" type="button" aria-label="关闭">×</button>
+  <p class="support-kicker">感谢你的认可</p>
+  <h2 id="support-title">请作者喝杯咖啡</h2>
+  <p>一个人慢慢把小窗刷题做好并不容易。您的支持，是我继续下去的最大动力。</p>
+  <img id="payment-code" src="assets/support/wechat-payment.jpg" alt="微信收款码" width="280" height="280" />
+  <small id="payment-caption">微信扫码赞赏</small>
+  <div class="payment-switcher" aria-label="选择付款方式">
+    <button class="payment-arrow" id="payment-previous" type="button" aria-label="上一种付款方式">‹</button>
+    <button class="payment-tab is-active" type="button" data-payment="wechat" aria-pressed="true"><span class="payment-logo payment-logo-wechat" aria-hidden="true">微</span>微信支付</button>
+    <button class="payment-tab" type="button" data-payment="alipay" aria-pressed="false"><span class="payment-logo payment-logo-alipay" aria-hidden="true">支</span>支付宝</button>
+    <button class="payment-arrow" id="payment-next" type="button" aria-label="下一种付款方式">›</button>
+  </div>
+</dialog>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <span>小窗刷题 · 网课伴侣</span>
+    <nav class="footer-links" aria-label="页脚链接">
+      <a href="index.html">官网首页</a>
+      <a href="https://github.com/tianyoudoge/quizpane" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="course-companion.js" defer></script>
+</body>
+</html>

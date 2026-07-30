@@ -32,7 +32,8 @@ python3 -m http.server 8080
 
 页面会向 `/api/releases/latest` 发起请求获取最新版本信息；本地预览时该接口
 通常不存在，下载区会回退显示"正在获取最新版本…"并把下载按钮指向
-GitHub Release 页面，这是预期行为，不是 bug。
+GitHub Release 页面，这是预期行为，不是 bug。网课伴侣插件会直接提供下载入口；
+如果本地预览暂时拿不到版本元数据，按钮会回退到 GitHub 最新 Release 的插件下载地址。
 
 页面也支持部署在域名子路径（例如 `https://xutianyou.cc/quizpane/`）：资源、
 Release API 和下载链接都会以当前页面目录为基准。仓库的 Nginx 模板已包含
@@ -47,10 +48,10 @@ node website/scripts/build-site.mjs
 零依赖 Node 脚本（Node 18+ 即可），做的事情：
 
 1. 把 `src/` 整个拷贝到 `dist/`；
-2. 对 `main.css`、`main.js` 按内容生成哈希后缀（如 `main.170978eb8b.css`），
-   并同步改写 `index.html` 里的引用，方便设置长缓存（Nginx 模板对 `/assets/`
-   之外的 `/` 走 `no-cache`，但更新静态站时新旧文件名不同可以避免旧资源被
-   浏览器缓存卡住）；
+2. 对 `assets/` 下的图片、图标、截图等文件，以及页面加载的 CSS/JS，按内容生成
+   哈希后缀并同步改写 HTML、JS 和 `content.json` 中的引用。Nginx 可让这些文件
+   长期缓存；HTML、`content.json` 则保持稳定路径并使用 `no-cache`，确保页面和
+   下载信息能及时更新；
 3. 不做打包、压缩、Sass/TS 编译——保持源码即产物、易于审查。
 
 产物在 `website/dist/`，其中 `index.html` 是 `deploy/scripts/install-artifacts.sh
@@ -62,6 +63,11 @@ node website/scripts/build-site.mjs
   必须与 GitHub Release 里实际的 asset 文件名一致（当前对应 README 里列出的
   `QuizPane-macos-arm64.dmg`、`QuizPane-macos-x86_64.dmg`、
   `QuizPane-windows-x64-portable.zip`、`QuizPane-linux-x86_64.deb`）。
+- **浏览器扩展**：`downloads.browserExtension.asset` 对应 Release 中的
+  `QuizPane-course-companion.zip`。它由 tag 发布工作流从
+  `integrations/browser-extension/` 自动打包并作为 Release asset 上传；官网通过
+  现有下载代理提供该 ZIP。由于未上 Chrome 商店，用户下载后需按页面提示开启
+  开发者模式并加载解压后的目录。
 - **截图**：`src/assets/screenshots/` 已放入北京卷官网演示题库的导入截图，以及
   资料换行、公式选项和小窗答题演示图；替换文件后同步修改 `content.json` 的
   `shot` 路径和 `index.html` 的 hero 图路径。发布前请确认试卷内容的展示与
@@ -107,6 +113,11 @@ curl -s https://quizpane.example.com/api/releases/latest
 
 脚本和网站构建均不上传题库、PDF 或用户数据。完整的 Ubuntu 初始化、HTTPS、
 下载代理和故障排查见 [`deploy/README.md`](../deploy/README.md)。
+
+GitHub Actions 自动部署已写在
+[`.github/workflows/deploy-website.yml`](../.github/workflows/deploy-website.yml)：
+它只在 `master` 上的网站/部署文件变更时运行。首次配置所需的服务器权限和五个
+GitHub Environment secrets 见 [`deploy/README.md`](../deploy/README.md#github-actions-自动发布官网)。
 
 ## 依赖的后端接口
 

@@ -20,6 +20,7 @@
     </a>
     <nav class="topnav" aria-label="页面导航">
       <a href="#features">能力</a>
+      <a class="nav-new" href="course-companion.html">网课伴侣<span>NEW</span></a>
       <a href="#workflow">工作流</a>
       <a href="#download">下载</a>
       <a href="#privacy">隐私与开源</a>
@@ -33,6 +34,7 @@
   </div>
   <nav id="mobile-nav" class="mobile-nav" aria-label="移动端导航" hidden>
     <a href="#features">能力</a>
+    <a href="course-companion.html">网课伴侣</a>
     <a href="#workflow">工作流</a>
     <a href="#download">下载</a>
     <a href="#privacy">隐私与开源</a>
@@ -134,6 +136,13 @@
     </button>
     <button class="payment-arrow" id="payment-next" type="button" aria-label="下一种付款方式">›</button>
   </div>
+</dialog>
+
+<dialog id="macos-download-dialog" class="macos-download-dialog" aria-labelledby="macos-download-title">
+  <button class="support-close" id="macos-download-close" type="button" aria-label="关闭">×</button>
+  <h2 id="macos-download-title">选择你的 Mac 芯片</h2>
+  <p>点左上角  →“关于本机”即可查看芯片型号。</p>
+  <div id="macos-choice-list" class="macos-choice-list"></div>
 </dialog>
 
 <script src="main.js" defer></script>
