@@ -5,6 +5,17 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      test_windows_only:
+        description: "仅构建 Windows 测试包（不发布 Release）"
+        required: false
+        default: false
+        type: boolean
+      test_extension_only:
+        description: "仅构建浏览器扩展测试包（不发布 Release）"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -14,6 +25,7 @@ env:
 
 jobs:
   macos:
+    if: ${{ !inputs.test_windows_only && !inputs.test_extension_only }}
     name: macOS ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -43,8 +55,11 @@ jobs:
           arch: clang_64
           # Qt5Compat provides QTextCodec/GB18030 fallback; QtPdf is used by
           # the document extractor; QtWebEngine renders supported web content.
-          modules: qt5compat qtpdf qtwebengine
+          modules: qt5compat qtpdf qtwebengine qtwebsockets
           cache: true
+
+      - name: Verify Qt WebSockets
+        run: test -f "$QT_ROOT_DIR/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake"
 
       - name: Build, test and package QuizPane
         env:
@@ -68,6 +83,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: ${{ !inputs.test_extension_only }}
     name: Windows 10 and 11 x64
     runs-on: windows-2022
     steps:
@@ -117,15 +133,29 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: win64_msvc2019_64
-          modules: qt5compat qtpdf qtwebengine
+          modules: qt5compat qtpdf qtwebengine qtwebsockets
           cache: true
+
+      - name: Verify Qt WebSockets
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:QT_ROOT_DIR/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake")) {
+            throw "Qt WebSockets module was not installed"
+          }
 
       - name: Build, test and package QuizPane
         shell: pwsh
         run: |
-          ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR" `
-            -CMakeToolchainFile "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -VcpkgTargetTriplet "x64-windows-static-md"
+          if ("${{ inputs.test_windows_only }}" -eq "true") {
+            ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR" `
+              -CMakeToolchainFile "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+              -VcpkgTargetTriplet "x64-windows-static-md" `
+              -EnableDiagnosticLogging
+          } else {
+            ./scripts/build-windows.ps1 -QtRoot "$env:QT_ROOT_DIR" `
+              -CMakeToolchainFile "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+              -VcpkgTargetTriplet "x64-windows-static-md"
+          }
 
       - name: Prepare checksums
         shell: pwsh
@@ -140,11 +170,14 @@ jobs:
       - name: Upload Windows packages
         uses: actions/upload-artifact@v7
         with:
-          name: release-windows-x64
+          # 手工测试构建只保留为 Artifact，不会使用正式版本号或创建 Release。
+          name: ${{ inputs.test_windows_only && format('QuizPane-windows-x64-test-{0}', github.sha) || 'release-windows-x64' }}
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 14
 
   linux:
+    if: ${{ !inputs.test_windows_only && !inputs.test_extension_only }}
     name: Linux x64 (UOS and Kylin compatible)
     runs-on: ubuntu-22.04
     steps:
@@ -164,8 +197,11 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: gcc_64
-          modules: qt5compat qtpdf qtwebengine
+          modules: qt5compat qtpdf qtwebengine qtwebsockets
           cache: true
+
+      - name: Verify Qt WebSockets
+        run: test -f "$QT_ROOT_DIR/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake"
 
       - name: Install Linux deployment tool
         run: |
@@ -204,8 +240,8 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos, windows, linux]
+    if: startsWith(github.ref, 'refs/tags/v') && !inputs.test_windows_only && !inputs.test_extension_only
+    needs: [macos, windows, linux, browser-extension]
     runs-on: ubuntu-22.04
     steps:
       - name: Download all platform packages
@@ -223,3 +259,34 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "QuizPane ${GITHUB_REF_NAME}" \
             --generate-notes
+
+  browser-extension:
+    if: ${{ !inputs.test_windows_only }}
+    name: Browser course companion
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Validate and package extension
+        run: |
+          jq empty integrations/browser-extension/manifest.json
+          node --check integrations/browser-extension/src/service-worker.js
+          node --check integrations/browser-extension/src/content-script.js
+          node --check integrations/browser-extension/src/popup.js
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            bash scripts/package-extension.sh "${GITHUB_REF_NAME#v}"
+          else
+            bash scripts/package-extension.sh
+          fi
+          mkdir -p release-assets
+          cp dist/quizpane-course-companion.zip \
+            release-assets/QuizPane-course-companion.zip
+
+      - name: Upload browser extension
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.test_extension_only && format('QuizPane-course-companion-test-{0}', github.sha) || 'release-browser-extension' }}
+          path: release-assets/QuizPane-course-companion.zip
+          if-no-files-found: error
+          retention-days: 14

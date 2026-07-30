@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
     bool received = false;
     QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
         while (QLocalSocket* socket = server.nextPendingConnection()) {
-            QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
+            const auto handleRequest = [&, socket] {
                 QByteArray buffered = socket->property("handoff-test-buffer").toByteArray();
                 buffered += socket->readAll();
                 const int newline = buffered.indexOf('\n');
@@ -69,7 +69,12 @@ int main(int argc, char** argv) {
                 // 由客户端在读完确认后关闭。这里立即关闭在 Windows named pipe
                 // 上会偶发地让客户端先观察到 RemoteClosed。
                 QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
-            });
+            };
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, handleRequest);
+            // Windows named pipes may already contain the complete request by the time
+            // QLocalServer emits newConnection. Do one immediate read so that this
+            // race cannot depend on a second readyRead notification.
+            handleRequest();
         }
     });
 

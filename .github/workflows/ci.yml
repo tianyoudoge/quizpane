@@ -16,6 +16,16 @@ env:
   QT_VERSION: "6.5.3"
 
 jobs:
+  browser-extension:
+    name: Browser extension
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Test service worker state machines
+        run: node --test tests/browser-extension/*.test.mjs
+
   macos:
     name: macOS Apple-Silicon
     runs-on: macos-14
@@ -31,8 +41,13 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: clang_64
-          modules: qt5compat qtpdf
+          modules: qt5compat qtpdf qtwebsockets
           cache: true
+
+      - name: Verify Qt WebSockets
+        # Qt WebSockets 是网课伴侣的硬依赖；CMake 也会再次校验，提前检查能让
+        # Actions 日志直接指出安装模块的问题。
+        run: test -f "$QT_ROOT_DIR/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake"
 
       - name: Configure
         run: >-
@@ -68,8 +83,15 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: win64_msvc2019_64
-          modules: qt5compat qtpdf
+          modules: qt5compat qtpdf qtwebsockets
           cache: true
+
+      - name: Verify Qt WebSockets
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:QT_ROOT_DIR/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake")) {
+            throw "Qt WebSockets module was not installed"
+          }
 
       - name: Configure
         shell: pwsh
@@ -111,8 +133,11 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: gcc_64
-          modules: qt5compat qtpdf
+          modules: qt5compat qtpdf qtwebsockets
           cache: true
+
+      - name: Verify Qt WebSockets
+        run: test -f "$QT_ROOT_DIR/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake"
 
       - name: Configure
         run: >-

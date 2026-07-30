@@ -10,6 +10,11 @@ QWidget#card QScrollBar::add-line:vertical, QWidget#card QScrollBar::sub-line:ve
 QLabel#sourceTitle { color: #aeb4bb; font-weight: 500; }
 QLabel#title, QLabel#pageTitle { color: #e0e3e7; font-weight: 600; }
 QLabel#detail { color: #9ca3ab; }
+QLabel#courseTitle { color: #dfe4e9; font-weight: 600; background: rgba(255,255,255,10); border-radius: 7px; padding: 9px; }
+QFrame#courseStatusBar { background: rgba(120,164,136,30); border: 1px solid rgba(157,204,172,46); border-radius: 7px; }
+QLabel#courseStatusText { color: #b7d1bd; }
+QPushButton#courseStatusButton { background: transparent; border: none; color: #cbd7cf; padding: 2px 4px; }
+QPushButton#courseStatusButton:hover { background: rgba(255,255,255,15); }
 QLabel#questionText, QWidget#catalogRow, QLabel#resultAnswer { background: rgba(255,255,255,10); border-radius: 7px; padding: 7px; }
 QLabel#questionText { color: #d5d1c5; font-weight: 550; }
 QLabel#solutionQuestion { color: #c7ccd2; }

@@ -180,7 +180,7 @@
 
       const icon = document.createElement("img");
       icon.className = "icon";
-      icon.src = `assets/icons/${platform.icon}.svg`;
+      icon.src = platform.icon;
       icon.alt = "";
       icon.width = 28;
       icon.height = 28;
@@ -199,10 +199,13 @@
         meta.textContent = parts.join(" · ");
       }
 
-      const link = document.createElement("a");
+      const link = document.createElement(platform.choices ? "button" : "a");
       link.className = "btn btn-primary";
-      link.textContent = "下载";
-      if (tag) {
+      link.textContent = platform.choices ? "选择机型" : "下载";
+      if (platform.choices) {
+        link.type = "button";
+        link.addEventListener("click", () => openMacosDownloadDialog(platform, release, downloads.releaseUrlFallback));
+      } else if (tag) {
         link.href = siteUrl(`download/${encodeURIComponent(tag)}/${encodeURIComponent(platform.asset)}`);
       } else {
         link.href = downloads.releaseUrlFallback || "#";
@@ -212,6 +215,39 @@
 
       card.append(icon, h3, sub, meta, link);
       grid.append(card);
+    });
+  }
+
+  function openMacosDownloadDialog(platform, release, fallbackUrl) {
+    const dialog = $("#macos-download-dialog");
+    const list = $("#macos-choice-list");
+    const tag = release?.tag;
+    list.innerHTML = "";
+    platform.choices.forEach((choice) => {
+      const link = document.createElement("a");
+      link.className = "macos-choice";
+      link.href = tag
+        ? siteUrl(`download/${encodeURIComponent(tag)}/${encodeURIComponent(choice.asset)}`)
+        : fallbackUrl;
+      if (!tag) {
+        link.target = "_blank";
+        link.rel = "noopener";
+      }
+      const title = document.createElement("strong");
+      title.textContent = choice.label;
+      const detail = document.createElement("span");
+      detail.textContent = choice.detail;
+      link.append(title, detail);
+      list.append(link);
+    });
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function setupMacosDownloadDialog() {
+    const dialog = $("#macos-download-dialog");
+    $("#macos-download-close").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
     });
   }
 
@@ -339,7 +375,10 @@
 
   async function fetchRelease() {
     try {
-      const response = await fetch(siteUrl("api/releases/latest"), {
+      const releaseUrl = new URL(siteUrl("api/releases/latest"), window.location.href);
+      releaseUrl.searchParams.set("refresh", "1");
+      const response = await fetch(releaseUrl, {
+        cache: "no-store",
         headers: { Accept: "application/json" },
       });
       if (!response.ok) throw new Error(`status ${response.status}`);
@@ -350,7 +389,7 @@
   }
 
   async function init() {
-    const response = await fetch("content.json");
+    const response = await fetch(siteUrl("content.json"));
     const content = await response.json();
     state.content = content;
 
@@ -364,6 +403,7 @@
     renderFooter(content.footer);
     setupMobileNav();
     setupSupportDialog();
+    setupMacosDownloadDialog();
     setupCarousel();
 
     content.downloads.releaseUrlFallback = content.site.latestReleaseUrl;

@@ -42,6 +42,7 @@
 | 换一套题或换个方向 | 可以安装、切换、删除多个题库 |
 | 做完想知道哪里错了 | 交卷后逐题看自己的答案、正确答案和解析 |
 | 自己手里有资料 | 用“题库制作器”把 TXT、Markdown、Word、PDF 整理成可安装题库；题图、公式选项和共享材料会随题保留 |
+| 想边看课边刷题 | 安装“网课伴侣”浏览器扩展，把当前课程视频收进独立小窗；小窗刷题收起或恢复时，课程视频也会一起处理 |
 
 小窗可以拖到顺手的位置，也可以选小、中、大三种大小。它不会替你抢走整个屏幕。
 
@@ -86,12 +87,23 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 
 规则会先整理题号、题干、选项和答案；题图、公式选项、资料分析材料与下划线/填空版式会保留原卷附件，并集中放进复核页。你可以逐题编辑、按类别批量确认、手动重新裁图，或在配置兼容视觉模型后让 AI 协助定位裁切范围。完成后，题库会自动交给当前运行的小窗刷题并进入选择题数页面，制作器随即关闭。
 
+### 4. 边看网课？安装“网课伴侣”
+
+“小窗刷题网课伴侣”是 Chrome / Edge 扩展，用来把正在播放的课程视频放进独立的浏览器小窗。它只在你点击绑定后读取当前页面标题和视频播放状态，用于暂停、恢复和视频聚焦；不会下载视频，也不会上传 Cookie、课程正文或视频地址。
+
+1. 在同一版 [GitHub Release](https://github.com/tianyoudoge/quizpane/releases/latest) 下载 `QuizPane-course-companion.zip`，并**完整解压**；
+2. 先启动小窗刷题，再在 Chrome 地址栏打开 `chrome://extensions`，或在 Edge 打开 `edge://extensions`；
+3. 打开页面中的“开发者模式”，点击“加载已解压的扩展程序”，选择刚才解压出来的文件夹；
+4. 打开课程播放页，点击浏览器右上角的“小窗刷题网课伴侣”图标，再点 **绑定并进入视频聚焦小窗**。
+
+首次绑定某个课程网站时，浏览器会要求授权当前站点；同意后扩展才能控制这个页面的标准 HTML5 视频。之后可在扩展弹窗里暂停/继续、显示视频小窗或放回原浏览器。Chrome / Edge 116+ 可用；跨域 iframe 或站点自定义播放器的兼容性会因课程平台而异。
+
 ## 用起来顺手的小细节
 
 - 做完一道单选题会自动进入下一题；要改答案时，手动回到上一题即可。
 - 题目和解析用不同的颜色显示，交卷后更容易扫到重点。
 - 点标题栏的图钉，可以让题目一直留在最上面；不需要时再点一下关闭。
-- 老板键可以在“三横线 → 老板键设置…”里改掉。默认是 `Ctrl + Shift + H`。
+- 老板键可以在“三横线 → 老板键设置…”里改掉。默认是 `Ctrl + H`。
 - 关闭软件不等于丢进度；草稿会保留。需要登录的题库也会分别保留自己的登录状态。
 
 ## 已实现与正在完善
@@ -104,6 +116,7 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 - 一键隐藏、系统托盘、Mac 菜单、三档大小和固定在屏幕前面；
 - 本地示例题库，以及从文本、Word、PDF 整理题库的制作器；支持有答案/无答案整套题库、图片/公式选项、共享材料与作答结果长图；
 - 题库制作完成后自动交接给已运行的小窗刷题；没有运行实例时启动同一安装包内的主程序；
+- Chrome / Edge 网课伴侣扩展：绑定当前课程页面的视频，进入浏览器视频聚焦小窗，并能随小窗刷题的隐藏/显示操作同步暂停、收起或恢复；
 - Windows 10/11 x64、Apple Silicon Mac、Intel Mac、Linux x64 的构建产物。
 
 ### 正在完善，暂不承诺可用
@@ -123,6 +136,10 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 ### 关闭以后，答案和登录会丢吗？
 
 不会。未完成的练习会保存；不同题库的登录信息也会分开保存。删除题库时默认仍保留这些数据，彻底清除数据的入口还在完善。
+
+### 网课伴侣支持哪些浏览器和课程？
+
+目前支持 Chrome、Edge 116+。扩展只在你手动绑定后控制当前课程页的标准 HTML5 `<video>`；普通课程播放页通常可以使用。若播放器放在跨域 iframe 中，或课程平台使用了特殊播放器，视频聚焦、暂停和恢复能力可能受浏览器或站点限制。
 
 ### Mac 提示无法打开怎么办？
 
@@ -152,6 +169,7 @@ quizpane/
 ├── core/                  # 答题、草稿和图片处理领域逻辑
 ├── sdk/                   # Provider ABI、加载器和安装器
 ├── providers/demo/        # 完全离线的示例题库
+├── integrations/browser-extension/ # Chrome / Edge 网课伴侣扩展
 ├── tools/bank-generator/  # 本地题库生成器（开发中）
 ├── tests/                 # 自动测试
 ├── packaging/             # 平台打包资源
@@ -159,7 +177,7 @@ quizpane/
 └── docs/                  # 架构与构建文档
 ```
 
-需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets、Network、Core5Compat 与 Pdf。
+需要 CMake 3.24+、Ninja、C++20 编译器和 Qt 6.5+，包含 Core、Widgets、Network、WebSockets、Core5Compat 与 Pdf。
 二维码和 ZIP 依赖由 CMake FetchContent 自动拉取，不需要手工复制第三方源码。
 依赖已锁定到不可变 commit。离线构建时可提前准备两份源码，并在配置时传入
 `-DFETCHCONTENT_SOURCE_DIR_QRCODEGEN_SOURCE=/path/to/QR-Code-generator`
@@ -172,10 +190,10 @@ Pull Request CI 使用 `ci` preset（Release + Unity + 全量测试）；正式�
 ## macOS 开发构建
 
 ```bash
-brew install cmake ninja qt qt5compat tesseract tesseract-lang
+brew install cmake ninja qt qt5compat qtwebsockets tesseract tesseract-lang
 git clone git@github.com:tianyoudoge/quizpane.git
 cd quizpane
-export CMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix qt5compat)"
+export CMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix qt5compat);$(brew --prefix qtwebsockets)"
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
@@ -241,6 +259,13 @@ DEBUG 菜单中会出现“查看调试日志…”。macOS/Linux 的致命信�
 
 ```bash
 ./scripts/build-macos.sh
+```
+
+生成浏览器扩展发布包：
+
+```bash
+bash ./scripts/package-extension.sh
+# 产物：dist/quizpane-course-companion.zip
 ```
 
 ## Windows 10/11 构建
@@ -342,7 +367,7 @@ The current build is an unnotarized technical preview. Verify the SHA-256 publis
 3. answer questions in the floating window;
 4. submit the attempt;
 5. review the correct answer and explanation;
-6. press `Ctrl+Shift+H` to hide or restore the window globally.
+6. press `Ctrl+H` to hide or restore the window globally.
 
 ### Build
 

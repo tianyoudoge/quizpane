@@ -71,6 +71,43 @@
       "shot": "assets/screenshots/provider-protocol.png"
     }
   ],
+  "courseCompanion": {
+    "eyebrow": "新功能 · 网课伴侣",
+    "title": "课程视频，收进一扇小窗",
+    "description": "上课时不必一直把浏览器铺满。把正在看的课程单独放进视频小窗，做题、记笔记或处理其他事情，都不耽误。",
+    "primaryCta": "下载网课伴侣",
+    "secondaryCta": "查看使用步骤",
+    "benefits": [
+      {
+        "title": "一键聚焦",
+        "detail": "打开课程页，点一下图标，就能把注意力留给正在看的视频。"
+      },
+      {
+        "title": "一起收放",
+        "detail": "使用小窗刷题的隐藏和显示功能时，课程视频会跟着暂停、收起或恢复。"
+      },
+      {
+        "title": "轻装使用",
+        "detail": "不下载课程视频，不自动操作课程；只在你点击后帮你整理当前页面。"
+      }
+    ],
+    "stepsTitle": "第一次使用，按这三步来",
+    "steps": [
+      {
+        "title": "下载网课伴侣",
+        "detail": "先下载扩展文件并解压，再打开浏览器的扩展管理页面。"
+      },
+      {
+        "title": "添加到浏览器",
+        "detail": "开启开发者模式，选择“加载已解压的扩展程序”，选中刚才解压的文件夹。"
+      },
+      {
+        "title": "打开课程开始用",
+        "detail": "进入课程播放页，点击浏览器右上角的网课伴侣图标，选择进入视频小窗。"
+      }
+    ],
+    "compatibility": "适用于 Chrome 和 Edge。少数课程网站的播放器可能无法进入视频小窗；遇到问题，欢迎告诉我。"
+  },
   "workflow": {
     "title": "工作流",
     "steps": [
@@ -84,33 +121,37 @@
     "title": "下载",
     "note": "通过本站下载代理下载，文件来自 GitHub Release，可核对 SHA-256。",
     "platforms": [
-      {
-        "id": "macos-arm64",
-        "label": "macOS · Apple Silicon",
-        "sublabel": "M1 / M2 / M3 / M4",
-        "asset": "QuizPane-macos-arm64.dmg",
-        "icon": "apple"
-      },
-      {
-        "id": "macos-x86_64",
-        "label": "macOS · Intel",
-        "sublabel": "Intel Mac",
-        "asset": "QuizPane-macos-x86_64.dmg",
-        "icon": "apple"
-      },
+    {
+      "id": "macos",
+      "label": "macOS",
+      "sublabel": "Apple Silicon / Intel",
+      "icon": "assets/icons/apple.svg",
+      "choices": [
+        {
+          "label": "Apple Silicon",
+          "detail": "M1 / M2 / M3 / M4 / M5 芯片 Mac",
+          "asset": "QuizPane-macos-arm64.dmg"
+        },
+        {
+          "label": "Intel Mac",
+          "detail": "搭载 Intel 处理器的 Mac",
+          "asset": "QuizPane-macos-x86_64.dmg"
+        }
+      ]
+    },
       {
         "id": "windows-x64",
         "label": "Windows 10 / 11",
         "sublabel": "64 位 · 绿色版 ZIP",
         "asset": "QuizPane-windows-x64-portable.zip",
-        "icon": "windows"
+        "icon": "assets/icons/windows.svg"
       },
       {
         "id": "linux-x86_64",
         "label": "Linux / 统信 UOS / 银河麒麟",
         "sublabel": "x64 · .deb / .tar.xz",
         "asset": "QuizPane-linux-x86_64.deb",
-        "icon": "linux"
+        "icon": "assets/icons/linux.svg"
       }
     ],
     "fallback": {
@@ -118,6 +159,33 @@
       "publishedAt": "",
       "size": "",
       "sha256": ""
+    },
+    "browserExtension": {
+      "title": "小窗刷题网课伴侣",
+      "detail": "课程视频小窗，和小窗刷题一起收放。",
+      "asset": "QuizPane-course-companion.zip",
+      "purposeTitle": "它能帮你做什么？",
+      "purpose": "安装后，在课程播放页点一下图标，就能把正在看的视频收进独立小窗。使用小窗刷题的隐藏和显示功能时，它会同步暂停、收起或恢复课程视频；不会下载视频，也不会自动操作课程。",
+      "installTitle": "安装方式",
+      "installHint": "先下载并解压扩展 ZIP，再按图片中的 1–4 操作：",
+      "steps": [
+        "在地址栏输入 Chrome 的 chrome://extensions 或 Edge 的 edge://extensions 并打开。",
+        "打开页面左下角的“开发人员模式 / 开发者模式”。",
+        "点击“加载解压缩的扩展 / 加载已解压的扩展程序”，选择刚才解压出来的文件夹。",
+        "看到“小窗刷题网课伴侣”卡片后，确认右侧开关已打开。"
+      ],
+      "useTitle": "安装后怎么用？",
+      "useSteps": [
+        "打开要学习的课程播放页，点击浏览器右上角的小窗刷题网课伴侣图标。",
+        "点击“绑定并进入视频聚焦小窗”，课程视频就会单独显示。",
+        "之后使用小窗刷题的隐藏/显示快捷键，课程小窗也会一起收起或恢复。"
+      ],
+      "updateTitle": "更新已有扩展",
+      "updateSteps": [
+        "下载并解压新版 ZIP，再将文件覆盖到此前已加载的扩展目录。",
+        "回到 chrome://extensions 或 edge://extensions，点击小窗刷题网课伴侣卡片上的“重新加载 / 刷新”。",
+        "重新打开课程页面；如浏览器仍显示旧状态，重启浏览器后即可。"
+      ]
     }
   },
   "privacy": {

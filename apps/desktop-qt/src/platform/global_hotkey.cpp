@@ -33,7 +33,7 @@ bool parseHotkey(const QKeySequence& sequence, int* key,
     if (!portableKey ||
         parsedModifiers == Qt::NoModifier) {
         if (error)
-            *error = QStringLiteral("请选择带修饰键的字母、数字或 F1–F12，例如 Ctrl+Shift+H");
+            *error = QStringLiteral("请选择带修饰键的字母、数字或 F1–F12，例如 Ctrl+H");
         return false;
     }
     *key = parsedKey;

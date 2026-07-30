@@ -12,6 +12,11 @@
 #include <algorithm>
 
 namespace quizpane {
+// 目录布局：drafts/<providerId 的 sha256>/<attemptId 的
+// sha256>.json，即每个 provider 一个子目录，目录下每次练习
+// 一个文件——多草稿并存，而不是像 0.2.4 之前那样一个
+// provider 只有一份覆盖式草稿（见 list() 里对 pathForProvider
+// 遗留单文件的兼容读取）。
 QString DraftStore::pathForProvider(const QString& providerId) const {
     // 不直接把 providerId 当文件名，避免特殊字符造成路径问题；SHA-256 只用于
     // 生成稳定文件名，并不是加密。登录 Cookie 从不进入草稿文件。

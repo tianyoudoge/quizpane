@@ -4,6 +4,8 @@
 
 namespace quizpane {
 namespace {
+// 枚举转字符串走固定映射表，不依赖枚举底层数值，避免未来插入新枚举值时
+// 已落盘的 JSON 被错误地重新解释（向前兼容）。
 QString managementName(AttemptManagement value) {
     return value == AttemptManagement::ProviderManaged ? "provider_managed"
                                                         : "host_managed";
@@ -43,6 +45,8 @@ QJsonObject Attempt::toJson() const {
             {"actualCount", actualCount}};
 }
 
+// 字段缺失/类型不符时一律回退到默认值，不抛异常——旧版本草稿文件、
+// 手工构造的测试 fixture 都要能被安全地解析出一个可用对象。
 Attempt Attempt::fromJson(const QJsonObject& json) {
     Attempt result;
     result.id = json.value("id").toString();
