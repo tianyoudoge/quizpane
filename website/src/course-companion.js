@@ -30,27 +30,61 @@
     });
   }
 
-  function renderCards(steps) {
+  function renderCards(steps, guideSteps) {
     const list = $("#course-install-steps");
     list.innerHTML = "";
-    (steps || []).forEach((step) => {
+    (steps || []).forEach((step, index) => {
       const item = document.createElement("li");
       const title = document.createElement("h3");
       title.textContent = step.title;
       const detail = document.createElement("p");
       detail.textContent = step.detail;
-      item.append(title, detail);
+      const guide = guideSteps?.[index];
+      if (guide) {
+        const help = document.createElement("button");
+        help.type = "button";
+        help.className = "course-step-help";
+        help.textContent = "!";
+        help.setAttribute("aria-label", `查看“${step.title}”图文说明`);
+        help.title = "查看图片说明";
+        help.addEventListener("click", () => openGuideDialog(guide, index));
+        item.append(title, detail, help);
+      } else {
+        item.append(title, detail);
+      }
       list.append(item);
     });
   }
 
-  function renderList(selector, steps) {
-    const list = $(selector);
-    list.innerHTML = "";
-    (steps || []).forEach((step) => {
-      const item = document.createElement("li");
-      item.textContent = step;
-      list.append(item);
+  function openGuideDialog(step, index) {
+    const dialog = $("#course-guide-dialog");
+    $("#course-guide-dialog-step").textContent = `第 ${index + 1} 步`;
+    $("#course-guide-dialog-title").textContent = step.title;
+    $("#course-guide-dialog-detail").textContent = step.detail;
+    const image = $("#course-guide-dialog-image");
+    image.src = siteUrl(step.image);
+    image.alt = step.imageAlt || step.title;
+    const hotspots = $("#course-guide-hotspots");
+    hotspots.innerHTML = "";
+    (step.hotspots || []).forEach((spot, spotIndex) => {
+      const marker = document.createElement("span");
+      const direction = ["up", "right", "down", "left"].includes(spot.direction)
+        ? spot.direction
+        : "right";
+      marker.className = `course-guide-callout is-${direction}`;
+      marker.textContent = spot.label || String(spotIndex + 1);
+      marker.style.setProperty("--left", spot.left);
+      marker.style.setProperty("--top", spot.top);
+      hotspots.append(marker);
+    });
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function setupGuideDialog() {
+    const dialog = $("#course-guide-dialog");
+    $("#course-guide-dialog-close").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
     });
   }
 
@@ -152,13 +186,12 @@
 
     bindText(content);
     renderBenefits(course.benefits);
-    renderCards(course.steps);
-    renderList("#course-install-details", extension.steps);
-    renderList("#course-use-details", extension.useSteps);
+    renderCards(course.steps, extension.guideSteps);
     $("#course-compatibility").textContent = course.compatibility || "";
     $("#course-purpose").textContent = extension.purpose || "";
     setupMobileNav();
     setupSupportDialog();
+    setupGuideDialog();
     setupDownload(content, await fetchRelease());
   }
 

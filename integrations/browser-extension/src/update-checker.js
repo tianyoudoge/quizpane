@@ -1,5 +1,8 @@
-const RELEASE_API_URL = "https://api.github.com/repos/tianyoudoge/quizpane/releases/latest";
+const RELEASE_API_URL = "https://xutianyou.cc/quizpane/api/releases/latest";
 const EXTENSION_ASSET = "QuizPane-course-companion.zip";
+// 版本元数据和发布文件均由官网提供。
+export const EXTENSION_DOWNLOAD_PAGE_URL =
+  "https://xutianyou.cc/quizpane/course-companion.html";
 export const UPDATE_ALARM = "quizpane-extension-update-check";
 const UPDATE_CHECK_PERIOD_MINUTES = 360;
 const UPDATE_CHECK_CACHE_MS = 60 * 60 * 1000;
@@ -32,17 +35,18 @@ export function createUpdateChecker({ chromeApi, fetchImpl = fetch, now = Date.n
       return cached;
     }
     try {
-      const response = await fetchImpl(RELEASE_API_URL, {
+      const apiUrl = new URL(RELEASE_API_URL);
+      if (force) apiUrl.searchParams.set("refresh", "1");
+      const response = await fetchImpl(apiUrl, {
         cache: "no-store",
-        headers: { Accept: "application/vnd.github+json" }
+        headers: { Accept: "application/json" }
       });
       if (!response.ok) throw new Error(`release-api-${response.status}`);
       const release = await response.json();
-      const latestVersion = numericVersion(release.tag_name)
-        ? release.tag_name.replace(/^v/, "")
+      const latestVersion = numericVersion(release.tag)
+        ? release.tag.replace(/^v/, "")
         : null;
-      const hasExtension = Array.isArray(release.assets)
-        && release.assets.some(asset => asset.name === EXTENSION_ASSET);
+      const hasExtension = Boolean(release.assets?.[EXTENSION_ASSET]);
       const currentVersion = chromeApi.runtime.getManifest().version;
       const updateInfo = {
         available: Boolean(
@@ -50,7 +54,7 @@ export function createUpdateChecker({ chromeApi, fetchImpl = fetch, now = Date.n
         ),
         latestVersion,
         currentVersion,
-        releaseUrl: typeof release.html_url === "string" ? release.html_url : null,
+        downloadPageUrl: EXTENSION_DOWNLOAD_PAGE_URL,
         checkedAt: now()
       };
       await chromeApi.storage.local.set({ updateInfo });

@@ -20,7 +20,7 @@
     </a>
     <nav class="topnav" aria-label="页面导航">
       <a href="#course-install">开始使用</a>
-      <a href="#course-guide">安装说明</a>
+      <a href="#course-install">使用步骤</a>
       <a href="index.html#download">下载桌面端</a>
       <a href="index.html">返回官网</a>
       <button class="support-nav-action" id="top-support-open" type="button" aria-haspopup="dialog">赞赏支持</button>
@@ -31,7 +31,7 @@
   </div>
   <nav id="mobile-nav" class="mobile-nav" aria-label="移动端导航" hidden>
     <a href="#course-install">开始使用</a>
-    <a href="#course-guide">安装说明</a>
+    <a href="#course-install">使用步骤</a>
     <a href="index.html#download">下载桌面端</a>
     <a href="index.html">返回官网</a>
     <button class="support-nav-action" id="mobile-support-open" type="button" aria-haspopup="dialog">赞赏支持</button>
@@ -83,24 +83,6 @@
     </div>
     <ol class="course-install-steps" id="course-install-steps"></ol>
     <p class="course-compatibility" id="course-compatibility"></p>
-  </section>
-
-  <section id="course-guide" class="course-guide" aria-labelledby="course-guide-title">
-    <div class="course-guide-heading">
-      <p class="section-kicker">安装说明</p>
-      <h2 id="course-guide-title">下载后，照着做就行</h2>
-      <p>网课伴侣需要和已经打开的小窗刷题一起使用。第一次添加到浏览器后，以后不用重复安装。</p>
-    </div>
-    <div class="course-guide-grid">
-      <div class="course-guide-card">
-        <h3>添加到浏览器</h3>
-        <ol id="course-install-details"></ol>
-      </div>
-      <div class="course-guide-card">
-        <h3>打开课程后怎么用</h3>
-        <ol id="course-use-details"></ol>
-      </div>
-    </div>
     <p class="course-note" id="course-purpose"></p>
   </section>
 </main>
@@ -122,6 +104,19 @@
     <button class="payment-tab" type="button" data-payment="alipay" aria-pressed="false"><span class="payment-logo payment-logo-alipay" aria-hidden="true">支</span>支付宝</button>
     <button class="payment-arrow" id="payment-next" type="button" aria-label="下一种付款方式">›</button>
   </div>
+</dialog>
+
+<dialog id="course-guide-dialog" class="course-guide-dialog" aria-labelledby="course-guide-dialog-title">
+  <div class="course-guide-dialog-header">
+    <div><p class="section-kicker" id="course-guide-dialog-step"></p><h2 id="course-guide-dialog-title"></h2></div>
+    <button class="course-guide-dialog-close" id="course-guide-dialog-close" type="button" aria-label="关闭步骤说明">×</button>
+  </div>
+  <p id="course-guide-dialog-detail"></p>
+  <div class="course-guide-image-wrap">
+    <img id="course-guide-dialog-image" alt="" />
+    <div class="course-guide-hotspots" id="course-guide-hotspots" aria-hidden="true"></div>
+  </div>
+  <p class="course-guide-dialog-hint">箭头指向这一步需要操作的位置，不会遮挡原按钮。</p>
 </dialog>
 
 <footer class="site-footer">

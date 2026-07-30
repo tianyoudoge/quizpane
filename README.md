@@ -91,7 +91,7 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 
 “小窗刷题网课伴侣”是 Chrome / Edge 扩展，用来把正在播放的课程视频放进独立的浏览器小窗。它只在你点击绑定后读取当前页面标题和视频播放状态，用于暂停、恢复和视频聚焦；不会下载视频，也不会上传 Cookie、课程正文或视频地址。
 
-1. 在同一版 [GitHub Release](https://github.com/tianyoudoge/quizpane/releases/latest) 下载 `QuizPane-course-companion.zip`，并**完整解压**；
+1. 在[官网网课伴侣页面](https://xutianyou.cc/quizpane/course-companion.html)下载 `QuizPane-course-companion.zip`，并**完整解压**；
 2. 先启动小窗刷题，再在 Chrome 地址栏打开 `chrome://extensions`，或在 Edge 打开 `edge://extensions`；
 3. 打开页面中的“开发者模式”，点击“加载已解压的扩展程序”，选择刚才解压出来的文件夹；
 4. 打开课程播放页，点击浏览器右上角的“小窗刷题网课伴侣”图标，再点 **绑定并进入视频聚焦小窗**。

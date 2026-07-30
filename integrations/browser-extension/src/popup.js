@@ -42,7 +42,7 @@ function render(state) {
   if (updateInfo?.available) {
     updateTitle.textContent = `发现新版 v${updateInfo.latestVersion}`;
     updateDetail.textContent = `当前为 v${updateInfo.currentVersion}。下载新版后，请在扩展管理页点击“刷新”。`;
-    openUpdateButton.dataset.url = updateInfo.releaseUrl || "";
+    openUpdateButton.dataset.url = updateInfo.downloadPageUrl || "";
   }
   if (!state.bound) {
     course.textContent = "尚未绑定课程页面";

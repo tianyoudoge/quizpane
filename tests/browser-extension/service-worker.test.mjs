@@ -8,6 +8,10 @@ import {
   createExternalWindowController
 } from "../../integrations/browser-extension/src/external-window.js";
 import { createTabCaptureKeeper } from "../../integrations/browser-extension/src/tab-capture-keeper.js";
+import {
+  createUpdateChecker,
+  EXTENSION_DOWNLOAD_PAGE_URL
+} from "../../integrations/browser-extension/src/update-checker.js";
 
 function createHarness(overrides = {}) {
   const calls = [];
@@ -232,4 +236,39 @@ test("binding a different tab returns and disposes the previous course page", as
     call[0] === "tabs.sendMessage"
       && call[1] === 7
       && call[2].type === "command.dispose_controller"));
+});
+
+test("extension update notice leads to the official download page", async () => {
+  const writes = [];
+  const checker = createUpdateChecker({
+    chromeApi: {
+      storage: {
+        local: {
+          get: async () => ({}),
+          set: async value => writes.push(value)
+        }
+      },
+      runtime: { getManifest: () => ({ version: "0.1.1" }) },
+      alarms: { create() {} }
+    },
+    fetchImpl: async url => {
+      assert.equal(url.toString(),
+        "https://xutianyou.cc/quizpane/api/releases/latest?refresh=1");
+      return ({
+      ok: true,
+      json: async () => ({
+        tag: "v0.4.0",
+        assets: { "QuizPane-course-companion.zip": { size: 1 } }
+      })
+      });
+    },
+    now: () => 1
+  });
+
+  const update = await checker.checkForUpdate({ force: true });
+  assert.equal(update.available, true);
+  assert.equal(update.downloadPageUrl, EXTENSION_DOWNLOAD_PAGE_URL);
+  assert.equal(update.downloadPageUrl,
+    "https://xutianyou.cc/quizpane/course-companion.html");
+  assert.equal(writes[0].updateInfo.downloadPageUrl, EXTENSION_DOWNLOAD_PAGE_URL);
 });

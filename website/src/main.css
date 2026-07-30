@@ -749,12 +749,39 @@ h3 {
 }
 
 .course-install-heading { max-width: 34rem; }
-.course-install-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1.7rem 0 0; padding: 0; list-style: none; counter-reset: course-step; }
-.course-install-steps li { position: relative; min-height: 152px; padding: 1.2rem 1.2rem 1.2rem 3.85rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card); counter-increment: course-step; }
+.course-install-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 1.7rem 0 0; padding: 0; list-style: none; counter-reset: course-step; }
+.course-install-steps li { position: relative; min-height: 152px; padding: 1.2rem 3.65rem 1.2rem 3.85rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card); counter-increment: course-step; }
 .course-install-steps li::before { content: counter(course-step); position: absolute; top: 1.15rem; left: 1.15rem; display: grid; place-items: center; width: 1.8rem; height: 1.8rem; border-radius: 50%; background: rgba(77, 197, 181, 0.14); color: #76d8c9; font-size: 0.78rem; font-weight: 800; }
 .course-install-steps h3 { font-size: 0.98rem; }
 .course-install-steps p { margin: 0.4rem 0 0; color: var(--text-muted); font-size: 0.86rem; }
 .course-compatibility { margin: 1rem 0 0; color: var(--text-muted); font-size: 0.84rem; }
+
+.course-step-help {
+  position: absolute;
+  top: 1.1rem;
+  right: 1.05rem;
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 1px solid rgba(118, 216, 201, 0.55);
+  border-radius: 50%;
+  background: rgba(77, 197, 181, 0.12);
+  color: #76d8c9;
+  font-size: 0.9rem;
+  font-weight: 850;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, transform 150ms ease;
+}
+
+.course-step-help:hover,
+.course-step-help:focus-visible {
+  background: #76d8c9;
+  color: #11211f;
+  outline: none;
+  transform: scale(1.08);
+}
 
 .course-guide {
   max-width: var(--max-width);
@@ -775,32 +802,40 @@ h3 {
   color: var(--text-muted);
 }
 
-.course-guide-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1rem;
-  margin-top: 1.6rem;
+.course-guide-dialog {
+  width: min(1020px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  padding: 1.35rem;
+  overflow: auto;
+  border: 1px solid rgba(118, 216, 201, 0.36);
+  border-radius: 18px;
+  background: #1b2027;
+  color: var(--text);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.62);
 }
 
-.course-guide-card {
-  padding: 1.35rem 1.4rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-}
-
-.course-guide-card h3 {
-  font-size: 1rem;
-}
-
-.course-guide-card ol {
-  margin: 0.85rem 0 0;
-  padding-left: 1.3rem;
-  color: var(--text-muted);
-  font-size: 0.9rem;
-}
-
-.course-guide-card li + li { margin-top: 0.6rem; }
+.course-guide-dialog::backdrop { background: rgba(4, 7, 10, 0.78); backdrop-filter: blur(4px); }
+.course-guide-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.course-guide-dialog-header .section-kicker { margin-bottom: 0.25rem; }
+.course-guide-dialog h2 { margin: 0; font-size: clamp(1.25rem, 2.5vw, 1.7rem); }
+.course-guide-dialog > p { margin: 0.75rem 0 1rem; color: var(--text-muted); line-height: 1.65; }
+.course-guide-dialog-close { display: grid; flex: 0 0 auto; place-items: center; width: 2rem; height: 2rem; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: transparent; color: var(--text-muted); font-size: 1.45rem; cursor: pointer; }
+.course-guide-dialog-close:hover, .course-guide-dialog-close:focus-visible { border-color: #76d8c9; color: #fff; outline: none; }
+.course-guide-image-wrap { position: relative; display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(231, 233, 238, 0.16); border-radius: 11px; background: #0c0f13; }
+.course-guide-image-wrap img { display: block; width: auto; max-width: 100%; height: auto; max-height: 64vh; }
+.course-guide-hotspots { position: absolute; inset: 0; pointer-events: none; }
+.course-guide-callout { position: absolute; left: var(--left); top: var(--top); padding: 0.34rem 0.52rem; border: 1px solid rgba(234, 255, 251, 0.9); border-radius: 999px; background: #76d8c9; color: #09231f; font-size: clamp(0.55rem, 1.25vw, 0.78rem); font-weight: 850; white-space: nowrap; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }
+.course-guide-callout::before { content: ""; position: absolute; background: #76d8c9; }
+.course-guide-callout::after { content: ""; position: absolute; width: 0; height: 0; border-style: solid; }
+.course-guide-callout.is-up::before { left: 50%; bottom: 100%; width: 2px; height: 1.1rem; }
+.course-guide-callout.is-up::after { left: calc(50% - 0.27rem); bottom: calc(100% + 1rem); border-width: 0 0.28rem 0.4rem; border-color: transparent transparent #76d8c9; }
+.course-guide-callout.is-down::before { left: 50%; top: 100%; width: 2px; height: 1.1rem; }
+.course-guide-callout.is-down::after { left: calc(50% - 0.27rem); top: calc(100% + 1rem); border-width: 0.4rem 0.28rem 0; border-color: #76d8c9 transparent transparent; }
+.course-guide-callout.is-left::before { right: 100%; top: 50%; width: 1.1rem; height: 2px; }
+.course-guide-callout.is-left::after { right: calc(100% + 1rem); top: calc(50% - 0.27rem); border-width: 0.28rem 0.4rem 0.28rem 0; border-color: transparent #76d8c9 transparent transparent; }
+.course-guide-callout.is-right::before { left: 100%; top: 50%; width: 1.1rem; height: 2px; }
+.course-guide-callout.is-right::after { left: calc(100% + 1rem); top: calc(50% - 0.27rem); border-width: 0.28rem 0 0.28rem 0.4rem; border-color: transparent transparent transparent #76d8c9; }
+.course-guide-dialog-hint { margin-bottom: 0 !important; font-size: 0.8rem; }
 
 .course-note {
   margin: 1rem 0 0;
@@ -826,7 +861,8 @@ h3 {
   .visual-status { top: 15px; right: 15px; }
   .course-install-steps { grid-template-columns: 1fr; }
   .course-install-steps li { min-height: 0; }
-  .course-guide-grid { grid-template-columns: 1fr; }
+  .course-guide-dialog { padding: 1rem; }
+  .course-guide-image-wrap img { max-height: 54vh; }
 }
 
 /* Workflow */

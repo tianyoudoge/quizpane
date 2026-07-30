@@ -91,19 +91,23 @@
         "detail": "不下载课程视频，不自动操作课程；只在你点击后帮你整理当前页面。"
       }
     ],
-    "stepsTitle": "第一次使用，按这三步来",
+    "stepsTitle": "第一次使用，按这四步来",
     "steps": [
       {
-        "title": "下载网课伴侣",
-        "detail": "先下载扩展文件并解压，再打开浏览器的扩展管理页面。"
+        "title": "下载并添加扩展",
+        "detail": "下载并解压扩展文件，在扩展管理页开启开发者模式后加载该文件夹。"
       },
       {
-        "title": "添加到浏览器",
-        "detail": "开启开发者模式，选择“加载已解压的扩展程序”，选中刚才解压的文件夹。"
+        "title": "固定网课伴侣图标",
+        "detail": "把小狗图标固定到浏览器工具栏，课程页上随时都能找到它。"
       },
       {
-        "title": "打开课程开始用",
-        "detail": "进入课程播放页，点击浏览器右上角的网课伴侣图标，选择进入视频小窗。"
+        "title": "绑定课程视频",
+        "detail": "进入课程播放页，点击图标并选择“绑定并进入视频聚焦小窗”。"
+      },
+      {
+        "title": "老板键一起收放",
+        "detail": "按小窗刷题的老板键，课程视频会随小窗一起隐藏或恢复。"
       }
     ],
     "compatibility": "适用于 Chrome 和 Edge。少数课程网站的播放器可能无法进入视频小窗；遇到问题，欢迎告诉我。"
@@ -179,6 +183,48 @@
         "打开要学习的课程播放页，点击浏览器右上角的小窗刷题网课伴侣图标。",
         "点击“绑定并进入视频聚焦小窗”，课程视频就会单独显示。",
         "之后使用小窗刷题的隐藏/显示快捷键，课程小窗也会一起收起或恢复。"
+      ],
+      "guideSteps": [
+        {
+          "title": "添加并确认扩展已启用",
+          "detail": "下载并解压扩展 ZIP 后，在 Chrome 的 chrome://extensions 或 Edge 的 edge://extensions 打开开发者模式，选择“加载已解压的扩展”，再确认小窗刷题网课伴侣右侧开关已打开。",
+          "image": "assets/course-guide/step-2-extension-manager.png",
+          "imageAlt": "浏览器扩展管理页，已添加小窗刷题网课伴侣",
+          "hotspots": [
+            { "label": "① 打开开发者模式", "left": "2%", "top": "82%", "direction": "down" },
+            { "label": "② 加载已解压的扩展", "left": "56%", "top": "3%", "direction": "down" },
+            { "label": "③ 确认开关已打开", "left": "72%", "top": "17%", "direction": "down" }
+          ]
+        },
+        {
+          "title": "把小狗图标固定在工具栏",
+          "detail": "点击浏览器工具栏上的拼图图标，在扩展列表中把“小窗刷题网课伴侣”固定。固定后，橙色小狗图标会一直显示在这里。",
+          "image": "assets/course-guide/step-1-toolbar.png",
+          "imageAlt": "浏览器工具栏中已固定的小窗刷题网课伴侣图标",
+          "hotspots": [
+            { "label": "橙色小狗图标", "left": "28%", "top": "39%", "direction": "up" }
+          ]
+        },
+        {
+          "title": "在课程页绑定并进入视频小窗",
+          "detail": "先打开已启动的小窗刷题，再进入课程播放页。点击工具栏的小狗图标，然后在弹窗中点“绑定并进入视频聚焦小窗”。第一次使用时，请同意浏览器针对当前课程网站的权限请求。",
+          "image": "assets/course-guide/step-3-bind-course.png",
+          "imageAlt": "课程播放页中的网课伴侣弹窗及绑定按钮",
+          "hotspots": [
+            { "label": "① 打开网课伴侣", "left": "75%", "top": "8%", "direction": "up" },
+            { "label": "② 点击绑定", "left": "87%", "top": "28%", "direction": "left" }
+          ]
+        },
+        {
+          "title": "用老板键同步隐藏和恢复",
+          "detail": "开始刷题后，按小窗刷题设置的老板键：第一次会暂停视频并隐藏课程小窗与刷题小窗；再按一次，二者会一起恢复，视频会尝试继续播放。",
+          "image": "assets/course-guide/step-4-video-pane.png",
+          "imageAlt": "恢复后显示的小窗刷题和课程视频小窗",
+          "hotspots": [
+            { "label": "刷题小窗", "left": "3%", "top": "17%", "direction": "down" },
+            { "label": "视频小窗", "left": "72%", "top": "84%", "direction": "up" }
+          ]
+        }
       ],
       "updateTitle": "更新已有扩展",
       "updateSteps": [
