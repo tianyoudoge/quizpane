@@ -1,3 +1,5 @@
+import { requestCourseFramePermissions } from "./frame-permissions.js";
+
 const connection = document.querySelector("#connection");
 const course = document.querySelector("#course");
 const bindButton = document.querySelector("#bind");
@@ -19,11 +21,6 @@ function send(type, payload = {}) {
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
-}
-
-function originPattern(url) {
-  const parsed = new URL(url);
-  return `${parsed.protocol}//${parsed.hostname}/*`;
 }
 
 function formatTime(seconds) {
@@ -100,15 +97,23 @@ bindButton.addEventListener("click", async () => {
     error.textContent = "请在普通网页的课程播放页中使用。";
     return;
   }
-  const origin = originPattern(tab.url);
-  const granted = await chrome.permissions.request({ origins: [origin] });
-  if (!granted) {
-    error.textContent = "需要当前课程站点的权限才能控制视频。";
-    return;
+  bindButton.disabled = true;
+  bindButton.textContent = "正在检测课程播放器…";
+  try {
+    const permission = await requestCourseFramePermissions(chrome, tab);
+    if (!permission.granted) {
+      error.textContent = "需要课程页面和视频播放器域名权限才能隐藏非视频区域。";
+      return;
+    }
+    const result = await send("bind-current-tab", { tabId: tab.id, openWindow: true });
+    if (!result.success) error.textContent = "绑定失败：" + (result.error || "未知错误");
+    await refresh();
+  } catch (requestError) {
+    error.textContent = "无法检测或授权课程播放器：" + String(requestError);
+  } finally {
+    bindButton.disabled = false;
+    bindButton.textContent = "绑定并进入视频聚焦小窗";
   }
-  const result = await send("bind-current-tab", { tabId: tab.id, openWindow: true });
-  if (!result.success) error.textContent = "绑定失败：" + (result.error || "未知错误");
-  await refresh();
 });
 
 toggleButton.addEventListener("click", async () => {

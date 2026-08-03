@@ -1,5 +1,13 @@
 export function createCourseBindingController(context) {
   const { chromeApi, state, restored } = context;
+  const frameStates = new Map();
+  const mediaCommandTypes = new Set([
+    "command.boss_hide",
+    "command.boss_restore",
+    "command.toggle_playback",
+    "command.ensure_playing",
+    "command.video_control"
+  ]);
 
   async function disposeController(tabId = state.boundTabId) {
     if (!Number.isInteger(tabId)) return false;
@@ -17,11 +25,31 @@ export function createCourseBindingController(context) {
   async function forwardCommand(type, payload = {}) {
     await restored;
     if (!state.boundTabId) return { success: false, error: "no-bound-course" };
+    const message = { type, ...payload };
+    const options = mediaCommandTypes.has(type) && Number.isInteger(state.mediaFrameId)
+      ? { frameId: state.mediaFrameId }
+      : undefined;
     try {
-      const result = await chromeApi.tabs.sendMessage(state.boundTabId, { type, ...payload });
-      if (result?.videoDetected !== undefined) updateCourseState(result);
+      const result = await chromeApi.tabs.sendMessage(
+        state.boundTabId,
+        message,
+        options
+      );
+      if (options && result?.videoDetected !== undefined) {
+        updateFrameState(state.mediaFrameId, result);
+      }
       return result || { success: false, error: "empty-content-response" };
     } catch {
+      if (options) {
+        state.mediaFrameId = null;
+        context.persistState();
+        try {
+          const result = await chromeApi.tabs.sendMessage(state.boundTabId, message);
+          return result || { success: false, error: "empty-content-response" };
+        } catch {
+          // 整个标签页都无法接收消息时才解除绑定。
+        }
+      }
       clearBinding();
       return { success: false, error: "bound-tab-unavailable" };
     }
@@ -37,6 +65,54 @@ export function createCourseBindingController(context) {
     context.publishStatus();
   }
 
+  function rankedMediaFrames() {
+    return [...frameStates.entries()]
+      .filter(([, frame]) => frame.videoDetected)
+      .sort((left, right) => {
+        const area = (right[1].videoVisibleArea || 0) -
+          (left[1].videoVisibleArea || 0);
+        if (area) return area;
+        return Number(right[1].videoState === "playing") -
+          Number(left[1].videoState === "playing");
+      });
+  }
+
+  function publishFrameState() {
+    const top = frameStates.get(0) || {};
+    const media = Number.isInteger(state.mediaFrameId)
+      ? frameStates.get(state.mediaFrameId) || {}
+      : {};
+    return updateCourseState({
+      ...top,
+      ...media,
+      courseTitle: top.courseTitle || media.courseTitle || state.courseState.courseTitle,
+      focusMode: [...frameStates.values()].some(frame => frame.focusMode)
+    });
+  }
+
+  function selectMediaFrame({ force = false } = {}) {
+    const candidates = rankedMediaFrames();
+    const previousFrameId = state.mediaFrameId;
+    if (!Number.isInteger(state.mediaFrameId) ||
+        !frameStates.get(state.mediaFrameId)?.videoDetected) {
+      state.mediaFrameId = candidates[0]?.[0] ?? null;
+    }
+    if (force) state.mediaFrameId = candidates[0]?.[0] ?? null;
+    if (previousFrameId !== state.mediaFrameId) context.persistState();
+  }
+
+  function updateFrameState(frameId, next) {
+    if (!Number.isInteger(frameId)) return updateCourseState(next);
+    frameStates.set(frameId, { ...frameStates.get(frameId), ...next });
+    selectMediaFrame();
+    return publishFrameState();
+  }
+
+  function clearFrameStates() {
+    frameStates.clear();
+    state.mediaFrameId = null;
+  }
+
   function clearBinding() {
     context.tabCaptureKeeper?.stop();
     context.externalWindow.detach();
@@ -46,6 +122,7 @@ export function createCourseBindingController(context) {
     state.originWindowId = null;
     state.originTabIndex = null;
     state.courseWindowMinimized = false;
+    clearFrameStates();
     context.persistState();
     context.publishStatus();
   }
@@ -225,13 +302,36 @@ export function createCourseBindingController(context) {
     });
   }
 
-  async function bindCurrentTab(tabId, openWindow = false) {
-    if (!Number.isInteger(tabId)) return { success: false, error: "invalid-tab" };
-    try {
-      await installController(tabId);
+  async function queryInstalledFrames(tabId, injectionResults) {
+    const frameIds = Array.isArray(injectionResults)
+      ? [...new Set(injectionResults
+          .map(result => result?.frameId)
+          .filter(Number.isInteger))]
+      : [];
+    if (frameIds.length === 0) {
       const result = await chromeApi.tabs.sendMessage(tabId, {
         type: "command.query_status"
       });
+      return [{ frameId: 0, result }];
+    }
+    const statuses = await Promise.all(frameIds.map(async frameId => {
+      try {
+        const result = await chromeApi.tabs.sendMessage(tabId, {
+          type: "command.query_status"
+        }, { frameId });
+        return { frameId, result };
+      } catch {
+        return null;
+      }
+    }));
+    return statuses.filter(Boolean);
+  }
+
+  async function bindCurrentTab(tabId, openWindow = false) {
+    if (!Number.isInteger(tabId)) return { success: false, error: "invalid-tab" };
+    try {
+      const injectionResults = await installController(tabId);
+      const frameStatus = await queryInstalledFrames(tabId, injectionResults);
       const previousTabId = state.boundTabId;
       if (Number.isInteger(previousTabId) && previousTabId !== tabId) {
         if (state.courseWindowId) {
@@ -246,7 +346,12 @@ export function createCourseBindingController(context) {
         await disposeController(previousTabId);
       }
       state.boundTabId = tabId;
-      updateCourseState(result || {});
+      clearFrameStates();
+      for (const { frameId, result } of frameStatus) {
+        if (result) updateFrameState(frameId, result);
+      }
+      selectMediaFrame({ force: true });
+      publishFrameState();
       if (openWindow) {
         const windowResult = await enterCourseWindow();
         if (!windowResult.success) return windowResult;
@@ -283,7 +388,14 @@ export function createCourseBindingController(context) {
       context.publishStatus();
     }
     if (change.status === "complete" && state.courseWindowId) {
-      await installController(tabId);
+      const injectionResults = await installController(tabId);
+      const frameStatus = await queryInstalledFrames(tabId, injectionResults);
+      clearFrameStates();
+      for (const { frameId, result } of frameStatus) {
+        if (result) updateFrameState(frameId, result);
+      }
+      selectMediaFrame({ force: true });
+      publishFrameState();
       await forwardCommand("command.enter_focus_mode");
     }
   }
@@ -303,6 +415,7 @@ export function createCourseBindingController(context) {
     installController,
     returnTab,
     showCourseWindow,
-    updateCourseState
+    updateCourseState,
+    updateFrameState
   };
 }

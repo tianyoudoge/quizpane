@@ -4,6 +4,8 @@
 
   let bossWasPlaying = false;
   let focusState = null;
+  let focusRequested = false;
+  let focusReconcileTimer = null;
   let lastReportedSnapshot = "";
   let windowBindingOriginalTitle = null;
   let disposed = false;
@@ -21,15 +23,24 @@
     return width * height;
   }
 
-  function findMainVideo() {
+  function viableVideo(video) {
+    return Boolean(video && video.isConnected !== false && visibleArea(video) > 10_000);
+  }
+
+  function findMainVideo(preferred = focusState?.video) {
+    if (viableVideo(preferred)) return preferred;
     return [...document.querySelectorAll("video")]
-      .filter(video => video.readyState > 0)
+      .filter(viableVideo)
       .sort((left, right) => {
+        const areaDifference = visibleArea(right) - visibleArea(left);
+        if (areaDifference) return areaDifference;
         const leftPlaying = !left.paused && !left.ended ? 1 : 0;
         const rightPlaying = !right.paused && !right.ended ? 1 : 0;
         if (leftPlaying !== rightPlaying) return rightPlaying - leftPlaying;
-        const areaDifference = visibleArea(right) - visibleArea(left);
-        return areaDifference || (right.duration || 0) - (left.duration || 0);
+        const leftReady = left.readyState > 0 ? 1 : 0;
+        const rightReady = right.readyState > 0 ? 1 : 0;
+        if (leftReady !== rightReady) return rightReady - leftReady;
+        return (right.duration || 0) - (left.duration || 0);
       })[0] || null;
   }
 
@@ -57,21 +68,21 @@
     if (video.controls) return video;
     const videoRect = video.getBoundingClientRect();
     const videoArea = Math.max(1, videoRect.width * videoRect.height);
-    let root = video;
     for (let parent = video.parentElement; parent && parent !== document.body;
          parent = parent.parentElement) {
       const rect = parent.getBoundingClientRect();
       const area = rect.width * rect.height;
       if (rect.width < videoRect.width * 0.9 || rect.height < videoRect.height * 0.9 ||
           area > videoArea * 5 || area > innerWidth * innerHeight * 0.96) break;
-      root = parent;
-      if (hasPlaybackControls(parent)) return parent;
+      // 自定义控制条通常只会让播放器外壳比视频略高一点。明显更高或更宽的
+      // 父节点往往还包含聊天、目录等区域，不能把它们一起当成视频铺满。
+      const tightlyWrapsVideo = videoRect.width > 0 && videoRect.height > 0 &&
+        rect.width <= Math.max(videoRect.width + 48, videoRect.width * 1.15) &&
+        rect.height <= Math.max(videoRect.height + 72, videoRect.height * 1.3) &&
+        area <= videoArea * 1.5;
+      if (tightlyWrapsVideo && hasPlaybackControls(parent)) return parent;
     }
-    return root;
-  }
-
-  function focusTarget() {
-    return findPlayerRoot(findMainVideo());
+    return video;
   }
 
   function snapshot() {
@@ -84,6 +95,7 @@
       bound: true,
       courseTitle: windowBindingOriginalTitle ?? document.title,
       videoDetected: Boolean(video),
+      videoVisibleArea: video ? visibleArea(video) : 0,
       videoState: video && !video.paused && !video.ended ? "playing" : "paused",
       videoCurrentTimeSeconds: currentTime,
       videoDurationSeconds: duration,
@@ -208,10 +220,7 @@
     return { success: false, error: "unsupported-video-control" };
   }
 
-  function enterFocusMode() {
-    if (focusState?.target?.isConnected) return { success: true, ...snapshot() };
-    const target = focusTarget();
-    if (!target) return { success: false, error: "player-not-found" };
+  function applyFocusMode(target, video) {
     const targetStyle = target.getAttribute("style");
     const htmlStyle = document.documentElement.getAttribute("style");
     const bodyStyle = document.body.getAttribute("style");
@@ -232,13 +241,23 @@
       }
       [data-quizpane-video-focus-target],
       [data-quizpane-video-focus-target] * { visibility: visible !important; }
-      video[data-quizpane-video-focus-target] { object-fit: contain !important; }
+      video[data-quizpane-video-focus-video] {
+        object-fit: contain !important;
+      }
+      [data-quizpane-video-focus-target]:not(video)
+        video[data-quizpane-video-focus-video] {
+        position: absolute !important; inset: 0 !important;
+        width: 100% !important; height: 100% !important;
+        max-width: none !important; max-height: none !important;
+        margin: 0 !important; object-fit: contain !important;
+      }
     `;
     document.head.append(style);
     document.documentElement.dataset.quizpaneVideoFocus = "true";
     document.body.dataset.quizpaneVideoFocus = "true";
     target.dataset.quizpaneVideoFocusTarget = "true";
-    focusState = { target, targetStyle, htmlStyle, bodyStyle, style };
+    if (video?.isConnected) video.dataset.quizpaneVideoFocusVideo = "true";
+    focusState = { target, video, targetStyle, htmlStyle, bodyStyle, style };
     reportStatus();
     return { success: true, target: target.tagName.toLowerCase(), ...snapshot() };
   }
@@ -248,9 +267,9 @@
     else element.setAttribute("style", previousStyle);
   }
 
-  function exitFocusMode({ report = true } = {}) {
+  function clearFocusMode({ report = true } = {}) {
     if (!focusState) return { success: true, ...snapshot() };
-    const { target, targetStyle, htmlStyle, bodyStyle, style } = focusState;
+    const { target, video, targetStyle, htmlStyle, bodyStyle, style } = focusState;
     style.remove();
     document.documentElement.removeAttribute("data-quizpane-video-focus");
     document.body.removeAttribute("data-quizpane-video-focus");
@@ -258,11 +277,54 @@
       target.removeAttribute("data-quizpane-video-focus-target");
       restoreStyle(target, targetStyle);
     }
+    if (video?.isConnected) video.removeAttribute("data-quizpane-video-focus-video");
     restoreStyle(document.documentElement, htmlStyle);
     restoreStyle(document.body, bodyStyle);
     focusState = null;
     if (report) reportStatus();
     return { success: true, ...snapshot() };
+  }
+
+  function reconcileFocusMode() {
+    if (!focusRequested) return { success: false, error: "focus-not-requested" };
+    if (focusState && (!focusState.target.isConnected ||
+        (focusState.video && !viableVideo(focusState.video)))) {
+      // 先撤销旧聚焦样式再测量替换节点，避免全屏 CSS 污染新播放器的尺寸判断。
+      clearFocusMode({ report: false });
+    }
+    const video = findMainVideo();
+    if (focusState?.video === video && focusState?.target?.isConnected) {
+      return {
+        success: true,
+        target: focusState.target.tagName.toLowerCase(),
+        ...snapshot()
+      };
+    }
+    const target = findPlayerRoot(video);
+    if (!target) return { success: false, error: "player-not-found" };
+    clearFocusMode({ report: false });
+    return applyFocusMode(target, video);
+  }
+
+  function scheduleFocusReconcile() {
+    if (!focusRequested || disposed) return;
+    if (focusReconcileTimer !== null) return;
+    focusReconcileTimer = setTimeout(() => {
+      focusReconcileTimer = null;
+      reconcileFocusMode();
+    }, 100);
+  }
+
+  function enterFocusMode() {
+    focusRequested = true;
+    return reconcileFocusMode();
+  }
+
+  function exitFocusMode({ report = true } = {}) {
+    focusRequested = false;
+    clearTimeout(focusReconcileTimer);
+    focusReconcileTimer = null;
+    return clearFocusMode({ report });
   }
 
   function setWindowBindingTitle(bindingToken) {
@@ -286,7 +348,12 @@
 
   function handleMediaEvent() {
     if (disposed) return;
+    if (focusRequested) reconcileFocusMode();
     reportStatus();
+  }
+
+  function handleViewportChange() {
+    scheduleFocusReconcile();
   }
 
   function disposeController() {
@@ -294,12 +361,14 @@
     disposed = true;
     observer?.disconnect();
     clearTimeout(observer?.timer);
+    clearTimeout(focusReconcileTimer);
     clearInterval(statusTimer);
     for (const eventName of mediaEventNames) {
       document.removeEventListener(eventName, handleMediaEvent, true);
     }
     document.removeEventListener("pointerdown", handleSourcePointerDown, true);
     document.removeEventListener("pointerup", handleSourcePointerUp, true);
+    removeEventListener("resize", handleViewportChange);
     exitFocusMode({ report: false });
     restoreWindowBindingTitle({ report: false });
     chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
@@ -335,10 +404,12 @@
 
   document.addEventListener("pointerdown", handleSourcePointerDown, true);
   document.addEventListener("pointerup", handleSourcePointerUp, true);
+  addEventListener("resize", handleViewportChange, { passive: true });
 
   observer = new MutationObserver(() => {
     if (disposed) return;
-    if (focusState && !focusState.target.isConnected) exitFocusMode();
+    if (focusState && !focusState.target.isConnected) clearFocusMode();
+    scheduleFocusReconcile();
     clearTimeout(observer.timer);
     observer.timer = setTimeout(() => {
       reportStatus();

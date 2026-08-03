@@ -36,8 +36,8 @@ function createHarness(overrides = {}) {
     tabs: {
       get: async tabId => ({ id: tabId, windowId: 4, index: 2 }),
       move: async (tabId, options) => calls.push(["tabs.move", tabId, options]),
-      sendMessage: async (tabId, message) => {
-        calls.push(["tabs.sendMessage", tabId, message]);
+      sendMessage: async (tabId, message, options) => {
+        calls.push(["tabs.sendMessage", tabId, message, options]);
         if (message.type === "command.set_window_binding_title") return { success: true };
         return { success: true, videoDetected: true };
       }
@@ -117,12 +117,171 @@ test("iframe fixture is injected in all frames", async () => {
   ]);
 });
 
+test("video controls target the media-owning frame while focus commands reach every frame", async () => {
+  const harness = createHarness();
+  harness.course.updateFrameState(0, {
+    bound: true,
+    courseTitle: "课程外层",
+    videoDetected: false,
+    videoState: "paused",
+    focusMode: true
+  });
+  harness.course.updateFrameState(8, {
+    bound: true,
+    courseTitle: "播放器内层",
+    videoDetected: true,
+    videoState: "playing",
+    videoVisibleArea: 180_000,
+    videoCurrentTimeSeconds: 12,
+    videoDurationSeconds: 300,
+    focusMode: true
+  });
+
+  await harness.course.forwardCommand("command.video_control", {
+    action: "seek",
+    position: 0.5
+  });
+  await harness.course.forwardCommand("command.enter_focus_mode");
+
+  const controls = harness.calls.find(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.video_control");
+  const focus = harness.calls.find(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.enter_focus_mode");
+  assert.deepEqual(controls[3], { frameId: 8 });
+  assert.equal(focus[3], undefined);
+  assert.equal(harness.state.courseState.courseTitle, "课程外层");
+  assert.equal(harness.state.courseState.videoDetected, true);
+  assert.equal(harness.state.courseState.videoState, "playing");
+});
+
+test("binding queries every injected frame before choosing the media owner", async () => {
+  const harness = createHarness();
+  harness.chromeApi.scripting.executeScript = async options => {
+    harness.calls.push(["executeScript", options]);
+    return [{ frameId: 0 }, { frameId: 8 }];
+  };
+  harness.chromeApi.tabs.sendMessage = async (tabId, message, options) => {
+    harness.calls.push(["tabs.sendMessage", tabId, message, options]);
+    if (message.type !== "command.query_status") {
+      return { success: true, videoDetected: true };
+    }
+    return options?.frameId === 8
+      ? {
+          success: true,
+          courseTitle: "播放器内层",
+          videoDetected: true,
+          videoState: "paused",
+          videoVisibleArea: 160_000
+        }
+      : {
+          success: true,
+          courseTitle: "课程外层",
+          videoDetected: false,
+          videoState: "paused",
+          videoVisibleArea: 0
+        };
+  };
+
+  assert.equal((await harness.course.bindCurrentTab(7)).success, true);
+  await harness.course.forwardCommand("command.ensure_playing");
+
+  const queries = harness.calls.filter(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.query_status");
+  const playback = harness.calls.find(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.ensure_playing");
+  assert.deepEqual(queries.map(call => call[3]), [{ frameId: 0 }, { frameId: 8 }]);
+  assert.deepEqual(playback[3], { frameId: 8 });
+  assert.equal(harness.state.courseState.courseTitle, "课程外层");
+  assert.equal(harness.state.courseState.videoDetected, true);
+});
+
+test("initial frame scan chooses the largest video instead of the first video response", async () => {
+  const harness = createHarness();
+  harness.chromeApi.scripting.executeScript = async () => [
+    { frameId: 0 },
+    { frameId: 3 },
+    { frameId: 8 }
+  ];
+  harness.chromeApi.tabs.sendMessage = async (tabId, message, options) => {
+    harness.calls.push(["tabs.sendMessage", tabId, message, options]);
+    if (message.type !== "command.query_status") {
+      return { success: true, videoDetected: true };
+    }
+    if (options.frameId === 3) {
+      return {
+        success: true,
+        videoDetected: true,
+        videoState: "playing",
+        videoVisibleArea: 24_000
+      };
+    }
+    if (options.frameId === 8) {
+      return {
+        success: true,
+        videoDetected: true,
+        videoState: "paused",
+        videoVisibleArea: 180_000
+      };
+    }
+    return {
+      success: true,
+      courseTitle: "课程外层",
+      videoDetected: false,
+      videoState: "paused",
+      videoVisibleArea: 0
+    };
+  };
+
+  await harness.course.bindCurrentTab(7);
+  await harness.course.forwardCommand("command.video_control", {
+    action: "seek",
+    position: 0.25
+  });
+
+  const control = harness.calls.find(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.video_control");
+  assert.deepEqual(control[3], { frameId: 8 });
+});
+
+test("a restored media frame owner receives the first playback command after worker restart", async () => {
+  const harness = createHarness();
+  harness.state.mediaFrameId = 8;
+
+  await harness.course.forwardCommand("command.toggle_playback");
+
+  const playback = harness.calls.find(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.toggle_playback");
+  assert.deepEqual(playback[3], { frameId: 8 });
+});
+
+test("a stale media frame retries by broadcast without unbinding the course", async () => {
+  const harness = createHarness();
+  harness.state.mediaFrameId = 8;
+  harness.chromeApi.tabs.sendMessage = async (tabId, message, options) => {
+    harness.calls.push(["tabs.sendMessage", tabId, message, options]);
+    if (options?.frameId === 8) throw new Error("frame removed");
+    return { success: false, error: "video-not-found" };
+  };
+
+  const result = await harness.course.forwardCommand("command.toggle_playback");
+
+  const playbackCalls = harness.calls.filter(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.toggle_playback");
+  assert.equal(playbackCalls.length, 2);
+  assert.deepEqual(playbackCalls[0][3], { frameId: 8 });
+  assert.equal(playbackCalls[1][3], undefined);
+  assert.equal(result.error, "video-not-found");
+  assert.equal(harness.state.boundTabId, 7);
+  assert.equal(harness.state.mediaFrameId, null);
+});
+
 test("completed navigation reinjects the controller and restores focus mode", async () => {
   const harness = createHarness();
   await harness.course.handleNavigation(7, { status: "complete" });
   assert.equal(harness.calls[0][0], "executeScript");
-  assert.equal(harness.calls[1][0], "tabs.sendMessage");
-  assert.equal(harness.calls[1][2].type, "command.enter_focus_mode");
+  const focus = harness.calls.find(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.enter_focus_mode");
+  assert.ok(focus);
 });
 
 test("pending external attach restores the temporary title after timeout", async () => {

@@ -22,6 +22,7 @@ const state = {
   originWindowId: null,
   originTabIndex: null,
   courseWindowMinimized: false,
+  mediaFrameId: null,
   externalWindowBinding: null,
   externalWindowStatus: null
 };
@@ -33,6 +34,7 @@ const restored = chrome.storage.session.get([
   "originWindowId",
   "originTabIndex",
   "courseWindowMinimized",
+  "mediaFrameId",
   "externalWindowBinding",
   "externalWindowStatus"
 ]).then(saved => {
@@ -42,6 +44,7 @@ const restored = chrome.storage.session.get([
   state.originWindowId = Number.isInteger(saved.originWindowId) ? saved.originWindowId : null;
   state.originTabIndex = Number.isInteger(saved.originTabIndex) ? saved.originTabIndex : null;
   state.courseWindowMinimized = Boolean(saved.courseWindowMinimized);
+  state.mediaFrameId = Number.isInteger(saved.mediaFrameId) ? saved.mediaFrameId : null;
   state.externalWindowBinding = saved.externalWindowBinding || null;
   state.externalWindowStatus = saved.externalWindowStatus || null;
 });
@@ -155,7 +158,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   (async () => {
     await restored;
     if (request?.type === "content-status" && sender.tab?.id === state.boundTabId) {
-      course.updateCourseState(request.payload);
+      course.updateFrameState(sender.frameId, request.payload);
       return { ok: true };
     }
     if (request?.type === "content-source-pointer" && sender.tab?.id === state.boundTabId &&
