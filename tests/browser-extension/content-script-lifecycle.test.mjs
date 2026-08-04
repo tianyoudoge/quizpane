@@ -260,7 +260,7 @@ test("focus mode activates when the video appears after the initial request", as
   assert.equal(video.dataset.quizpaneVideoFocusTarget, "true");
 });
 
-test("focus mode keeps a selected compact controls shell after its focused layout expands", async () => {
+test("focus mode keeps a selected compact controls shell after a proportional layout resize", async () => {
   const source = await contentScriptSource;
   const video = createDomNode("VIDEO", {
     right: 600, bottom: 300, width: 600, height: 300
@@ -282,10 +282,44 @@ test("focus mode keeps a selected compact controls shell after its focused layou
     listener({ type: "command.enter_focus_mode" }, {}, resolve));
 
   assert.equal((await enter()).target, "div");
-  video.setBounds({ right: 1280, bottom: 720, width: 1280, height: 720 });
-  shell.setBounds({ right: 1280, bottom: 720, width: 1280, height: 720 });
+  // 视频与容器按相近比例一起变化（例如页面响应式布局调整），容器依旧紧贴
+  // 视频，应继续沿用同一个自定义控制条外壳，而不是退回裸视频。
+  video.setBounds({ right: 660, bottom: 330, width: 660, height: 330 });
+  shell.setBounds({ right: 660, bottom: 374, width: 660, height: 374 });
   assert.equal((await enter()).target, "div");
   assert.equal(shell.dataset.quizpaneVideoFocusTarget, "true");
+});
+
+test("focus mode demotes a compact shell once new content makes it stop tightly wrapping the video", async () => {
+  const source = await contentScriptSource;
+  const video = createDomNode("VIDEO", {
+    right: 600, bottom: 300, width: 600, height: 300
+  });
+  Object.assign(video, {
+    readyState: 4, paused: false, ended: false, duration: 600,
+    currentTime: 10, controls: false
+  });
+  const shell = createDomNode("DIV", {
+    right: 600, bottom: 340, width: 600, height: 340
+  });
+  shell.querySelector = () => ({ kind: "custom-controls" });
+  video.parentElement = shell;
+  const harness = createContentScriptHarness({ videos: [video] });
+  shell.parentElement = harness.body;
+  vm.runInContext(source, harness.context);
+  const listener = [...harness.runtimeListeners][0];
+  const enter = () => new Promise(resolve =>
+    listener({ type: "command.enter_focus_mode" }, {}, resolve));
+
+  assert.equal((await enter()).target, "div");
+  // 与视频无关的模块（例如聊天区）异步插入到同一个已锁定容器内部，容器随之
+  // 变得又高又宽，不再紧贴视频；下一次校正应当降级为裸视频，而不是继续把
+  // 这个已经包含额外内容的容器当成聚焦目标铺满整个小窗。
+  shell.setBounds({ right: 600, bottom: 900, width: 600, height: 900 });
+  const result = await enter();
+  assert.equal(result.target, "video");
+  assert.equal(video.dataset.quizpaneVideoFocusTarget, "true");
+  assert.equal(shell.dataset.quizpaneVideoFocusTarget, undefined);
 });
 
 test("focus mode keeps the selected course video when another video starts playing", async () => {
