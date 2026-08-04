@@ -86,7 +86,6 @@ function createHarness(overrides = {}) {
       let value = 0;
       return () => `uuid-${++value}`;
     })(),
-    isMacOS: overrides.isMacOS,
     setTimeoutImpl: (callback, delay) => {
       timers.push({ callback, delay });
       return timers.length;
@@ -118,7 +117,7 @@ test("iframe fixture is injected in all frames", async () => {
   ]);
 });
 
-test("video controls target the media-owning frame while focus commands reach every frame", async () => {
+test("video controls target the media-owning frame while focus targets the outer player iframe", async () => {
   const harness = createHarness();
   harness.course.updateFrameState(0, {
     bound: true,
@@ -149,7 +148,7 @@ test("video controls target the media-owning frame while focus commands reach ev
   const focus = harness.calls.find(call =>
     call[0] === "tabs.sendMessage" && call[2].type === "command.enter_focus_mode");
   assert.deepEqual(controls[3], { frameId: 8 });
-  assert.equal(focus[3], undefined);
+  assert.deepEqual(focus[3], { frameId: 0 });
   assert.equal(harness.state.courseState.courseTitle, "课程外层");
   assert.equal(harness.state.courseState.videoDetected, true);
   assert.equal(harness.state.courseState.videoState, "playing");
@@ -285,12 +284,13 @@ test("completed navigation reinjects the controller and restores focus mode", as
   assert.ok(focus);
 });
 
-test("Windows course popups keep the original interactive player layout", async () => {
-  const harness = createHarness({ isMacOS: () => false });
+test("completed navigation focuses only the outer course document", async () => {
+  const harness = createHarness();
   await harness.course.handleNavigation(7, { status: "complete" });
   assert.equal(harness.calls[0][0], "executeScript");
-  assert.ok(!harness.calls.some(call =>
-    call[0] === "tabs.sendMessage" && call[2].type === "command.enter_focus_mode"));
+  const focus = harness.calls.find(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.enter_focus_mode");
+  assert.deepEqual(focus[3], { frameId: 0 });
 });
 
 test("pending external attach restores the temporary title after timeout", async () => {

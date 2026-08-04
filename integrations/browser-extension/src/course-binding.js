@@ -9,23 +9,6 @@ export function createCourseBindingController(context) {
     "command.video_control"
   ]);
 
-  // Windows 上课程页本身就是用户可操作的 Chrome popup。保留原始多面板布局，
-  // 让用户能在百家云这类播放器中自行把课件最大化；macOS 捕获镜像则没有这项
-  // 直接交互能力，才启用 CSS 聚焦以获得可读的镜像画面。
-  function shouldApplyFocusMode() {
-    return typeof context.isMacOS === "function" ? context.isMacOS() : true;
-  }
-
-  async function enterFocusMode() {
-    if (!shouldApplyFocusMode()) {
-      // 扩展更新或 service worker 重连时，页面可能还留有早先版本添加的
-      // 聚焦样式；显式清除它，确保 Windows popup 恢复全部可点击的原始布局。
-      const result = await forwardCommand("command.exit_focus_mode");
-      return { success: Boolean(result?.success), skipped: "interactive-native-popup" };
-    }
-    return forwardCommand("command.enter_focus_mode");
-  }
-
   async function disposeController(tabId = state.boundTabId) {
     if (!Number.isInteger(tabId)) return false;
     try {
@@ -43,9 +26,14 @@ export function createCourseBindingController(context) {
     await restored;
     if (!state.boundTabId) return { success: false, error: "no-bound-course" };
     const message = { type, ...payload };
+    // 百家云一类页面在 iframe 内再分出 PPT、目录和教师视频。媒体控制必须
+    // 送给视频所在的子 frame；聚焦则只作用在外层页，把整个播放器 iframe
+    // 铺满，从而保留子 frame 内的三栏布局和原生点击。
     const options = mediaCommandTypes.has(type) && Number.isInteger(state.mediaFrameId)
       ? { frameId: state.mediaFrameId }
-      : undefined;
+      : type === "command.enter_focus_mode" || type === "command.exit_focus_mode"
+        ? { frameId: 0 }
+        : undefined;
     try {
       const result = await chromeApi.tabs.sendMessage(
         state.boundTabId,
@@ -165,7 +153,7 @@ export function createCourseBindingController(context) {
       state.courseWindowId = popup.id ?? null;
       state.courseWindowMinimized = false;
       await context.persistState();
-      const focus = await enterFocusMode();
+      const focus = await forwardCommand("command.enter_focus_mode");
       const playback = await forwardCommand("command.ensure_playing");
       await captureStart;
       await context.externalWindow.attach(popup);
@@ -173,7 +161,7 @@ export function createCourseBindingController(context) {
       return {
         success: Boolean(state.courseWindowId),
         courseWindowId: state.courseWindowId,
-        focusMode: Boolean(focus?.success && !focus?.skipped),
+        focusMode: Boolean(focus?.success),
         focusError: focus?.success ? undefined : focus?.error,
         playbackStarted: Boolean(playback?.success),
         playbackError: playback?.success ? undefined : playback?.error
@@ -194,7 +182,7 @@ export function createCourseBindingController(context) {
       }
       state.courseWindowMinimized = false;
       await context.persistState();
-      await enterFocusMode();
+      await forwardCommand("command.enter_focus_mode");
       await forwardCommand("command.ensure_playing");
       await context.externalWindow.attach();
       context.publishStatus();
@@ -413,7 +401,7 @@ export function createCourseBindingController(context) {
       }
       selectMediaFrame({ force: true });
       publishFrameState();
-      await enterFocusMode();
+      await forwardCommand("command.enter_focus_mode");
     }
   }
 
@@ -424,7 +412,6 @@ export function createCourseBindingController(context) {
     clearBinding,
     disposeController,
     enterCourseWindow,
-    enterFocusMode,
     finalizeBossRestore,
     forwardCommand,
     handleDesktopCommand,

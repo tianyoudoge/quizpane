@@ -66,7 +66,6 @@ const context = {
   publishStatus: () => publishStatus(),
   send: (...args) => bridge.send(...args),
   randomUUID: () => crypto.randomUUID(),
-  isMacOS: () => navigator.userAgent.includes("Macintosh"),
   setTimeoutImpl: setTimeout,
   externalWindow: null
 };
@@ -101,7 +100,7 @@ const bridge = createBridgeClient({
           });
       state.courseWindowMinimized = false;
       await persistState();
-      await course.enterFocusMode();
+      await course.forwardCommand("command.enter_focus_mode");
       await course.forwardCommand("command.ensure_playing");
       externalWindow.attach(popup).catch(() => {});
     } catch {
