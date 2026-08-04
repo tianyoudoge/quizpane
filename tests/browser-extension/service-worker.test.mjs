@@ -86,6 +86,7 @@ function createHarness(overrides = {}) {
       let value = 0;
       return () => `uuid-${++value}`;
     })(),
+    isMacOS: overrides.isMacOS,
     setTimeoutImpl: (callback, delay) => {
       timers.push({ callback, delay });
       return timers.length;
@@ -282,6 +283,14 @@ test("completed navigation reinjects the controller and restores focus mode", as
   const focus = harness.calls.find(call =>
     call[0] === "tabs.sendMessage" && call[2].type === "command.enter_focus_mode");
   assert.ok(focus);
+});
+
+test("Windows course popups keep the original interactive player layout", async () => {
+  const harness = createHarness({ isMacOS: () => false });
+  await harness.course.handleNavigation(7, { status: "complete" });
+  assert.equal(harness.calls[0][0], "executeScript");
+  assert.ok(!harness.calls.some(call =>
+    call[0] === "tabs.sendMessage" && call[2].type === "command.enter_focus_mode"));
 });
 
 test("pending external attach restores the temporary title after timeout", async () => {

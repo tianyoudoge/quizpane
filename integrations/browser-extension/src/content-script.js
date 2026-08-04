@@ -287,15 +287,24 @@
 
   function reconcileFocusMode() {
     if (!focusRequested) return { success: false, error: "focus-not-requested" };
-    const previousVideo = focusState?.video;
-    // 聚焦中的视频被 CSS 强制铺满成整个视口尺寸，若不先撤销这层样式就测量，
-    // findPlayerRoot 会把这个伪造尺寸当成判断输入，导致目标容器判定失真——
-    // 必须在每次重新判定前清除，而不仅是在旧目标已失效时才清除，否则聊天区
-    // 等模块在锁定之后才插入同一容器时，不会被重新识别为“不再紧贴视频”。
-    if (focusState) clearFocusMode({ report: false });
-    const video = findMainVideo(previousVideo);
+    // DOM 变更在直播播放器中非常频繁（课件翻页、计时器和聊天都会触发）。
+    // 已经锁定到同一视频时重新撤销、测量再铺满会使画面在各面板之间闪动，
+    // 所以只在目标节点失效或播放器更换时才重新选择聚焦目标。
+    if (focusState && (!focusState.target.isConnected ||
+        (focusState.video && !viableVideo(focusState.video)))) {
+      clearFocusMode({ report: false });
+    }
+    const video = findMainVideo();
+    if (focusState?.video === video && focusState?.target?.isConnected) {
+      return {
+        success: true,
+        target: focusState.target.tagName.toLowerCase(),
+        ...snapshot()
+      };
+    }
     const target = findPlayerRoot(video);
     if (!target) return { success: false, error: "player-not-found" };
+    clearFocusMode({ report: false });
     return applyFocusMode(target, video);
   }
 
