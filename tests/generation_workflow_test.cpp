@@ -33,6 +33,10 @@ int main(int argc, char** argv) {
                      [&] { finished = true; });
     const QList<quizpane::studio::SourceMaterialGroup> sources{
         {questionPath, answerPath}};
+    const auto synchronous = quizpane::studio::runRuleBasedGeneration(sources);
+    if (!synchronous.error.isEmpty() || synchronous.candidate.questions.size() != 1 ||
+        !synchronous.candidate.needsReviewQuestions.isEmpty())
+        return 6;
     workflow.startRuleBased(sources);
 
     QTimer timeout;
@@ -47,5 +51,13 @@ int main(int argc, char** argv) {
     const QJsonObject question = ready.questions.first().toObject();
     if (question.value("answer").toObject().value("optionIds").toArray() !=
         QJsonArray{"a"}) return 5;
+    // GUI 异步包装不得形成第二套识别语义；完整候选 DTO 必须与 CLI 使用的同步
+    // 入口一致，包括材料、正常/复核题、警告、附件和答案模式。
+    const auto& expected = synchronous.candidate;
+    if (ready.materials != expected.materials || ready.questions != expected.questions ||
+        ready.needsReviewQuestions != expected.needsReviewQuestions ||
+        ready.warnings != expected.warnings || ready.assets != expected.assets ||
+        ready.hasAnswerKey != expected.hasAnswerKey)
+        return 7;
     return 0;
 }

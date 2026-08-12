@@ -40,6 +40,9 @@ struct ExtractedDocument {
     bool hasPageBoundaries = false;
     // 扫描页经过本地 OCR 时置 true，仅用于提示识别来源，不改变后续解析路径。
     bool usedOcr = false;
+    // plainText 第一页对应的原 PDF 页码。默认全卷提取时为 1；范围提取时保留
+    // 原始页码，避免 CLI 抽样结果在复核界面里错误显示成“第 1 页”。
+    int firstPageNumber = 1;
     // 文字 PDF 也可能把统计图、图形推理题嵌为位图。扫描 PDF 会在提取时保留
     // 渲染页；文字 PDF 的页面则由规则生成器只在确认需要原卷视觉上下文时按需
     // 载入，避免“全卷每页渲染 + PNG 压缩”拖慢普通纯文字题库。
@@ -52,6 +55,14 @@ struct ExtractedDocument {
     // 文字层表达不了的下划线、填空横线和嵌入式图片横线。
     QHash<int, QList<PdfTextAnchor>> lineAnchors;
     QHash<int, QList<PdfUnderlineDecoration>> underlineDecorations;
+};
+
+// PDF 范围参数均使用从 1 开始的原文页码。0 表示不限制对应边界；padding 在
+// 两侧外扩，用于避免用户指定的页边界正好切断跨页题目或共享材料。
+struct PdfExtractionRange {
+    int firstPage = 0;
+    int lastPage = 0;
+    int padding = 0;
 };
 
 // 单一文档格式的提取器。supports() 只看扩展名，不打开文件，方便
@@ -81,6 +92,7 @@ class PdfExtractor final : public DocumentExtractor {
   public:
     bool supports(const QString& path) const override;
     ExtractedDocument extract(const QString& path) const override;
+    ExtractedDocument extract(const QString& path, const PdfExtractionRange& range) const;
 };
 
 // 精确检测 PDF 中真正绘制出来的下划线。这个步骤刻意不在 extract() 中执行：
@@ -100,6 +112,7 @@ class ExtractorRegistry final {
   public:
     ExtractorRegistry();
     ExtractedDocument extract(const QString& path) const;
+    ExtractedDocument extract(const QString& path, const PdfExtractionRange& range) const;
 
   private:
     TxtMarkdownExtractor txtMarkdown_;

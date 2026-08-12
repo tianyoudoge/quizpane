@@ -1,5 +1,6 @@
 #include "quizpane/studio/rule_based_generator.hpp"
 #include "quizpane/studio/option_label.hpp"
+#include "quizpane/studio/suite_answer_matcher.hpp"
 
 #include <QFileInfo>
 #include <QBuffer>
@@ -26,6 +27,35 @@ struct SourceLine {
     bool paragraphBreakBefore = false;
 };
 
+bool isQilinWorkbook(const QString& sourcePath) {
+    const QString name = QFileInfo(sourcePath).fileName().normalized(QString::NormalizationForm_KC);
+    static const QRegularExpression supported(QStringLiteral(
+        R"(^刷题组(?:02|03|06|07)——.*[（(]2027[）)]\.pdf$)"));
+    return supported.match(name).hasMatch();
+}
+
+bool isQilinBoilerplate(const QString& text) {
+    const QString value = text.simplified();
+    if (value.isEmpty())
+        return false;
+    // 仅由上面的目标文件名门控。其它来源即使包含类似品牌/页码文字，也保持
+    // 原有解析行为，避免为一个出版社的固定版式扩大生产算法影响面。
+    static const QRegularExpression header(QStringLiteral(
+        R"(^(?=.*(?:内部交流讲义|微信公众号[：:]\s*公考齐麟|新浪微博[：:]\s*公考齐麟)).*$)"));
+    static const QRegularExpression footer(QStringLiteral(
+        R"(^\d{1,4}(?:\s+|(?=用心))用心帮助每一个认真的你$)"));
+    return header.match(value).hasMatch() || footer.match(value).hasMatch();
+}
+
+bool isQilinQuestionTailBoundary(const QString& text) {
+    const QString value = text.simplified();
+    if (value.isEmpty())
+        return false;
+    static const QRegularExpression boundary(QStringLiteral(
+        R"(^(?:听视频记笔记[：:]?|参考答案见最后一页.*|视频讲解直接扫码.*|[（(]若二维码无法识别.*|资料分析高频错题精选\s*\d{1,3}|葫芦兄弟\s*\d{1,3})$)"));
+    return boundary.match(value).hasMatch();
+}
+
 struct QuestionAnchor {
     int line = 0;
     int number = 0;
@@ -43,7 +73,7 @@ struct MaterialMarker {
 
 const QRegularExpression& questionPattern() {
     static const QRegularExpression value(QStringLiteral(
-        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?(\d{1,4})\s*(?:题|[．、:：\)）]|\.(?!\d))\s*(.*)$)"));
+        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?((?:0\d{2}(?=\s*[-—]\s*\D))|\d{1,4})\s*(?:题|[．、:：\)）—-]|\.(?!\d))\s*(.*)$)"));
     return value;
 }
 
@@ -83,6 +113,48 @@ void normalizeTrailingQuestionNumberLayout(QList<SourceLine>* lines) {
     }
 }
 
+void normalizeQilinWorkbookLayout(QList<SourceLine>* lines) {
+    if (!lines)
+        return;
+    // “资料分析高频错题精选 124”本身就是一道题的稳定编号，题干从下一行开始。
+    // 限定完整标题，避免给普通章节标题或其它出版社版式引入隐式题号。
+    static const QRegularExpression dataHeading(
+        QStringLiteral(R"(^\s*资料分析高频错题精选\s*(\d{1,3})\s*$)"));
+    // “葫芦兄弟 029”下面通常依次放【原型】和一到多个【改编】题，子题自身没有
+    // 数字锚点。用组号*10+序号生成稳定内部题号（291、292…），同时保留标签文本。
+    static const QRegularExpression pairHeading(
+        QStringLiteral(R"(^\s*葫芦兄弟\s*(\d{1,3})\s*$)"));
+    static const QRegularExpression pairQuestion(
+        QStringLiteral(R"(^\s*【\s*(原型|改编(?:\s*\d+)?)\s*】\s*(.*)$)"));
+    int pairNumber = 0;
+    int pairOrdinal = 0;
+    for (SourceLine& line : *lines) {
+        const auto data = dataHeading.match(line.text);
+        if (data.hasMatch()) {
+            line.text = QStringLiteral("%1. %2")
+                .arg(data.captured(1), line.text.trimmed());
+            pairNumber = 0;
+            pairOrdinal = 0;
+            continue;
+        }
+        const auto heading = pairHeading.match(line.text);
+        if (heading.hasMatch()) {
+            pairNumber = heading.captured(1).toInt();
+            pairOrdinal = 0;
+            continue;
+        }
+        if (pairNumber <= 0)
+            continue;
+        const auto question = pairQuestion.match(line.text);
+        if (!question.hasMatch())
+            continue;
+        ++pairOrdinal;
+        line.text = QStringLiteral("%1. 【%2】%3")
+            .arg(pairNumber * 10 + pairOrdinal)
+            .arg(question.captured(1), question.captured(2));
+    }
+}
+
 const QRegularExpression& inlineAnswerPattern() {
     static const QRegularExpression value(QStringLiteral(
         R"(^\s*(?:【?\s*(?:(?:参考|标准)?答案)\s*】?|正确答案)\s*[:：]?\s*(.+?)\s*$)"));
@@ -91,19 +163,25 @@ const QRegularExpression& inlineAnswerPattern() {
 
 const QRegularExpression& solutionPattern() {
     static const QRegularExpression value(
-        QStringLiteral(R"(^\s*(?:【?\s*(?:答案)?解析\s*】?|解答|说明)\s*[:：]?\s*(.*)$)"));
+        QStringLiteral(R"(^\s*(?:【?\s*(?:答案)?解析\s*】?|解答|说明|解题要点)\s*[:：]?\s*(.*)$)"));
     return value;
 }
 
 bool isAnswerSectionHeader(const QString& text) {
     static const QRegularExpression pattern(
-        QStringLiteral(R"(^\s*(?:答案|参考答案|答案汇总|答案及解析|参考答案及解析)\s*[:：]?\s*$)"));
+        QStringLiteral(R"(^\s*【?\s*(?:答案|参考答案|答案汇总|答案及解析|参考答案及解析)\s*】?\s*[:：]?\s*$)"));
     return pattern.match(text).hasMatch();
 }
 
 bool isMaterialHeader(const QString& text) {
     static const QRegularExpression pattern(QStringLiteral(
         R"(^\s*(?:[（(][一二三四五六七八九十\d]+[）)]\s*)?(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*\s*[:：]?|阅读(?:下列|以下)(?:材料|文字)|根据(?:下列|以下)(?:统计)?(?:资料|材料)|原文\s*[:：])\s*.*$)"));
+    return pattern.match(text).hasMatch();
+}
+
+bool isQilinMaterialHeader(const QString& text) {
+    static const QRegularExpression pattern(QStringLiteral(
+        R"(^\s*[一二三四五六七八九十]+、\s*根据(?:下列|以下)(?:统计)?(?:资料|材料)\s*[,，、:：]?\s*.*$)"));
     return pattern.match(text).hasMatch();
 }
 
@@ -737,10 +815,23 @@ QString answerFromOptionText(const QString& rawAnswer,
 
 QList<SourceLine> sourceLines(const ExtractedDocument& document) {
     QList<SourceLine> result;
-    int page = document.hasPageBoundaries ? 1 : 0;
+    const bool qilinWorkbook = isQilinWorkbook(document.sourcePath);
+    int page = document.hasPageBoundaries ? qMax(1, document.firstPageNumber) : 0;
     QString current;
     bool paragraphBreakBefore = false;
     bool previousWasCarriageReturn = false;
+    const auto appendCurrent = [&]() {
+        const QString cleaned = current.trimmed();
+        if (cleaned.isEmpty())
+            return;
+        static const QRegularExpression pageFooter(
+            QStringLiteral(R"(^[-—–\s]*\d{1,4}[-—–\s]*$)"));
+        if (!pageFooter.match(cleaned).hasMatch() &&
+            !(qilinWorkbook && isQilinBoilerplate(cleaned))) {
+            result.append({cleaned, page, paragraphBreakBefore});
+            paragraphBreakBefore = false;
+        }
+    };
     const QString normalized = document.plainText.normalized(QString::NormalizationForm_C);
     for (const QChar ch : normalized) {
         // PDF 文本层常用 CRLF。此前 \r 已经提交当前视觉行，紧随的 \n 又被当作
@@ -751,8 +842,7 @@ QList<SourceLine> sourceLines(const ExtractedDocument& document) {
             continue;
         }
         if (ch == u'\f') {
-            if (!current.trimmed().isEmpty())
-                result.append({current.trimmed(), page, paragraphBreakBefore});
+            appendCurrent();
             current.clear();
             paragraphBreakBefore = false;
             previousWasCarriageReturn = false;
@@ -760,14 +850,9 @@ QList<SourceLine> sourceLines(const ExtractedDocument& document) {
                 ++page;
         } else if (ch == u'\n' || ch == u'\r') {
             if (!current.isEmpty()) {
-                QString cleaned = current.trimmed();
                 // PDF 页脚通常是 "- 15 -" / "-15-"，绝不能进入题干；保留
                 // 其它换行以免把资料题的段落硬拼成一行。
-                static const QRegularExpression pageFooter(QStringLiteral(R"(^[-—–\s]*\d{1,4}[-—–\s]*$)"));
-                if (!pageFooter.match(cleaned).hasMatch()) {
-                    result.append({cleaned, page, paragraphBreakBefore});
-                    paragraphBreakBefore = false;
-                }
+                appendCurrent();
             } else {
                 paragraphBreakBefore = true;
             }
@@ -778,7 +863,7 @@ QList<SourceLine> sourceLines(const ExtractedDocument& document) {
             previousWasCarriageReturn = false;
         }
     }
-    if (!current.trimmed().isEmpty()) result.append({current.trimmed(), page, paragraphBreakBefore});
+    appendCurrent();
     return result;
 }
 
@@ -1266,6 +1351,7 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
                           QHash<QString, QByteArray>* generatedAssets, QString* reviewReason,
                           bool allowMultipleAnswers, bool insideGraphicalReasoningPart,
                           bool hasAnswerKey) {
+    const bool qilinWorkbook = isQilinWorkbook(document.sourcePath);
     QStringList stemLines;
     QList<int> stemSourceIndices;
     const auto appendStem = [&stemLines, &stemSourceIndices](const QString& text, int sourceIndex) {
@@ -1317,6 +1403,11 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
         const QString line = lines.at(index).text.trimmed();
         if (line.isEmpty())
             continue;
+        // 齐麟 07 在每道题后都有大面积笔记框；02/03/06 的套题末尾则有二维码
+        // 提示。它们都不是最后一个选项的续行。只在四本受支持讲义中把稳定提示
+        // 作为硬边界，防止对其它出版社的同名正文产生影响。
+        if (qilinWorkbook && isQilinQuestionTailBoundary(line))
+            break;
         const auto answerMatch = inlineAnswerPattern().match(line);
         if (answerMatch.hasMatch()) {
             rawAnswer = answerMatch.captured(1).trimmed();
@@ -1699,6 +1790,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         ExtractedDocument document = sourceDocument;
         ++documentOrdinal;
         QList<SourceLine> lines = sourceLines(document);
+        const bool qilinWorkbook = isQilinWorkbook(document.sourcePath);
+        normalizeQilinWorkbookLayout(&lines);
         normalizeTrailingQuestionNumberLayout(&lines);
 
         // 收集所有答案区头行号。整体前后分开的文件只有一个，阶段分组的文件
@@ -1744,9 +1837,35 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             if (!match.hasMatch())
                 continue;
             const int number = match.captured(1).toInt();
-            if (number <= 0)
+            // 目标讲义的资料标题常以“2019-2023年……”开头。年份区间不是题号；
+            // 公务员套题的原始小题号远低于 1900，直接排除现代年份可避免目录、
+            // 图表标题和材料正文被制造成空题，同时不改变现有 1-999 题号支持。
+            if (number <= 0 || (number >= 1900 && number <= 2099))
                 continue;
             anchors.append({index, number, match.captured(2).trimmed()});
+        }
+
+        // 齐麟 02/03/06 的答案身份是“套卷 + 原题号”，不能继续使用文档级
+        // `题号 -> 答案`：同一本资料里会反复出现 1、61、106 等题号。匹配器只
+        // 消费上面生产规则已经确认的题号锚点，并且只有套卷标题唯一、题号连续、
+        // 答案数量完整时才返回逐题答案；GUI 与 CLI 都经由本生成器走同一路径。
+        SuiteAnswerMatchResult suiteAnswers;
+        QHash<int, QString> dailyQuantityAnswers;
+        if (hasAnswerKey && qilinWorkbook) {
+            QStringList suiteLines;
+            suiteLines.reserve(lines.size());
+            for (const SourceLine& line : lines)
+                suiteLines.append(line.text);
+            QList<SuiteQuestionAnchor> suiteAnchors;
+            suiteAnchors.reserve(anchors.size());
+            for (const QuestionAnchor& anchor : anchors)
+                suiteAnchors.append({anchor.line, anchor.number});
+            suiteAnswers = matchQilinSuiteAnswers(suiteLines, suiteAnchors);
+            dailyQuantityAnswers =
+                matchQilinDailyQuantityAnswers(suiteLines, suiteAnchors);
+            for (const QString& warning : suiteAnswers.warnings)
+                result.warnings.append(QStringLiteral("%1：%2")
+                    .arg(QFileInfo(document.sourcePath).fileName(), warning));
         }
 
         // 材料扫描：材料头与“根据材料回答N-M题”的范围头一起出现，范围头可能与
@@ -1762,7 +1881,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                     continue;
                 contentLine = next;
                 materialHeaderLinesClaimedBySectionMarker.insert(contentLine);
-            } else if (!isMaterialHeader(lines.at(line).text)) {
+            } else if (!isMaterialHeader(lines.at(line).text) &&
+                       !(qilinWorkbook && isQilinMaterialHeader(lines.at(line).text))) {
                 continue;
             } else if (materialHeaderLinesClaimedBySectionMarker.contains(line)) {
                 continue;
@@ -1963,6 +2083,9 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                     blockEnd = section;
                     break;
                 }
+            for (const int answerLine : suiteAnswers.answerLines)
+                if (answerLine > anchor.line && answerLine < blockEnd)
+                    blockEnd = answerLine;
             blockEnd = nextMaterialLine(materialMarkers, anchor.line, blockEnd);
             // 本题所属 section 是否为多答案题型：取题号行之前最近的一个大标题
             // 判定（例如“三、判断题”应取消上一段“二、多项选择”的多答案属性）。
@@ -1978,12 +2101,40 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                                    .arg(++questionOrdinal);
             const QString materialId =
                 materialIdForQuestion(materialMarkers, anchor.line, anchor.number);
+            QHash<int, QString> scopedAnswers;
+            QHash<int, QString> scopedSolutions;
+            const QHash<int, QString>* answerKey = &answers;
+            const QHash<int, QString>* solutionKey = &solutions;
+            if (suiteAnswers.suiteQuestionLines.contains(anchor.line)) {
+                // 已归入套卷的题禁止回退到文档级同号答案。校验成功时只注入该
+                // anchor 的答案；失败时保持空 map，让题目进入待复核而不是错配。
+                const QString suiteAnswer = suiteAnswers.answersByQuestionLine.value(anchor.line);
+                if (!suiteAnswer.isEmpty())
+                    scopedAnswers.insert(anchor.number, suiteAnswer);
+                answerKey = &scopedAnswers;
+                solutionKey = &scopedSolutions;
+            } else if (dailyQuantityAnswers.contains(anchor.line)) {
+                scopedAnswers.insert(anchor.number, dailyQuantityAnswers.value(anchor.line));
+                answerKey = &scopedAnswers;
+                solutionKey = &scopedSolutions;
+            }
             QString reviewReason;
             QJsonObject question = parseQuestion(document, lines, anchor, blockEnd, id, materialId,
-                                                 answers, solutions, &result.assets, &reviewReason,
+                                                 *answerKey, *solutionKey,
+                                                 &result.assets, &reviewReason,
                                                  allowMultipleAnswers,
                                                  isInsideGraphicalReasoningPart(lines, anchor.line),
                                                  hasAnswerKey);
+            if (suiteAnswers.rejectedQuestionLines.contains(anchor.line) &&
+                reviewReason.isEmpty()) {
+                reviewReason = QStringLiteral("套卷答案数量或题号校验未通过");
+                QJsonObject review = question.value(QStringLiteral("review")).toObject();
+                review.insert(QStringLiteral("needsReview"), true);
+                review.insert(QStringLiteral("confidence"), 0.25);
+                review.insert(QStringLiteral("reason"), reviewReason);
+                review.insert(QStringLiteral("riskLevel"), QStringLiteral("hard"));
+                question.insert(QStringLiteral("review"), review);
+            }
             const QJsonObject stemImage = question.value("stemImage").toObject();
             const QString assetPath = stemImage.value("path").toString();
             if (!assetPath.isEmpty() && !result.assets.contains(assetPath)) {

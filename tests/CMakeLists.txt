@@ -123,6 +123,11 @@ if(TARGET question_maker_engine)
         question_maker_engine quizpane_provider_host Qt6::Core)
     add_test(NAME rule_based_generator_test COMMAND rule_based_generator_test)
 
+    add_executable(suite_answer_matcher_test suite_answer_matcher_test.cpp)
+    target_link_libraries(suite_answer_matcher_test PRIVATE
+        question_maker_engine Qt6::Core)
+    add_test(NAME suite_answer_matcher_test COMMAND suite_answer_matcher_test)
+
     # Manual regression harness for real paired PDFs. Callers provide the PDFs and an
     # isolated output directory, so it is intentionally not registered with CTest.
     add_executable(pdf_regression_harness pdf_regression_harness.cpp)

@@ -31,6 +31,98 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     using namespace quizpane::studio;
 
+    ExtractedDocument rangedPages;
+    rangedPages.sourcePath = QStringLiteral("range.pdf");
+    rangedPages.hasPageBoundaries = true;
+    rangedPages.firstPageNumber = 20;
+    rangedPages.plainText = QStringLiteral(
+        "1. 页码范围题？\nA. 甲\nB. 乙\n答案：A\f"
+        "2. 第二页题？\nA. 丙\nB. 丁\n答案：B");
+    const auto rangedResult = RuleBasedBankGenerator{}.generate({rangedPages});
+    if (rangedResult.questions.size() != 2 ||
+        rangedResult.questions.at(0).toObject().value("source").toObject().value("page").toInt() != 20 ||
+        rangedResult.questions.at(1).toObject().value("source").toObject().value("page").toInt() != 21)
+        return 118;
+
+    ExtractedDocument qilinNumbering;
+    qilinNumbering.sourcePath = QStringLiteral("qilin.txt");
+    qilinNumbering.plainText = QStringLiteral(
+        "2011. 年度标题，不是题目\n2011-2015 年数据如下\n"
+        "001-齐麟三位题号能否识别？\nA. 能\nB. 不能\n答案：A");
+    const auto qilinNumberingResult = RuleBasedBankGenerator{}.generate({qilinNumbering});
+    if (qilinNumberingResult.questions.size() != 1 ||
+        qilinNumberingResult.questions.first().toObject().value("source").toObject()
+            .value("questionNumber").toInt() != 1)
+        return 119;
+
+    ExtractedDocument qilinWorkbook;
+    qilinWorkbook.sourcePath = QStringLiteral("qilin-workbook.txt");
+    qilinWorkbook.plainText = QStringLiteral(
+        "葫芦兄弟 029\n【原型】原型题？\nA. 甲\nB. 乙\n解题要点：方法\n"
+        "【改编】改编题？\nA. 丙\nB. 丁\n"
+        "资料分析高频错题精选 124\n资料题？\nA. 戊\nB. 己\n");
+    const auto qilinWorkbookResult = RuleBasedBankGenerator{}.generate({qilinWorkbook}, false);
+    if (qilinWorkbookResult.questions.size() != 3 ||
+        qilinWorkbookResult.questions.at(0).toObject().value("source").toObject()
+            .value("questionNumber").toInt() != 291 ||
+        qilinWorkbookResult.questions.at(1).toObject().value("source").toObject()
+            .value("questionNumber").toInt() != 292 ||
+        qilinWorkbookResult.questions.at(2).toObject().value("source").toObject()
+            .value("questionNumber").toInt() != 124)
+        return 120;
+
+    // 四本齐麟目标讲义的固定版式回归：跨页页眉/页脚、二维码提示、下一份
+    // “X、根据以下资料”材料，以及 07 的“听视频记笔记”都不能粘进最后一个选项。
+    // 文件名门控是兼容性边界；CLI 与 GUI 都调用同一个生成器，因此只需在这里
+    // 锁住生产算法一次。
+    ExtractedDocument qilinBoundaries;
+    qilinBoundaries.sourcePath = QStringLiteral("刷题组02——资料分析套题（上）（2027）.pdf");
+    qilinBoundaries.hasPageBoundaries = true;
+    qilinBoundaries.plainText = QStringLiteral(
+        "111. 跨页题？\nA. 甲\nB. 乙\n"
+        "新浪微博：公考齐麟 内部交流讲义 微信公众号：公考齐麟\n"
+        "94 用心帮助每一个认真的你\f"
+        "微信公众号：公考齐麟 内部交流讲义 新浪微博：公考齐麟\n"
+        "C. 丙\nD. 丁\n"
+        "四、根据以下资料，回答问题。\n新材料不属于上一题。\n"
+        "112. 下一题？\nA. 子\nB. 丑\nC. 寅\nD. 卯\n"
+        "参考答案见最后一页，视频讲解直接扫码在微信公众号公考齐麟查看\n");
+    const auto qilinBoundaryResult =
+        RuleBasedBankGenerator{}.generate({qilinBoundaries}, false);
+    if (qilinBoundaryResult.questions.size() != 2 ||
+        !qilinBoundaryResult.needsReviewQuestions.isEmpty())
+        return 130;
+    const QJsonArray crossPageOptions =
+        qilinBoundaryResult.questions.at(0).toObject().value("options").toArray();
+    if (crossPageOptions.size() != 4)
+        return 131;
+    if (crossPageOptions.at(1).toObject().value("text").toString() != QStringLiteral("乙") ||
+        crossPageOptions.at(3).toObject().value("text").toString() != QStringLiteral("丁"))
+        return 134;
+
+    ExtractedDocument qilinNotes;
+    qilinNotes.sourcePath =
+        QStringLiteral("刷题组07——一天一题学数量&葫芦兄弟&资料分析高频错题精选（2027）.pdf");
+    qilinNotes.plainText = QStringLiteral(
+        "119-比例题？\nA. 35万\nB. 40万\nC. 45万\nD. 50万\n"
+        "听视频记笔记：\n笔记框中的空白说明\n"
+        "120-下一题？\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n");
+    const auto qilinNotesResult = RuleBasedBankGenerator{}.generate({qilinNotes}, false);
+    if (qilinNotesResult.questions.size() != 2 ||
+        qilinNotesResult.questions.at(0).toObject().value("options").toArray().at(3)
+            .toObject().value("text").toString() != QStringLiteral("50万"))
+        return 132;
+
+    // 同样的正文出现在非目标来源时不做出版社特化删除，防止这次兼容修复改变
+    // 既有大规模导入算法的语义。
+    ExtractedDocument nonQilinBoundary = qilinNotes;
+    nonQilinBoundary.sourcePath = QStringLiteral("other-publisher.pdf");
+    const auto nonQilinBoundaryResult =
+        RuleBasedBankGenerator{}.generate({nonQilinBoundary}, false);
+    if (!nonQilinBoundaryResult.questions.at(0).toObject().value("options").toArray().at(3)
+             .toObject().value("text").toString().contains(QStringLiteral("听视频记笔记")))
+        return 133;
+
     ExtractedDocument structured;
     structured.sourcePath = QStringLiteral("reading.txt");
     structured.plainText = QStringLiteral("材料一：阅读下面文字\n"

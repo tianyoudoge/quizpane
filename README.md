@@ -325,6 +325,16 @@ TXT、Markdown、DOCX、文字型/扫描型 PDF（扫描页使用本机 OCR）�
 能力，仅发送当前裁切附近的局部图；模型 Key 使用系统凭据库保存（Windows Credential
 Manager、macOS 钥匙串、Linux Secret Service），不写入题库文件。
 
+开发者可用回测 CLI 调用与 GUI 完全相同的生产识别入口抽检大型 PDF，页码均为原文中
+从 1 开始的页码。CLI 只传入文件、GUI 已有的答案模式以及可选页码范围，不实现或覆盖
+题号、选项、答案、材料、OCR 与风险审计规则。`--pages` 会按 `--padding` 向两侧外扩。
+
+```bash
+cmake --build build/release --target quizpane-pdf-recognizer
+build/release/apps/bank-studio/quizpane-pdf-recognizer \
+  --pages 20-35 --padding 2 --output probe.json sample.pdf
+```
+
 开发者若需单独校验题库源 JSON：
 
 ```bash

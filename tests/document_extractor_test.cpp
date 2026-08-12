@@ -63,6 +63,22 @@ int main(int argc, char** argv) {
         return 8;
 #endif
 
+    quizpane::studio::PdfExtractor pdfExtractor;
+    const auto ranged = pdfExtractor.extract(
+        pdfPath, quizpane::studio::PdfExtractionRange{1, 1, 0});
+#ifdef DOCUMENT_EXTRACTOR_HAS_OCR
+    if (!ranged.error.isEmpty() || ranged.firstPageNumber != 1 ||
+        ranged.plainText.count(QChar('\f')) != 0)
+        return 13;
+#else
+    if (ranged.error.isEmpty() || ranged.firstPageNumber != 1)
+        return 13;
+#endif
+    const auto invalidRange = pdfExtractor.extract(
+        pdfPath, quizpane::studio::PdfExtractionRange{2, 1, 0});
+    if (invalidRange.error.isEmpty())
+        return 14;
+
     const auto invalidDocx = registry.extract(directory.filePath(QStringLiteral("missing.docx")));
     if (invalidDocx.error.isEmpty())
         return 9;

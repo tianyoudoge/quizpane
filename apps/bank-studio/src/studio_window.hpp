@@ -6,6 +6,7 @@
 #include "model_settings_dialog.hpp"
 #include "quizpane/studio/review_result.hpp"
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QList>
 #include <QSet>
 #include <QStringList>

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "quizpane/studio/document_extractor.hpp"
 #include "quizpane/studio/review_result.hpp"
 
 #include <QJsonArray>
@@ -33,7 +34,20 @@ struct SourceMaterialGroup {
     QString questionPath;
     QString answerPath;
     bool hasAnswerKey = true;
+    // GUI 默认留空，表示全卷；开发者回测 CLI 可指定范围。除此字段外，两者必须
+    // 经过完全相同的提取、配对、规则生成和失败语义。
+    PdfExtractionRange questionPdfRange;
+    PdfExtractionRange answerPdfRange;
 };
+
+struct RuleBasedRunResult {
+    GeneratedBankCandidate candidate;
+    QString error;
+};
+
+// GUI 后台任务和 CLI 回测共用的唯一同步生产入口。调用方只能提供来源与可选 PDF
+// 范围，不能注入题号/选项/答案/材料规则或后处理识别结果。
+RuleBasedRunResult runRuleBasedGeneration(const QList<SourceMaterialGroup>& sources);
 
 // 完全离线的规则结构化工作流：读取资料、跑规则引擎、发布候选 DTO。没有网络
 // 请求、没有检查点/断点续传语义——规则引擎是纯函数，相同输入总产生相同输出，

@@ -6,6 +6,7 @@ add_library(question_maker_engine STATIC
     engine/include/quizpane/studio/model_client.hpp
     engine/include/quizpane/studio/option_label.hpp
     engine/include/quizpane/studio/rule_based_generator.hpp
+    engine/include/quizpane/studio/suite_answer_matcher.hpp
     engine/include/quizpane/studio/review_result.hpp
     engine/src/checkpoint_store.cpp
     engine/src/chunker.cpp
@@ -14,6 +15,7 @@ add_library(question_maker_engine STATIC
     engine/src/model_client.cpp
     engine/src/option_label.cpp
     engine/src/rule_based_generator.cpp
+    engine/src/suite_answer_matcher.cpp
 )
 target_include_directories(question_maker_engine PUBLIC
     engine/include
@@ -27,6 +29,11 @@ if(QUIZPANE_ENABLE_TESSERACT_OCR)
     target_link_libraries(question_maker_engine PRIVATE ${QUIZPANE_TESSERACT_TARGET})
     target_compile_definitions(question_maker_engine PRIVATE QUIZPANE_HAS_TESSERACT_OCR=1)
 endif()
+
+# 开发者内测 harness：不参与默认构建和发行打包，只在显式指定目标时编译。
+add_executable(quizpane-pdf-recognizer EXCLUDE_FROM_ALL tools/pdf_recognizer.cpp)
+target_link_libraries(quizpane-pdf-recognizer PRIVATE question_maker_engine Qt6::Core)
+quizpane_optimize_target(quizpane-pdf-recognizer)
 
 qt_add_executable(quizpane_bank_studio
     src/main.cpp

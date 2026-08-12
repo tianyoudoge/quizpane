@@ -242,7 +242,9 @@ bool hasRenderedUnderline(const QImage& image, const QRectF& normalizedBounds) {
 void collectPdfTextAnchors(QPdfDocument* document, int page, const QString& text,
                            ExtractedDocument* result) {
     static const QRegularExpression questionMarker(
-        QStringLiteral(R"((?:^|\n)\s*(\d{1,4})\s*[、.．])"));
+        // 齐麟讲义使用“001-题干”。只接受 0 开头三位编号的连字符形式，且
+        // 连字符后不能仍是数字，避免把行首年份区间“2011-2015”当成题号。
+        QStringLiteral(R"((?:^|\n)\s*((?:0\d{2}(?=\s*[-—]\s*\D))|\d{1,4})\s*[、.．—-])"));
     static const QRegularExpression optionMarker(
         QStringLiteral(R"((?<![A-Za-z0-9])([A-D])\s*[、.．])"));
     auto questions = questionMarker.globalMatch(text);
@@ -393,6 +395,11 @@ bool PdfExtractor::supports(const QString& path) const {
 }
 
 ExtractedDocument PdfExtractor::extract(const QString& path) const {
+    return extract(path, {});
+}
+
+ExtractedDocument PdfExtractor::extract(const QString& path,
+                                        const PdfExtractionRange& requestedRange) const {
     ExtractedDocument result;
     result.sourcePath = path;
     QElapsedTimer elapsed;
@@ -403,9 +410,22 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
         result.error = QStringLiteral("无法读取 PDF（错误码 %1）").arg(static_cast<int>(loadError));
         return result;
     }
+    const int requestedFirst = requestedRange.firstPage > 0 ? requestedRange.firstPage : 1;
+    const int requestedLast = requestedRange.lastPage > 0
+        ? requestedRange.lastPage : document.pageCount();
+    if (requestedFirst > requestedLast || requestedFirst > document.pageCount() ||
+        requestedLast < 1 || requestedRange.padding < 0) {
+        result.error = QStringLiteral("PDF 页码范围无效：%1-%2（共 %3 页，外扩 %4 页）")
+            .arg(requestedFirst).arg(requestedLast).arg(document.pageCount())
+            .arg(requestedRange.padding);
+        return result;
+    }
+    const int firstPage = qMax(1, requestedFirst - requestedRange.padding);
+    const int lastPage = qMin(document.pageCount(), requestedLast + requestedRange.padding);
+    result.firstPageNumber = firstPage;
     QStringList pages;
     qint64 previewBytes = 0;
-    for (int page = 0; page < document.pageCount(); ++page) {
+    for (int page = firstPage - 1; page < lastPage; ++page) {
         QString text = document.getAllText(page).text().trimmed();
         QImage pageImage;
         if (!text.isEmpty()) {
@@ -454,6 +474,8 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
     diagnostic::event(QStringLiteral("extractor"), QStringLiteral("pdf-finished"),
         {{QStringLiteral("file"), QFileInfo(path).fileName()},
          {QStringLiteral("pages"), document.pageCount()},
+         {QStringLiteral("firstPage"), firstPage},
+         {QStringLiteral("lastPage"), lastPage},
          {QStringLiteral("ocr"), result.usedOcr},
          {QStringLiteral("previewBytes"), previewBytes},
          {QStringLiteral("elapsedMs"), elapsed.elapsed()}});
@@ -573,6 +595,19 @@ ExtractedDocument ExtractorRegistry::extract(const QString& path) const {
     ExtractedDocument result;
     result.sourcePath = path;
     result.error = QStringLiteral("不支持的文件格式：%1").arg(QFileInfo(path).suffix());
+    return result;
+}
+
+ExtractedDocument ExtractorRegistry::extract(const QString& path,
+                                             const PdfExtractionRange& range) const {
+    const bool hasRange = range.firstPage > 0 || range.lastPage > 0 || range.padding > 0;
+    if (!hasRange)
+        return extract(path);
+    if (pdf_.supports(path))
+        return pdf_.extract(path, range);
+    ExtractedDocument result;
+    result.sourcePath = path;
+    result.error = QStringLiteral("页码范围只适用于 PDF 文件");
     return result;
 }
 

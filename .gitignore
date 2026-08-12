@@ -5,7 +5,10 @@
 /out/
 /dist/
 /website/dist/
+/tmp/
+/material/
 marketing/
+market/
 CMakeUserPresets.json
 compile_commands.json
 CMakeCache.txt

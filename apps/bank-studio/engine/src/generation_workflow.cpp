@@ -14,6 +14,49 @@ namespace quizpane::studio {
 
 GenerationWorkflow::GenerationWorkflow(QObject* parent) : QObject(parent) {}
 
+RuleBasedRunResult runRuleBasedGeneration(const QList<SourceMaterialGroup>& sources) {
+    RuleBasedRunResult run;
+    const bool hasAnswerKey = sources.isEmpty() || sources.first().hasAnswerKey;
+    QList<ExtractedDocument> documents;
+    ExtractorRegistry registry;
+    for (const SourceMaterialGroup& source : sources) {
+        if (source.hasAnswerKey != hasAnswerKey) {
+            run.error = QStringLiteral("同一题库不能混合含答案与无答案资料");
+            return run;
+        }
+        const QString path = QFileInfo(source.questionPath).absoluteFilePath();
+        ExtractedDocument document = registry.extract(path, source.questionPdfRange);
+        if (!document.error.isEmpty()) {
+            run.error = QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error);
+            return run;
+        }
+        if (!source.answerPath.isEmpty()) {
+            if (!hasAnswerKey) {
+                run.error = QStringLiteral("无答案题库不能配对答案文件");
+                return run;
+            }
+            const QString answerPath = QFileInfo(source.answerPath).absoluteFilePath();
+            const ExtractedDocument answers = registry.extract(answerPath, source.answerPdfRange);
+            if (!answers.error.isEmpty()) {
+                run.error = QStringLiteral("%1：%2")
+                    .arg(QFileInfo(answerPath).fileName(), answers.error);
+                return run;
+            }
+            document.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
+            document.warnings.append(answers.warnings);
+        }
+        documents.append(document);
+    }
+    const RuleBasedGenerationResult generated =
+        RuleBasedBankGenerator{}.generate(documents, hasAnswerKey);
+    run.candidate = {generated.materials, generated.questions,
+                     generated.needsReviewQuestions, generated.warnings,
+                     generated.assets, generated.hasAnswerKey};
+    for (const ExtractedDocument& document : documents)
+        run.candidate.warnings.append(document.warnings);
+    return run;
+}
+
 void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
     QList<SourceMaterialGroup> groups;
     for (const QString& path : sourcePaths)
@@ -34,8 +77,7 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
     // PDF 渲染、OCR 和规则扫描都会触发大量 CPU/磁盘工作。放到工作线程后，主窗口
     // 的“运行中”动画能持续刷新，完成结果再排回 GUI 线程，避免跨线程操作控件。
     const QPointer<GenerationWorkflow> owner(this);
-    const bool hasAnswerKey = sources.isEmpty() || sources.first().hasAnswerKey;
-    [[maybe_unused]] const auto backgroundTask = QtConcurrent::run([owner, sources, hasAnswerKey] {
+    [[maybe_unused]] const auto backgroundTask = QtConcurrent::run([owner, sources] {
         const auto publishProgress = [owner](WorkflowStage stage, int completed, int total,
                                              const QString& detail) {
             if (!owner)
@@ -47,52 +89,25 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
         };
         QElapsedTimer elapsed;
         elapsed.start();
-        QList<ExtractedDocument> documents;
-        ExtractorRegistry registry;
-        QString failure;
         for (qsizetype sourceIndex = 0; sourceIndex < sources.size(); ++sourceIndex) {
-            const SourceMaterialGroup& source = sources.at(sourceIndex);
-            if (source.hasAnswerKey != hasAnswerKey) {
-                failure = QStringLiteral("同一题库不能混合含答案与无答案资料");
-                break;
-            }
-            const QString path = source.questionPath;
+            const QString path = sources.at(sourceIndex).questionPath;
             publishProgress(WorkflowStage::Extracting, sourceIndex, sources.size(),
                             QStringLiteral("正在读取第 %1 / %2 份资料：%3")
                                 .arg(sourceIndex + 1).arg(sources.size())
                                 .arg(QFileInfo(path).fileName()));
-            ExtractedDocument document = registry.extract(QFileInfo(path).absoluteFilePath());
-            if (!document.error.isEmpty()) {
-                failure = QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error);
-                break;
-            }
-            if (!source.answerPath.isEmpty()) {
-                if (!hasAnswerKey) {
-                    failure = QStringLiteral("无答案题库不能配对答案文件");
-                    break;
-                }
-                const ExtractedDocument answers = registry.extract(
-                    QFileInfo(source.answerPath).absoluteFilePath());
-                if (!answers.error.isEmpty()) {
-                    failure = QStringLiteral("%1：%2")
-                        .arg(QFileInfo(source.answerPath).fileName(), answers.error);
-                    break;
-                }
-                document.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
-            }
-            documents.append(document);
             publishProgress(WorkflowStage::Extracting, sourceIndex + 1, sources.size(),
                             QStringLiteral("已读取第 %1 / %2 份资料，正在继续处理…")
                                 .arg(sourceIndex + 1).arg(sources.size()));
         }
-        publishProgress(WorkflowStage::Chunking, documents.size(), qMax(1, documents.size()),
+        publishProgress(WorkflowStage::Chunking, sources.size(), qMax(1, sources.size()),
                         QStringLiteral("资料读取完成，正在按题号、选项、答案和材料规则整理…"));
         QElapsedTimer generationElapsed;
         generationElapsed.start();
-        const RuleBasedGenerationResult result = failure.isEmpty()
-            ? RuleBasedBankGenerator{}.generate(documents, hasAnswerKey) : RuleBasedGenerationResult{};
+        const RuleBasedRunResult run = runRuleBasedGeneration(sources);
+        const GeneratedBankCandidate result = run.candidate;
+        const QString failure = run.error;
         diagnostic::event(QStringLiteral("workflow"), QStringLiteral("rule-run-finished"),
-            {{QStringLiteral("sources"), documents.size()},
+            {{QStringLiteral("sources"), sources.size()},
              {QStringLiteral("generationMs"), generationElapsed.elapsed()},
              {QStringLiteral("totalMs"), elapsed.elapsed()}});
         if (!owner)
