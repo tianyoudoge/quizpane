@@ -57,7 +57,7 @@ Qt 5.15 已结束常规支持，Windows 7 也已停止安全支持。因此兼�
 dist/windows7/QuizPane-windows7-x64-portable.zip
 ```
 
-GitHub Actions 的 `Build Windows 7 compatibility package` 工作流可手工生成桌面测试包与 `QuizPane-course-companion-chrome109.zip`。Hosted Runner 只能验证 Qt 5/v142 构建和扩展自动测试，不能替代 Win7/Chrome 109 运行验收。
+GitHub Actions 提供两条独立流水线：`Test Windows 7 desktop package` 负责 Qt 5/v142 编译、测试、部署和桌面 ZIP 内容检查；`Test Chrome 109 extension package` 负责扩展测试、语法检查、打包及 manifest/文件内容检查。两者都会上传带 SHA-256 的独立 Artifact，但 Hosted Runner 仍不能替代 Win7/Chrome 109 运行验收。
 
 ## 发布前必须通过的门槛
 

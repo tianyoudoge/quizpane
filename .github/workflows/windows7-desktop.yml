@@ -1,0 +1,104 @@
+name: Test Windows 7 desktop package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - refeactor_win7_support
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Qt 5.15 / MSVC v142 desktop ZIP
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Configure MSVC 2019 toolset
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          toolset: 14.29
+
+      - name: Verify build tools
+        shell: pwsh
+        run: |
+          cmake --version
+          ninja --version
+          cl 2>&1 | Select-String "Version 19.29" | Out-Null
+
+      - name: Install Qt 5.15
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          arch: win64_msvc2019_64
+          modules: qtwebengine
+          cache: true
+
+      - name: Verify Qt 5 modules
+        shell: pwsh
+        run: |
+          $Required = @(
+            "Qt5Pdf/Qt5PdfConfig.cmake",
+            "Qt5WebSockets/Qt5WebSocketsConfig.cmake"
+          )
+          foreach ($Module in $Required) {
+            $Config = Join-Path "$env:QT_ROOT_DIR/lib/cmake" $Module
+            if (-not (Test-Path $Config)) { throw "Missing Qt module: $Config" }
+          }
+
+      - name: Build, test and package
+        shell: pwsh
+        run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR"
+
+      - name: Inspect portable ZIP
+        shell: pwsh
+        run: |
+          $Archive = "dist/windows7/QuizPane-windows7-x64-portable.zip"
+          if (-not (Test-Path $Archive)) { throw "Desktop archive was not created" }
+          $Inspect = Join-Path $env:RUNNER_TEMP "quizpane-windows7-inspect"
+          Expand-Archive -Path $Archive -DestinationPath $Inspect -Force
+          $Root = Join-Path $Inspect "QuizPane"
+          $Required = @(
+            "小窗刷题.exe",
+            "题库制作器.exe",
+            "Qt5Concurrent.dll",
+            "Qt5Core.dll",
+            "Qt5Gui.dll",
+            "Qt5Network.dll",
+            "Qt5Pdf.dll",
+            "Qt5WebSockets.dll",
+            "Qt5Widgets.dll",
+            "platforms/qwindows.dll"
+          )
+          foreach ($RelativePath in $Required) {
+            $File = Join-Path $Root $RelativePath
+            if (-not (Test-Path $File)) { throw "Missing packaged runtime file: $RelativePath" }
+          }
+          if (Get-ChildItem $Root -Recurse -Filter "Qt6*.dll") {
+            throw "Windows 7 package unexpectedly contains Qt 6 DLLs"
+          }
+
+      - name: Prepare desktop artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item "dist/windows7/QuizPane-windows7-x64-portable.zip" release-assets/
+          Get-ChildItem release-assets/*.zip | ForEach-Object {
+            $Hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$Hash  $($_.Name)" | Add-Content release-assets/SHA256SUMS-windows7-x64.txt
+          }
+
+      - name: Upload desktop test package
+        uses: actions/upload-artifact@v7
+        with:
+          name: QuizPane-windows7-desktop-${{ github.sha }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14

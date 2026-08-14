@@ -1,0 +1,78 @@
+name: Test Chrome 109 extension package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - refeactor_win7_support
+    paths:
+      - integrations/browser-extension/**
+      - tests/browser-extension/**
+      - scripts/package-extension.sh
+      - .github/workflows/chrome109-extension.yml
+  pull_request:
+    branches:
+      - master
+    paths:
+      - integrations/browser-extension/**
+      - tests/browser-extension/**
+      - scripts/package-extension.sh
+      - .github/workflows/chrome109-extension.yml
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Chrome/Edge 109 companion ZIP
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Test extension
+        run: node --test tests/browser-extension/*.test.mjs
+
+      - name: Validate extension sources
+        run: |
+          jq empty integrations/browser-extension/manifest.json
+          find integrations/browser-extension/src -name '*.js' -print0 \
+            | xargs -0 -n1 node --check
+
+      - name: Package extension
+        run: bash scripts/package-extension.sh
+
+      - name: Inspect extension ZIP
+        run: |
+          inspect_dir="$RUNNER_TEMP/quizpane-chrome109-inspect"
+          mkdir -p "$inspect_dir"
+          unzip -q dist/quizpane-course-companion.zip -d "$inspect_dir"
+          test "$(jq -r '.manifest_version' "$inspect_dir/manifest.json")" = "3"
+          test "$(jq -r '.minimum_chrome_version' "$inspect_dir/manifest.json")" = "109"
+          test -f "$inspect_dir/src/service-worker.js"
+          test -f "$inspect_dir/src/content-script.js"
+          test -f "$inspect_dir/src/popup.html"
+          test -f "$inspect_dir/icons/icon-128.png"
+          ! find "$inspect_dir" \( -name '.DS_Store' -o -name 'shiba-source.png' \
+            -o -name 'icon.svg' \) | grep -q .
+
+      - name: Prepare extension artifact
+        run: |
+          mkdir -p release-assets
+          cp dist/quizpane-course-companion.zip \
+            release-assets/QuizPane-course-companion-chrome109.zip
+          cd release-assets
+          sha256sum *.zip > SHA256SUMS-chrome109.txt
+
+      - name: Upload extension test package
+        uses: actions/upload-artifact@v7
+        with:
+          name: QuizPane-chrome109-extension-${{ github.sha }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14

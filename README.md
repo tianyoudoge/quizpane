@@ -297,8 +297,9 @@ Prompt 中执行：
 才具备的 tabCapture 跨上下文能力。正式对外标记为可用前，还必须在干净 Win7
 SP1 VM 和 Chrome/Edge 109 上完成本文档列出的冒烟验收。
 
-配套扩展可单独执行 `bash scripts/package-extension.sh` 打包；手工触发
-`Build Windows 7 compatibility package` 工作流时，会同时产出 Win7 桌面 ZIP 和
+配套扩展可单独执行 `bash scripts/package-extension.sh` 打包。Actions 中有两条
+互不影响的测试流水线：`Test Windows 7 desktop package` 验证并上传桌面 ZIP，
+`Test Chrome 109 extension package` 验证并上传
 `QuizPane-course-companion-chrome109.zip`。
 
 ## UOS 与银河麒麟构建
