@@ -1,7 +1,9 @@
 #include "quizpane/studio/document_extractor.hpp"
 
 #include "quizpane/diagnostic_logger.hpp"
+#ifdef QUIZPANE_HAS_QT_PDF
 #include "quizpane/studio/qt_pdf_compat.hpp"
+#endif
 
 #include <QCoreApplication>
 #include <QDir>
@@ -12,8 +14,10 @@
 #include <QColor>
 #include <QImage>
 #include <QImageWriter>
+#ifdef QUIZPANE_HAS_QT_PDF
 #include <QPdfDocument>
 #include <QPdfSelection>
+#endif
 #include <QSet>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QStringConverter>
@@ -165,6 +169,7 @@ QString docxPlainText(const QByteArray& xmlBytes, QString* error) {
     return result;
 }
 
+#ifdef QUIZPANE_HAS_QT_PDF
 bool hasVisibleInk(const QImage& source) {
     if (source.isNull())
         return false;
@@ -296,6 +301,7 @@ void collectPdfTextAnchors(QPdfDocument* document, int page, const QString& text
         lineStart = lineEnd + 1;
     }
 }
+#endif
 
 #ifdef QUIZPANE_HAS_TESSERACT_OCR
 QString bundledTessdataPath() {
@@ -401,12 +407,21 @@ ExtractedDocument DocxExtractor::extract(const QString& path) const {
 }
 
 bool PdfExtractor::supports(const QString& path) const {
+#ifdef QUIZPANE_HAS_QT_PDF
     return hasSuffix(path, {"pdf"});
+#else
+    Q_UNUSED(path)
+    return false;
+#endif
 }
 
 ExtractedDocument PdfExtractor::extract(const QString& path) const {
     ExtractedDocument result;
     result.sourcePath = path;
+#ifndef QUIZPANE_HAS_QT_PDF
+    result.error = QStringLiteral("当前兼容构建未包含 PDF 导入，请改用 TXT、Markdown 或 DOCX");
+    return result;
+#else
     QElapsedTimer elapsed;
     elapsed.start();
     QPdfDocument document;
@@ -470,10 +485,16 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
          {QStringLiteral("previewBytes"), previewBytes},
          {QStringLiteral("elapsedMs"), elapsed.elapsed()}});
     return result;
+#endif
 }
 
 void detectPdfUnderlinesForCandidateLines(
     ExtractedDocument* extracted, const QHash<int, QStringList>& candidateLinesByPage) {
+#ifndef QUIZPANE_HAS_QT_PDF
+    Q_UNUSED(extracted)
+    Q_UNUSED(candidateLinesByPage)
+    return;
+#else
     if (!extracted || candidateLinesByPage.isEmpty() ||
         !hasSuffix(extracted->sourcePath, {"pdf"}))
         return;
@@ -547,9 +568,15 @@ void detectPdfUnderlinesForCandidateLines(
             lineStart = lineEnd + 1;
         }
     }
+#endif
 }
 
 void ensurePdfPageImages(ExtractedDocument* extracted, const QList<int>& pageNumbers) {
+#ifndef QUIZPANE_HAS_QT_PDF
+    Q_UNUSED(extracted)
+    Q_UNUSED(pageNumbers)
+    return;
+#else
     if (!extracted || pageNumbers.isEmpty() || !hasSuffix(extracted->sourcePath, {"pdf"}))
         return;
     // 大量图题可能共享同一页。先在内存缓存中去重并短路，避免每道题都重新打开
@@ -571,6 +598,7 @@ void ensurePdfPageImages(ExtractedDocument* extracted, const QList<int>& pageNum
         if (writePreviewPng(image, &png))
             extracted->pageImages.insert(pageNumber, png);
     }
+#endif
 }
 
 ExtractorRegistry::ExtractorRegistry() = default;

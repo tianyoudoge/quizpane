@@ -9,6 +9,7 @@ param(
     [string]$QtMajorVersion = "6",
     [switch]$Windows7Compat,
     [switch]$DisableOcr,
+    [switch]$DisablePdf,
     [switch]$DebugBuild,
     [switch]$EnableDiagnosticLogging,
     [switch]$VerboseLogs
@@ -30,6 +31,7 @@ if ($VerboseLogs -and -not $DebugBuild) {
 }
 $VerboseDiagnostics = if ($VerboseLogs) { "ON" } else { "OFF" }
 $OcrEnabled = if ($DisableOcr) { "OFF" } else { "ON" }
+$PdfEnabled = if ($DisablePdf) { "OFF" } else { "ON" }
 $Windows7Enabled = if ($Windows7Compat) { "ON" } else { "OFF" }
 $CMakeArgs = @(
   "--preset", "release", "-S", $Root, "-B", $Build,
@@ -38,6 +40,7 @@ $CMakeArgs = @(
   "-DQUIZPANE_QT_MAJOR_VERSION=$QtMajorVersion",
   "-DQUIZPANE_WINDOWS7_COMPAT=$Windows7Enabled",
   "-DQUIZPANE_ENABLE_TESSERACT_OCR=$OcrEnabled",
+  "-DQUIZPANE_ENABLE_QT_PDF=$PdfEnabled",
   "-DQUIZPANE_PORTABLE_CPU_BASELINE=ON",
   "-DQUIZPANE_ENABLE_DIAGNOSTIC_LOGGING=$DiagnosticLogging",
   "-DQUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS=$VerboseDiagnostics",

@@ -20,6 +20,8 @@ option(QUIZPANE_BUILD_TESTS "Build QuizPane tests" ON)
 option(QUIZPANE_BUILD_BANK_GENERATOR
        "Build the experimental local question-bank generator" OFF)
 option(QUIZPANE_BUILD_BANK_STUDIO "Build the QuizPane Question Maker GUI" ON)
+option(QUIZPANE_ENABLE_QT_PDF
+       "Enable PDF import and review in Question Maker" ON)
 option(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING
        "Write rotating diagnostic logs for local debug packages" OFF)
 option(QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS
@@ -133,11 +135,16 @@ endif()
 set(QUIZPANE_HAVE_WEBSOCKETS ON)
 if(QUIZPANE_BUILD_BANK_STUDIO)
     if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "5")
-        find_package(Qt5 5.15 REQUIRED COMPONENTS Pdf)
+        if(QUIZPANE_ENABLE_QT_PDF)
+            find_package(Qt5 5.15 REQUIRED COMPONENTS Pdf)
+        endif()
     else()
         # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
         # （QStringConverter 内置编码不含 GB18030），其余模块不需要它。
-        find_package(Qt6 6.5 REQUIRED COMPONENTS Core5Compat Pdf)
+        find_package(Qt6 6.5 REQUIRED COMPONENTS Core5Compat)
+        if(QUIZPANE_ENABLE_QT_PDF)
+            find_package(Qt6 6.5 REQUIRED COMPONENTS Pdf)
+        endif()
     endif()
 endif()
 

@@ -8,7 +8,9 @@
 #include "quizpane/secret_store.hpp"
 #include "quizpane/studio/model_client.hpp"
 #include "quizpane/studio/generation_workflow.hpp"
+#ifdef QUIZPANE_HAS_QT_PDF
 #include "quizpane/studio/qt_pdf_compat.hpp"
+#endif
 #include "quizpane/zip_archive.hpp"
 #include "source_row_widget.hpp"
 #include "source_validation.hpp"
@@ -51,7 +53,9 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
+#ifdef QUIZPANE_HAS_QT_PDF
 #include <QPdfDocument>
+#endif
 #include <QProgressBar>
 #include <QPixmap>
 #include <QPlainTextEdit>
@@ -355,6 +359,7 @@ QImage cropNormalizedImage(const QImage& page, const QRectF& normalizedCrop) {
 }
 
 QImage renderPdfReviewPage(const QString& sourcePath, int page, QString* error) {
+#ifdef QUIZPANE_HAS_QT_PDF
     QPdfDocument document;
     if (!pdfLoadSucceeded(loadPdfDocument(&document, sourcePath)) || page < 1 ||
         page > document.pageCount()) {
@@ -368,6 +373,12 @@ QImage renderPdfReviewPage(const QString& sourcePath, int page, QString* error) 
     if (image.isNull())
         *error = QStringLiteral("无法渲染原卷第 %1 页").arg(page);
     return image;
+#else
+    Q_UNUSED(sourcePath)
+    Q_UNUSED(page)
+    *error = QStringLiteral("当前兼容构建未包含 PDF 原卷预览");
+    return {};
+#endif
 }
 
 QString loadModelApiKey() {
@@ -661,7 +672,11 @@ QWidget* StudioWindow::buildSourcePage() {
     layout->setSpacing(16);
     layout->addWidget(pageHeader(
         QStringLiteral("第一步"), QStringLiteral("添加题目资料"),
+#ifdef QUIZPANE_HAS_QT_PDF
         QStringLiteral("支持 TXT、Markdown、DOCX 和 PDF。题目和答案分在两个文件里也可以一起整理。")));
+#else
+        QStringLiteral("Win7 兼容版支持 TXT、Markdown 和 DOCX。题目和答案分在两个文件里也可以一起整理。")));
+#endif
     auto* modePanel = new QFrame;
     modePanel->setObjectName(QStringLiteral("panel"));
     auto* modeLayout = new QVBoxLayout(modePanel);
@@ -687,10 +702,12 @@ QWidget* StudioWindow::buildSourcePage() {
     addButton->setObjectName(QStringLiteral("primaryButton"));
     addButton->setFixedWidth(120);
     dropLayout->addWidget(dropTitle);
+#ifdef QUIZPANE_HAS_QT_PDF
     auto* ocrHint = mutedLabel(QStringLiteral(
         "扫描版 PDF 会在本机识别文字，处理时间可能稍长。"));
     ocrHint->setAlignment(Qt::AlignCenter);
     dropLayout->addWidget(ocrHint);
+#endif
     dropLayout->addWidget(addButton, 0, Qt::AlignHCenter);
     layout->addWidget(drop);
     connect(addButton, &QPushButton::clicked, this, &StudioWindow::addSourceFiles);
@@ -987,7 +1004,11 @@ QWidget* StudioWindow::buildFinishPage() {
 
 void StudioWindow::addSourceFiles() {
     appendSources(QFileDialog::getOpenFileNames(this, QStringLiteral("添加题目或资料"), {},
+#ifdef QUIZPANE_HAS_QT_PDF
         QStringLiteral("题目资料 (*.txt *.md *.markdown *.docx *.pdf)")));
+#else
+        QStringLiteral("题目资料 (*.txt *.md *.markdown *.docx)")));
+#endif
 }
 
 void StudioWindow::appendSources(const QStringList& paths) {
@@ -1004,7 +1025,11 @@ void StudioWindow::appendSources(const QStringList& paths) {
         connect(row, &SourceRowWidget::answerRequested, this, [this, absolute] {
             const QString answer = QFileDialog::getOpenFileName(
                 this, QStringLiteral("添加答案或解析"), {},
+#ifdef QUIZPANE_HAS_QT_PDF
                 QStringLiteral("答案或解析 (*.txt *.md *.markdown *.docx *.pdf)"));
+#else
+                QStringLiteral("答案或解析 (*.txt *.md *.markdown *.docx)"));
+#endif
             if (answer.isEmpty()) return;
             pairAnswer(absolute, QFileInfo(answer).absoluteFilePath());
         });

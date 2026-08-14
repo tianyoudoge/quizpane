@@ -25,9 +25,12 @@ target_link_libraries(question_maker_engine PUBLIC
     ${QUIZPANE_QT_PACKAGE}::Core
     ${QUIZPANE_QT_PACKAGE}::Gui
     ${QUIZPANE_QT_PACKAGE}::Network
-    ${QUIZPANE_QT_PACKAGE}::Pdf
     ${QUIZPANE_QT_PACKAGE}::Concurrent
 )
+if(QUIZPANE_ENABLE_QT_PDF)
+    target_link_libraries(question_maker_engine PUBLIC ${QUIZPANE_QT_PACKAGE}::Pdf)
+    target_compile_definitions(question_maker_engine PUBLIC QUIZPANE_HAS_QT_PDF=1)
+endif()
 if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "6")
     target_link_libraries(question_maker_engine PUBLIC Qt6::Core5Compat)
 endif()

@@ -281,16 +281,16 @@ cd quizpane
 ## Windows 7 SP1 x64 兼容构建
 
 Win7 使用 Qt 5.15.2 与 MSVC 2019/v142，不能运行上面的 Qt 6 包。在安装了
-`msvc2019_64`（含 `qtwebengine` 模块）的 Visual Studio 2019 x64 Developer
-Prompt 中执行：
+Qt 5.15.2 `msvc2019_64` 的 Visual Studio 2019 x64 Developer Prompt 中执行：
 
 ```powershell
 .\scripts\build-windows7.ps1 -QtRoot C:\Qt\5.15.2\msvc2019_64
 ```
 
-产物为 `dist/windows7/QuizPane-windows7-x64-portable.zip`。默认关闭尚未在 Win7
-固定依赖版本并验收的 Tesseract OCR；需要实验性启用时加 `-EnableOcr` 并提供
-对应 vcpkg toolchain 与 `TESSDATA_DIR`。
+产物为 `dist/windows7/QuizPane-windows7-x64-portable.zip`。Win7 首包默认关闭
+OCR 和 PDF 导入：Qt 官方 5.15.2 Windows 二进制不提供 Qt5Pdf，源码完整构建
+QtWebEngine/Chromium 不适合普通发布流水线。制作器仍支持 TXT、Markdown 和
+DOCX。由于当前 OCR 只用于扫描 PDF，Win7 首包也不会携带 Tesseract 和语言数据。
 
 这条构建线只面向 Windows 7 SP1 x64，并配套维护 Chrome/Edge 109 网课伴侣：
 课程标签页会被移入真实浏览器 popup，再由桌面端置顶、隐藏和恢复，不依赖 116

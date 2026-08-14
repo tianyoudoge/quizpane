@@ -22,6 +22,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: chrome109-extension-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
     name: Chrome/Edge 109 companion ZIP

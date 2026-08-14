@@ -15,7 +15,7 @@
 - 新增 `scripts/build-windows7.ps1`，默认生成 `QuizPane-windows7-x64-portable.zip`。
 - 自动更新在 Win7 构建中只查找 `windows7-x64` 资产，不会误装 Windows 10/11 的 Qt 6 包。
 - 网课伴侣清单基线降至 Chrome/Edge 109；Windows 使用真实浏览器 popup，Chrome 116 专属的 macOS tabCapture 实验在旧浏览器中通过能力检测安全跳过。
-- CI 新增 Qt 5.15/v142 编译测试；另有手工触发的 Win7 兼容包工作流。
+- CI 新增 Qt 5.15/v142 编译测试；桌面包和 Chrome 109 扩展各有独立产包工作流。
 - Qt 6 主线仍按原方式构建，不需要维护两套业务源码。
 
 ### 实际 Qt 5/Qt 6 API 差异
@@ -30,22 +30,23 @@
 | PDF 加载成功枚举 | `QPdfDocument::Error::None` | `QPdfDocument::NoError` | 小型兼容函数 |
 | PDF 页面尺寸 | `pagePointSize()` | `pageSize()` | 小型兼容函数 |
 
-特别澄清：Qt 5.15 的 `QPdfDocument` 同样提供同步 `load(QString)` 错误码、`pageCount()`、`pageSize()`、`render()`、`getAllText()` 和 `getSelectionAtIndex()`。它不是“只有状态 API”，也不需要自行计算 PDF 页面尺寸；题库制作器的 PDF 主流程可以直接复用。
+特别澄清：Qt 5.15 的 `QPdfDocument` 源码 API 同样提供同步 `load(QString)` 错误码、`pageCount()`、`pageSize()`、`render()`、`getAllText()` 和 `getSelectionAtIndex()`。它不是“只有状态 API”，源码主流程可以复用；但 Qt 官方 5.15.2 Windows 预编译包没有 Qt5Pdf，这属于发行依赖缺失，不是 API 差异。
 
 ## 功能边界
 
 | 功能 | 当前判断 |
 | --- | --- |
 | 离线题库、答题、草稿恢复、全局热键、置顶、文件关联 | 代码与依赖已进入 Win7 兼容构建，待 Win7 VM 冒烟 |
-| 题库制作器 TXT、DOCX、PDF、AI 联网 | 已完成 Qt 5 源码适配，待 Win7 VM 回归与 TLS 验证 |
-| OCR | Win7 包默认关闭；Tesseract/vcpkg 依赖尚未固定并在 Win7 验收，可用 `-EnableOcr` 做实验构建 |
+| 题库制作器 TXT、Markdown、DOCX、AI 联网 | 进入 Win7 包，待 Win7 VM 回归与 TLS 验证 |
+| 题库制作器 PDF | Qt 5 源码 API 已适配，但 Qt 官方 5.15.2 Windows 二进制不提供 Qt5Pdf；Win7 首包显式关闭，UI 不接受 PDF |
+| OCR | 当前只用于扫描 PDF；随 Win7 首包的 PDF 能力一并关闭，不携带 Tesseract 或语言数据 |
 | 网课伴侣 | 已建立 Chrome/Edge 109 兼容基线：Windows 使用真实浏览器 popup，并由桌面端通过 Win32 置顶/隐藏/恢复；待 Win7 VM 回归 |
 
 Qt 5.15 已结束常规支持，Windows 7 也已停止安全支持。因此兼容包应作为独立产物维护，不应替换 Windows 10/11 的 Qt 6 正式包。
 
 ## 构建方法
 
-准备 Qt 5.15.2 的 `msvc2019_64` 套件，并安装 `qtwebengine` 模块（Qt 5 的 QtPdf 随该模块提供）。在 Visual Studio 2019 x64 Developer Prompt 中执行：
+准备 Qt 5.15.2 的 `msvc2019_64` 套件。在 Visual Studio 2019 x64 Developer Prompt 中执行：
 
 ```powershell
 .\scripts\build-windows7.ps1 -QtRoot C:\Qt\5.15.2\msvc2019_64
@@ -63,7 +64,7 @@ GitHub Actions 提供两条独立流水线：`Test Windows 7 desktop package` �
 
 1. 在干净 Windows 7 SP1 x64 VM 完整解压绿色包，确认两个 EXE 均可启动且不依赖开发机环境。
 2. 检查 EXE/DLL 导入表，确认没有 Win7 缺失的系统 API；安装所需 UCRT/VC 运行库更新后再测试。
-3. 回归题库安装、答题、草稿恢复、文件关联、全局热键、置顶、TXT/DOCX/PDF 导入与题库导出。
+3. 回归题库安装、答题、草稿恢复、文件关联、全局热键、置顶、TXT/Markdown/DOCX 导入与题库导出；Win7 首包不验收 PDF。
 4. 验证 Qt Network 在 Win7 上访问项目 HTTPS 服务的 TLS 与证书链；不得为兼容性关闭证书校验。
 5. 在没有兼容显卡驱动的 VM 中验证 Qt 软件渲染降级，避免启动白屏或平台插件失败。
 6. 用 Chrome/Edge 109 回归绑定、真实 popup、置顶、播放控制、老板键隐藏/恢复和标签页归还；发布说明同时标注 Win7 已停止安全支持。

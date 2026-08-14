@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: windows7-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
     name: Qt 5.15 / MSVC v142 desktop ZIP
@@ -38,14 +42,12 @@ jobs:
         with:
           version: "5.15.2"
           arch: win64_msvc2019_64
-          modules: qtwebengine
           cache: true
 
       - name: Verify Qt 5 modules
         shell: pwsh
         run: |
           $Required = @(
-            "Qt5Pdf/Qt5PdfConfig.cmake",
             "Qt5WebSockets/Qt5WebSocketsConfig.cmake"
           )
           foreach ($Module in $Required) {
@@ -72,7 +74,6 @@ jobs:
             "Qt5Core.dll",
             "Qt5Gui.dll",
             "Qt5Network.dll",
-            "Qt5Pdf.dll",
             "Qt5WebSockets.dll",
             "Qt5Widgets.dll",
             "platforms/qwindows.dll"
