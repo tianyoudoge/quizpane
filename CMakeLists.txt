@@ -151,15 +151,18 @@ if(QUIZPANE_BUILD_BANK_STUDIO)
             if(NOT QUIZPANE_QT5_CORE_LIBRARY)
                 get_target_property(QUIZPANE_QT5_CORE_LIBRARY Qt5::Core IMPORTED_LOCATION)
             endif()
-            get_filename_component(QUIZPANE_QT5_LIB_DIR
+            get_filename_component(QUIZPANE_QT5_CORE_LIB_DIR
                 "${QUIZPANE_QT5_CORE_LIBRARY}" DIRECTORY)
+            # 动态 Qt 的 IMPORTED_LOCATION 指向 bin/Qt5Core.dll；导入库在同级
+            # lib 目录。静态 Qt 则两者同目录。两个位置都查。
             find_library(QUIZPANE_QT5_PDF_LIBRARY
                 NAMES Qt5Pdf
-                PATHS ${QUIZPANE_QT5_LIB_DIR}
+                PATHS ${QUIZPANE_QT5_CORE_LIB_DIR}/../lib
+                      ${QUIZPANE_QT5_CORE_LIB_DIR}
                 NO_DEFAULT_PATH)
             if(NOT QUIZPANE_QT5_PDF_LIBRARY)
                 message(FATAL_ERROR
-                    "QUIZPANE_ENABLE_QT_PDF 需要 Qt 安装目录(${QUIZPANE_QT5_LIB_DIR})包含 Qt5Pdf.lib。"
+                    "QUIZPANE_ENABLE_QT_PDF 需要 Qt 安装目录(${QUIZPANE_QT5_CORE_LIB_DIR})包含 Qt5Pdf.lib。"
                     "官方 Qt 5.15.2 qtwebengine 模块包提供该文件；请安装后重试，"
                     "或对 Qt 5 构建传 -DQUIZPANE_ENABLE_QT_PDF=OFF。")
             endif()
