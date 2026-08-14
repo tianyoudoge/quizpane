@@ -44,28 +44,59 @@ jobs:
           arch: win64_msvc2019_64
           cache: true
 
-      # Qt 5.15.2 官方 Windows 预编译包不含 Qt5Pdf；题库制作器的 PDF 导入
-      # 依赖它，因此从源码编译同版本模块并安装进当前 Qt 根目录。qtpdf 通过
-      # git 子模块自带各平台预编译的 pdfium 库，无需本地 Chromium 构建。
-      - name: Build Qt 5.15 QtPdf from source
+      # Qt 5.15.2 官方 Windows 预编译包不含独立的 Qt5Pdf 模块，但 qtwebengine
+      # 模块包内附带 Qt5Pdf.dll/.lib（pdfium 已静态链接进 Qt5Pdf.dll，导入表
+      # 只依赖 Qt5Core/Gui/Network 和系统库，与 Chromium 无运行时耦合）。
+      # 从官方源下载该包，仅提取 Qt5Pdf 相关文件合并进 install-qt-action
+      # 安装的 Qt 根目录；头文件使用仓库 vendored 副本（third_party/qtpdf-5.15.2/）。
+      - name: Install Qt 5.15 QtPdf binaries
         shell: pwsh
         run: |
-          git clone --recursive https://code.qt.io/qt/qtpdf.git -b 5.15.2 --depth 1 qtpdf
-          Push-Location qtpdf
-          & "$env:QT_ROOT_DIR/bin/qmake.exe" qtpdf.pro
-          if ($LASTEXITCODE -ne 0) { throw "qmake failed for qtpdf" }
-          nmake
-          if ($LASTEXITCODE -ne 0) { throw "nmake failed for qtpdf" }
-          nmake install
-          if ($LASTEXITCODE -ne 0) { throw "nmake install failed for qtpdf" }
-          Pop-Location
+          $ErrorActionPreference = "Stop"
+          $Url = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt5_5152/qt.qt5.5152.qtwebengine.win64_msvc2019_64/5.15.2-0-202011130602qtwebengine-Windows-Windows_10-MSVC2019-Windows-Windows_10-X86_64.7z"
+          $Archive = Join-Path $env:RUNNER_TEMP "qtwebengine.7z"
+          Invoke-WebRequest -Uri $Url -OutFile $Archive
+          pip install py7zr
+          $env:QTPDF_ARCHIVE = $Archive
+          @'
+          import os, sys, py7zr
+          root = os.environ['QT_ROOT_DIR']
+          archive = os.environ['QTPDF_ARCHIVE']
+          marker = '5.15.2/msvc2019_64/'
+          wanted = []
+          with py7zr.SevenZipFile(archive) as z:
+              for name, bio in z.readall().items():
+                  idx = name.find(marker)
+                  if idx < 0:
+                      continue
+                  rel = name[idx + len(marker):]
+                  if not rel:
+                      continue
+                  # 只提取 Qt5Pdf 二进制；debug 变体（Qt5Pdfd.*）一并带上，
+                  # 供 -DebugBuild 打包。
+                  if not os.path.basename(rel).startswith('Qt5Pdf'):
+                      continue
+                  dest = os.path.join(root, rel.replace('/', os.sep))
+                  os.makedirs(os.path.dirname(dest), exist_ok=True)
+                  with open(dest, 'wb') as f:
+                      f.write(bio.read())
+                  wanted.append(rel)
+          print('\n'.join(wanted))
+          if 'lib/Qt5Pdf.lib' not in wanted or 'bin/Qt5Pdf.dll' not in wanted:
+              sys.exit(1)
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\extract_qtpdf.py" -Encoding UTF8
+          python "$env:RUNNER_TEMP\extract_qtpdf.py"
+          if ($LASTEXITCODE -ne 0) { throw "Qt5Pdf extraction failed" }
+          $PdfLib = Join-Path $env:QT_ROOT_DIR "lib\Qt5Pdf.lib"
+          if (-not (Test-Path $PdfLib)) { throw "Qt5Pdf.lib not found after extraction" }
+          $PdfDll = Join-Path $env:QT_ROOT_DIR "bin\Qt5Pdf.dll"
+          if (-not (Test-Path $PdfDll)) { throw "Qt5Pdf.dll not found after extraction" }
 
       - name: Verify Qt 5 modules
         shell: pwsh
         run: |
           $Required = @(
-            "Qt5WebSockets/Qt5WebSocketsConfig.cmake",
-            "Qt5Pdf/Qt5PdfConfig.cmake"
+            "Qt5WebSockets/Qt5WebSocketsConfig.cmake"
           )
           foreach ($Module in $Required) {
             $Config = Join-Path "$env:QT_ROOT_DIR/lib/cmake" $Module

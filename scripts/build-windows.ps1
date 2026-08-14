@@ -74,6 +74,14 @@ for ($Index = 0; $Index -lt $Executables.Count; $Index++) {
   if ($LASTEXITCODE -ne 0) { throw "Qt 运行库部署失败，退出码 $LASTEXITCODE" }
 }
 Copy-Item (Join-Path $Root "LICENSE") $Stage -Force
+# Qt 5.15.2 的 windeployqt 不识别 qtpdf 模块（官方未独立发行），PDF 导入
+# 运行库需要手动随包分发；Qt 6 走常规模块自动部署。
+if (-not $DisablePdf -and $QtMajorVersion -eq "5") {
+  $PdfRuntimeName = if ($DebugBuild) { "Qt5Pdfd.dll" } else { "Qt5Pdf.dll" }
+  $PdfRuntime = Join-Path $QtRoot "bin/$PdfRuntimeName"
+  if (-not (Test-Path $PdfRuntime)) { throw "缺少 Qt5Pdf 运行库：$PdfRuntime" }
+  Copy-Item $PdfRuntime $Stage -Force
+}
 if (-not $DisableOcr) {
   if (-not $TessdataDir) { throw "请通过 -TessdataDir 或 TESSDATA_DIR 指定 OCR 语言数据目录" }
   $Tessdata = Join-Path $Stage "tessdata"

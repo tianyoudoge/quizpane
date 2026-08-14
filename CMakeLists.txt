@@ -143,7 +143,25 @@ set(QUIZPANE_HAVE_WEBSOCKETS ON)
 if(QUIZPANE_BUILD_BANK_STUDIO)
     if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "5")
         if(QUIZPANE_ENABLE_QT_PDF)
-            find_package(Qt5 5.15 REQUIRED COMPONENTS Pdf)
+            # Qt 5.15.2 的官方 Windows 二进制包没有 Qt5Pdf 的 CMake 配置：
+            # qtwebengine 模块包里有 Qt5Pdf.dll/.lib（pdfium 静态链接）但不带
+            # 头文件，因此链接 vendored 公共头（third_party/qtpdf-5.15.2/）与
+            # Qt 安装目录里的官方导入库。
+            find_library(QUIZPANE_QT5_PDF_LIBRARY
+                NAMES Qt5Pdf
+                PATHS ${Qt5_DIR}/../../lib
+                NO_DEFAULT_PATH)
+            if(NOT QUIZPANE_QT5_PDF_LIBRARY)
+                message(FATAL_ERROR
+                    "QUIZPANE_ENABLE_QT_PDF 需要 Qt 安装目录包含 Qt5Pdf.lib。"
+                    "官方 Qt 5.15.2 qtwebengine 模块包提供该文件；请安装后重试，"
+                    "或对 Qt 5 构建传 -DQUIZPANE_ENABLE_QT_PDF=OFF。")
+            endif()
+            add_library(quizpane_qt5_pdf INTERFACE)
+            target_include_directories(quizpane_qt5_pdf INTERFACE
+                ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qtpdf-5.15.2/include)
+            target_link_libraries(quizpane_qt5_pdf INTERFACE
+                ${QUIZPANE_QT5_PDF_LIBRARY})
         endif()
     else()
         # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
