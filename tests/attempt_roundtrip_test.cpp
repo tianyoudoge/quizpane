@@ -6,7 +6,7 @@ int main() {
     quizpane::Attempt attempt;
     attempt.id = "attempt-1";
     attempt.providerId = "org.quizpane.demo";
-    attempt.questionIds = {"q1", "q2"};
+    attempt.questionIds = QStringList{QStringLiteral("q1"), QStringLiteral("q2")};
     attempt.requestedCount = 2;
     attempt.actualCount = 2;
     attempt.state = quizpane::AttemptState::Answering;
