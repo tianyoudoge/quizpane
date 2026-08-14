@@ -24,6 +24,7 @@
 #include <QStringDecoder>
 #endif
 #include <QTextCodec>
+#include <QtMath>
 #include <QXmlStreamReader>
 
 #include <miniz.h>

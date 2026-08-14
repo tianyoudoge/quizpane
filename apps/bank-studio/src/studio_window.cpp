@@ -53,6 +53,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
+#include <QtMath>
 #ifdef QUIZPANE_HAS_QT_PDF
 #include <QPdfDocument>
 #endif
