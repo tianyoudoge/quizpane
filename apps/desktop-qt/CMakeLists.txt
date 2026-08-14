@@ -1,4 +1,4 @@
-qt_add_executable(quizpane
+quizpane_add_executable(quizpane
     src/main.cpp
     src/app_settings.cpp
     src/app_settings.hpp
@@ -100,15 +100,16 @@ target_link_libraries(quizpane PRIVATE
     quizpane_core
     quizpane_provider_host
     qrcodegen
-    Qt6::Core
-    Qt6::Network
-    Qt6::Widgets
+    ${QUIZPANE_QT_PACKAGE}::Core
+    ${QUIZPANE_QT_PACKAGE}::Network
+    ${QUIZPANE_QT_PACKAGE}::Widgets
 )
 if(QUIZPANE_HAVE_WEBSOCKETS)
-    target_link_libraries(quizpane PRIVATE Qt6::WebSockets)
+    target_link_libraries(quizpane PRIVATE ${QUIZPANE_QT_PACKAGE}::WebSockets)
     target_compile_definitions(quizpane PRIVATE QUIZPANE_HAVE_WEBSOCKETS=1)
 endif()
 quizpane_optimize_target(quizpane)
+quizpane_apply_windows7_manifest(quizpane)
 target_compile_definitions(quizpane PRIVATE
     QUIZPANE_VERSION="${PROJECT_VERSION}"
 )

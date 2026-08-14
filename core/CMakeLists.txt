@@ -11,7 +11,7 @@ add_library(quizpane_core STATIC
 set_source_files_properties(src/diagnostic_logger.cpp PROPERTIES
     SKIP_UNITY_BUILD_INCLUSION ON)
 target_include_directories(quizpane_core PUBLIC include)
-target_link_libraries(quizpane_core PUBLIC Qt6::Core Qt6::Gui)
+target_link_libraries(quizpane_core PUBLIC ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Gui)
 quizpane_optimize_target(quizpane_core)
 if(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING)
     target_compile_definitions(quizpane_core PUBLIC QUIZPANE_DIAGNOSTIC_LOGGING=1)

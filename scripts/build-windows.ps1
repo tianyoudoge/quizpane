@@ -5,12 +5,19 @@ param(
     [string]$CMakeToolchainFile = "",
     [string]$VcpkgTargetTriplet = "",
     [string]$TessdataDir = $env:TESSDATA_DIR,
+    [ValidateSet("5", "6")]
+    [string]$QtMajorVersion = "6",
+    [switch]$Windows7Compat,
+    [switch]$DisableOcr,
     [switch]$DebugBuild,
     [switch]$EnableDiagnosticLogging,
     [switch]$VerboseLogs
 )
 $ErrorActionPreference = "Stop"
-if (-not $QtRoot) { throw "请通过 -QtRoot 或 QT_ROOT 指定 Qt 6 的 MSVC 目录" }
+if (-not $QtRoot) { throw "请通过 -QtRoot 或 QT_ROOT 指定 Qt 的 MSVC 目录" }
+if ($Windows7Compat -and $QtMajorVersion -ne "5") {
+  throw "Windows 7 兼容构建必须使用 -QtMajorVersion 5"
+}
 
 $Root = (Resolve-Path "$PSScriptRoot/..").Path
 $Build = Join-Path $Root $BuildDir
@@ -22,11 +29,15 @@ if ($VerboseLogs -and -not $DebugBuild) {
   throw "-VerboseLogs 只能与 -DebugBuild 一起使用"
 }
 $VerboseDiagnostics = if ($VerboseLogs) { "ON" } else { "OFF" }
+$OcrEnabled = if ($DisableOcr) { "OFF" } else { "ON" }
+$Windows7Enabled = if ($Windows7Compat) { "ON" } else { "OFF" }
 $CMakeArgs = @(
   "--preset", "release", "-S", $Root, "-B", $Build,
   "-DCMAKE_BUILD_TYPE=$BuildType",
   "-DCMAKE_PREFIX_PATH=$QtRoot",
-  "-DQUIZPANE_ENABLE_TESSERACT_OCR=ON",
+  "-DQUIZPANE_QT_MAJOR_VERSION=$QtMajorVersion",
+  "-DQUIZPANE_WINDOWS7_COMPAT=$Windows7Enabled",
+  "-DQUIZPANE_ENABLE_TESSERACT_OCR=$OcrEnabled",
   "-DQUIZPANE_PORTABLE_CPU_BASELINE=ON",
   "-DQUIZPANE_ENABLE_DIAGNOSTIC_LOGGING=$DiagnosticLogging",
   "-DQUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS=$VerboseDiagnostics",
@@ -60,15 +71,18 @@ for ($Index = 0; $Index -lt $Executables.Count; $Index++) {
   if ($LASTEXITCODE -ne 0) { throw "Qt 运行库部署失败，退出码 $LASTEXITCODE" }
 }
 Copy-Item (Join-Path $Root "LICENSE") $Stage -Force
-if (-not $TessdataDir) { throw "请通过 -TessdataDir 或 TESSDATA_DIR 指定 OCR 语言数据目录" }
-$Tessdata = Join-Path $Stage "tessdata"
-New-Item -ItemType Directory -Force -Path $Tessdata | Out-Null
-foreach ($Language in @("chi_sim", "eng")) {
-  $Source = Join-Path $TessdataDir "$Language.traineddata"
-  if (-not (Test-Path $Source)) { throw "缺少 OCR 语言数据：$Source" }
-  Copy-Item $Source $Tessdata -Force
+if (-not $DisableOcr) {
+  if (-not $TessdataDir) { throw "请通过 -TessdataDir 或 TESSDATA_DIR 指定 OCR 语言数据目录" }
+  $Tessdata = Join-Path $Stage "tessdata"
+  New-Item -ItemType Directory -Force -Path $Tessdata | Out-Null
+  foreach ($Language in @("chi_sim", "eng")) {
+    $Source = Join-Path $TessdataDir "$Language.traineddata"
+    if (-not (Test-Path $Source)) { throw "缺少 OCR 语言数据：$Source" }
+    Copy-Item $Source $Tessdata -Force
+  }
 }
-$PortableArchive = Join-Path $Dist "QuizPane-windows-x64-portable$PackageSuffix.zip"
+$PlatformName = if ($Windows7Compat) { "windows7-x64" } else { "windows-x64" }
+$PortableArchive = Join-Path $Dist "QuizPane-$PlatformName-portable$PackageSuffix.zip"
 if (Test-Path $PortableArchive) { Remove-Item $PortableArchive -Force }
 
 # 绿色版必须保留完整部署目录：Qt DLL、插件、OCR 语言数据与两个程序缺一不可。

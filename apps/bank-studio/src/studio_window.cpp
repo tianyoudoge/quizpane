@@ -8,6 +8,7 @@
 #include "quizpane/secret_store.hpp"
 #include "quizpane/studio/model_client.hpp"
 #include "quizpane/studio/generation_workflow.hpp"
+#include "quizpane/studio/qt_pdf_compat.hpp"
 #include "quizpane/zip_archive.hpp"
 #include "source_row_widget.hpp"
 #include "source_validation.hpp"
@@ -243,7 +244,11 @@ protected:
     void mousePressEvent(QMouseEvent* event) override {
         if (event->button() != Qt::LeftButton)
             return;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         dragStart_ = normalized(event->position());
+#else
+        dragStart_ = normalized(event->localPos());
+#endif
         selection_ = QRectF(dragStart_, QSizeF());
         update();
     }
@@ -251,7 +256,12 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override {
         if (!(event->buttons() & Qt::LeftButton))
             return;
-        selection_ = QRectF(dragStart_, normalized(event->position())).normalized()
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        const QPointF position = event->position();
+#else
+        const QPointF position = event->localPos();
+#endif
+        selection_ = QRectF(dragStart_, normalized(position)).normalized()
             .intersected(QRectF(0.0, 0.0, 1.0, 1.0));
         update();
     }
@@ -346,12 +356,12 @@ QImage cropNormalizedImage(const QImage& page, const QRectF& normalizedCrop) {
 
 QImage renderPdfReviewPage(const QString& sourcePath, int page, QString* error) {
     QPdfDocument document;
-    if (document.load(sourcePath) != QPdfDocument::Error::None || page < 1 ||
+    if (!pdfLoadSucceeded(loadPdfDocument(&document, sourcePath)) || page < 1 ||
         page > document.pageCount()) {
         *error = QStringLiteral("无法打开原卷第 %1 页").arg(page);
         return {};
     }
-    const QSizeF points = document.pagePointSize(page - 1);
+    const QSizeF points = pdfPagePointSize(&document, page - 1);
     const QSize pixels = QSize(qBound(1, qRound(points.width() * 1.7), 1800),
                                qBound(1, qRound(points.height() * 1.7), 2400));
     const QImage image = document.render(page - 1, pixels);

@@ -171,7 +171,11 @@ int compareVersionTags(QString left, QString right) {
 
 QString updateAssetForCurrentPlatform() {
 #if defined(Q_OS_WIN)
+#if defined(QUIZPANE_WINDOWS7_COMPAT)
+    return QStringLiteral("QuizPane-windows7-x64-portable.zip");
+#else
     return QStringLiteral("QuizPane-windows-x64-portable.zip");
+#endif
 #elif defined(Q_OS_MACOS)
     const QString arch = QSysInfo::currentCpuArchitecture().toLower();
     return arch.contains(QStringLiteral("arm"))
@@ -1863,14 +1867,23 @@ void MainWindow::dropEvent(QDropEvent* event) {
 }
 
 void MainWindow::mousePressEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton)
+    if (event->button() == Qt::LeftButton) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         dragOffset_ = event->globalPosition().toPoint() - frameGeometry().topLeft();
+#else
+        dragOffset_ = event->globalPos() - frameGeometry().topLeft();
+#endif
+    }
     QMainWindow::mousePressEvent(event);
 }
 
 void MainWindow::mouseMoveEvent(QMouseEvent* event) {
     if (event->buttons().testFlag(Qt::LeftButton) && !dragOffset_.isNull()) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         move(event->globalPosition().toPoint() - dragOffset_);
+#else
+        move(event->globalPos() - dragOffset_);
+#endif
         event->accept();
         return;
     }

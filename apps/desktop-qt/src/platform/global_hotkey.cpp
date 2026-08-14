@@ -211,8 +211,13 @@ void GlobalHotkey::unregisterBossKey() {
 }
 
 #if defined(Q_OS_WIN)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 bool GlobalHotkey::nativeEventFilter(const QByteArray&, void* message,
                                      qintptr*) {
+#else
+bool GlobalHotkey::nativeEventFilter(const QByteArray&, void* message,
+                                     long*) {
+#endif
     const auto* msg = static_cast<MSG*>(message);
     if (msg && msg->message == WM_HOTKEY && msg->wParam == kHotkeyId) {
         emit activated();

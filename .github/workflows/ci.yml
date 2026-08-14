@@ -114,6 +114,55 @@ jobs:
       - name: Test
         run: ctest --preset ci
 
+  windows7-compat:
+    name: Windows 7 compatibility (Qt 5.15 / v142)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Configure MSVC 2019 toolset
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          toolset: 14.29
+
+      - name: Install Qt 5.15
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          arch: win64_msvc2019_64
+          modules: qtwebengine
+          cache: true
+
+      - name: Verify Qt 5 modules
+        shell: pwsh
+        run: |
+          $Required = @(
+            "Qt5Pdf/Qt5PdfConfig.cmake",
+            "Qt5WebSockets/Qt5WebSocketsConfig.cmake"
+          )
+          foreach ($Module in $Required) {
+            $Config = Join-Path "$env:QT_ROOT_DIR/lib/cmake" $Module
+            if (-not (Test-Path $Config)) { throw "Missing Qt module: $Config" }
+          }
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake --preset ci -B build/ci-windows7 `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+            -DQUIZPANE_QT_MAJOR_VERSION=5 `
+            -DQUIZPANE_WINDOWS7_COMPAT=ON `
+            -DQUIZPANE_ENABLE_TESSERACT_OCR=OFF `
+            -DQUIZPANE_ENABLE_UNITY_BUILD=OFF
+
+      - name: Build
+        run: cmake --build build/ci-windows7 --parallel -- -k 0
+
+      - name: Test
+        run: ctest --test-dir build/ci-windows7 --output-on-failure
+
   linux:
     name: Linux x64
     runs-on: ubuntu-22.04

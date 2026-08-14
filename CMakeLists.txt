@@ -30,6 +30,32 @@ option(QUIZPANE_ENABLE_PCH "Use a shared precompiled header for C++ targets" ON)
 option(QUIZPANE_ENABLE_UNITY_BUILD
        "Batch translation units for faster clean builds (best used in the fast preset)" OFF)
 option(QUIZPANE_ENABLE_COMPILER_CACHE "Use ccache or sccache when available" ON)
+set(QUIZPANE_QT_MAJOR_VERSION "6" CACHE STRING
+    "Qt major version used to build QuizPane (5 or 6)")
+set_property(CACHE QUIZPANE_QT_MAJOR_VERSION PROPERTY STRINGS 5 6)
+option(QUIZPANE_WINDOWS7_COMPAT
+       "Target the Windows 7 SP1 API baseline (requires Qt 5.15 and MSVC 2019)" OFF)
+
+if(QUIZPANE_WINDOWS7_COMPAT)
+    if(NOT WIN32)
+        message(FATAL_ERROR "QUIZPANE_WINDOWS7_COMPAT is only valid on Windows")
+    endif()
+    if(NOT QUIZPANE_QT_MAJOR_VERSION STREQUAL "5")
+        message(FATAL_ERROR "Windows 7 compatibility requires QUIZPANE_QT_MAJOR_VERSION=5")
+    endif()
+    if(NOT MSVC)
+        message(FATAL_ERROR "Windows 7 compatibility requires the MSVC 2019 toolchain")
+    endif()
+    if(DEFINED MSVC_TOOLSET_VERSION AND NOT MSVC_TOOLSET_VERSION EQUAL 142)
+        message(FATAL_ERROR
+            "Windows 7 compatibility requires the MSVC v142 toolset; detected v${MSVC_TOOLSET_VERSION}")
+    endif()
+    add_compile_definitions(
+        QUIZPANE_WINDOWS7_COMPAT=1
+        WINVER=0x0601
+        _WIN32_WINNT=0x0601
+        NTDDI_VERSION=0x06010000)
+endif()
 
 if(QUIZPANE_ENABLE_COMPILER_CACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
     find_program(QUIZPANE_COMPILER_CACHE NAMES sccache ccache)
@@ -91,14 +117,47 @@ if(QUIZPANE_PORTABLE_CPU_BASELINE)
 endif()
 
 # 网课伴侣是桌面端的正式功能，所有构建（本地、CI 和发布）都必须具备
-# Qt WebSockets。缺少模块时在配置阶段明确失败，避免悄悄产出没有浏览器联动的包。
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network Concurrent WebSockets)
+# Qt WebSockets。Win7 构建仍保留桌面端协议能力，但浏览器扩展要求 Chrome 116，
+# 因此发布说明不会在 Win7 上承诺网课伴侣功能。
+if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "5")
+    find_package(Qt5 5.15 REQUIRED COMPONENTS
+        Core Gui Widgets Network Concurrent WebSockets)
+    set(QUIZPANE_QT_PACKAGE Qt5)
+elseif(QUIZPANE_QT_MAJOR_VERSION STREQUAL "6")
+    find_package(Qt6 6.5 REQUIRED COMPONENTS
+        Core Gui Widgets Network Concurrent WebSockets)
+    set(QUIZPANE_QT_PACKAGE Qt6)
+else()
+    message(FATAL_ERROR "QUIZPANE_QT_MAJOR_VERSION must be 5 or 6")
+endif()
 set(QUIZPANE_HAVE_WEBSOCKETS ON)
 if(QUIZPANE_BUILD_BANK_STUDIO)
-    # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
-    # （QStringConverter 内置编码不含 GB18030），其余模块不需要它。
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Core5Compat Pdf)
+    if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "5")
+        find_package(Qt5 5.15 REQUIRED COMPONENTS Pdf)
+    else()
+        # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
+        # （QStringConverter 内置编码不含 GB18030），其余模块不需要它。
+        find_package(Qt6 6.5 REQUIRED COMPONENTS Core5Compat Pdf)
+    endif()
 endif()
+
+function(quizpane_add_executable target)
+    if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "6")
+        qt_add_executable(${target} ${ARGN})
+    else()
+        add_executable(${target} ${ARGN})
+    endif()
+endfunction()
+
+function(quizpane_apply_windows7_manifest target)
+    if(QUIZPANE_WINDOWS7_COMPAT)
+        # 声明 Win7 supportedOS，避免系统对版本检测 API 启用旧版兼容垫片。
+        # /MANIFESTINPUT 会把该片段与链接器生成的默认 UAC manifest 合并。
+        target_link_options(${target} PRIVATE
+            "/MANIFEST:EMBED"
+            "/MANIFESTINPUT:${PROJECT_SOURCE_DIR}/packaging/windows/windows7.manifest")
+    endif()
+endfunction()
 
 option(QUIZPANE_ENABLE_TESSERACT_OCR
        "Enable the native Tesseract OCR backend in Question Maker" ON)

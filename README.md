@@ -278,7 +278,23 @@ cd quizpane
 .\scripts\build-windows.ps1 -QtRoot C:\Qt\6.8.0\msvc2022_64
 ```
 
-Windows 7 不使用当前 Qt 6 主线，需要单独的 Qt 5.15 兼容分支。
+## Windows 7 SP1 x64 兼容构建
+
+Win7 使用 Qt 5.15.2 与 MSVC 2019/v142，不能运行上面的 Qt 6 包。在安装了
+`msvc2019_64`（含 `qtwebengine` 模块）的 Visual Studio 2019 x64 Developer
+Prompt 中执行：
+
+```powershell
+.\scripts\build-windows7.ps1 -QtRoot C:\Qt\5.15.2\msvc2019_64
+```
+
+产物为 `dist/windows7/QuizPane-windows7-x64-portable.zip`。默认关闭尚未在 Win7
+固定依赖版本并验收的 Tesseract OCR；需要实验性启用时加 `-EnableOcr` 并提供
+对应 vcpkg toolchain 与 `TESSDATA_DIR`。
+
+这条构建线只面向 Windows 7 SP1 x64。网课伴侣仍不支持 Win7：扩展最低要求
+Chrome/Edge 116，而 Win7 上的浏览器止于 109。正式对外标记为可用前，还必须在
+干净 Win7 SP1 VM 上完成本文档列出的冒烟验收。
 
 ## UOS 与银河麒麟构建
 

@@ -1,0 +1,51 @@
+name: Build Windows 7 compatibility package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows7:
+    name: Windows 7 SP1 x64 (Qt 5.15 / v142)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Configure MSVC 2019 toolset
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          toolset: 14.29
+
+      - name: Install Qt 5.15
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          arch: win64_msvc2019_64
+          modules: qtwebengine
+          cache: true
+
+      - name: Build, test and package
+        shell: pwsh
+        run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR"
+
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item "dist/windows7/QuizPane-windows7-x64-portable.zip" release-assets/
+          Get-ChildItem release-assets/*.zip | ForEach-Object {
+            $Hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$Hash  $($_.Name)" | Add-Content release-assets/SHA256SUMS-windows7-x64.txt
+          }
+
+      - name: Upload compatibility package
+        uses: actions/upload-artifact@v7
+        with:
+          name: QuizPane-windows7-x64-${{ github.sha }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
