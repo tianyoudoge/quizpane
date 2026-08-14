@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "小窗刷题网课伴侣",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "让小窗刷题的老板键暂停或恢复当前课程页面的视频。",
-  "minimum_chrome_version": "116",
+  "minimum_chrome_version": "109",
   "permissions": ["storage", "tabs", "scripting", "webNavigation", "alarms", "system.display", "offscreen", "tabCapture"],
   "host_permissions": ["http://127.0.0.1/*", "https://xutianyou.cc/*"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],

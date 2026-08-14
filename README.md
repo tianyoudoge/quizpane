@@ -96,7 +96,7 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 3. 打开页面中的“开发者模式”，点击“加载已解压的扩展程序”，选择刚才解压出来的文件夹；
 4. 打开课程播放页，点击浏览器右上角的“小窗刷题网课伴侣”图标，再点 **绑定并进入视频聚焦小窗**。
 
-首次绑定某个课程网站时，浏览器会要求授权当前站点；同意后扩展才能控制这个页面的标准 HTML5 视频。之后可在扩展弹窗里暂停/继续、显示视频小窗或放回原浏览器。Chrome / Edge 116+ 可用；跨域 iframe 或站点自定义播放器的兼容性会因课程平台而异。
+首次绑定某个课程网站时，浏览器会要求授权当前站点；同意后扩展才能控制这个页面的标准 HTML5 视频。之后可在扩展弹窗里暂停/继续、显示视频小窗或放回原浏览器。Windows 的真实浏览器小窗路径支持 Chrome / Edge 109+；macOS 的实验捕获诊断仍需要 116+。跨域 iframe 或站点自定义播放器的兼容性会因课程平台而异。
 
 ## 用起来顺手的小细节
 
@@ -292,9 +292,14 @@ Prompt 中执行：
 固定依赖版本并验收的 Tesseract OCR；需要实验性启用时加 `-EnableOcr` 并提供
 对应 vcpkg toolchain 与 `TESSDATA_DIR`。
 
-这条构建线只面向 Windows 7 SP1 x64。网课伴侣仍不支持 Win7：扩展最低要求
-Chrome/Edge 116，而 Win7 上的浏览器止于 109。正式对外标记为可用前，还必须在
-干净 Win7 SP1 VM 上完成本文档列出的冒烟验收。
+这条构建线只面向 Windows 7 SP1 x64，并配套维护 Chrome/Edge 109 网课伴侣：
+课程标签页会被移入真实浏览器 popup，再由桌面端置顶、隐藏和恢复，不依赖 116
+才具备的 tabCapture 跨上下文能力。正式对外标记为可用前，还必须在干净 Win7
+SP1 VM 和 Chrome/Edge 109 上完成本文档列出的冒烟验收。
+
+配套扩展可单独执行 `bash scripts/package-extension.sh` 打包；手工触发
+`Build Windows 7 compatibility package` 工作流时，会同时产出 Win7 桌面 ZIP 和
+`QuizPane-course-companion-chrome109.zip`。
 
 ## UOS 与银河麒麟构建
 

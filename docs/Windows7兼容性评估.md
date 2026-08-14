@@ -14,6 +14,7 @@
 - Win7 构建固定为 Qt 5.15.2、MSVC 2019/v142，并给两个 EXE 合并 Windows 7 `supportedOS` manifest。
 - 新增 `scripts/build-windows7.ps1`，默认生成 `QuizPane-windows7-x64-portable.zip`。
 - 自动更新在 Win7 构建中只查找 `windows7-x64` 资产，不会误装 Windows 10/11 的 Qt 6 包。
+- 网课伴侣清单基线降至 Chrome/Edge 109；Windows 使用真实浏览器 popup，Chrome 116 专属的 macOS tabCapture 实验在旧浏览器中通过能力检测安全跳过。
 - CI 新增 Qt 5.15/v142 编译测试；另有手工触发的 Win7 兼容包工作流。
 - Qt 6 主线仍按原方式构建，不需要维护两套业务源码。
 
@@ -38,7 +39,7 @@
 | 离线题库、答题、草稿恢复、全局热键、置顶、文件关联 | 代码与依赖已进入 Win7 兼容构建，待 Win7 VM 冒烟 |
 | 题库制作器 TXT、DOCX、PDF、AI 联网 | 已完成 Qt 5 源码适配，待 Win7 VM 回归与 TLS 验证 |
 | OCR | Win7 包默认关闭；Tesseract/vcpkg 依赖尚未固定并在 Win7 验收，可用 `-EnableOcr` 做实验构建 |
-| 网课伴侣 | **不支持 Win7**。扩展最低 Chrome 116，而 Win7 的 Chrome/Edge 最终版本为 109 |
+| 网课伴侣 | 已建立 Chrome/Edge 109 兼容基线：Windows 使用真实浏览器 popup，并由桌面端通过 Win32 置顶/隐藏/恢复；待 Win7 VM 回归 |
 
 Qt 5.15 已结束常规支持，Windows 7 也已停止安全支持。因此兼容包应作为独立产物维护，不应替换 Windows 10/11 的 Qt 6 正式包。
 
@@ -56,7 +57,7 @@ Qt 5.15 已结束常规支持，Windows 7 也已停止安全支持。因此兼�
 dist/windows7/QuizPane-windows7-x64-portable.zip
 ```
 
-GitHub Actions 的 `Build Windows 7 compatibility package` 工作流可手工生成同类测试包。Hosted Runner 只能验证 Qt 5/v142 构建，不能替代 Win7 运行验收。
+GitHub Actions 的 `Build Windows 7 compatibility package` 工作流可手工生成桌面测试包与 `QuizPane-course-companion-chrome109.zip`。Hosted Runner 只能验证 Qt 5/v142 构建和扩展自动测试，不能替代 Win7/Chrome 109 运行验收。
 
 ## 发布前必须通过的门槛
 
@@ -65,7 +66,7 @@ GitHub Actions 的 `Build Windows 7 compatibility package` 工作流可手工生
 3. 回归题库安装、答题、草稿恢复、文件关联、全局热键、置顶、TXT/DOCX/PDF 导入与题库导出。
 4. 验证 Qt Network 在 Win7 上访问项目 HTTPS 服务的 TLS 与证书链；不得为兼容性关闭证书校验。
 5. 在没有兼容显卡驱动的 VM 中验证 Qt 软件渲染降级，避免启动白屏或平台插件失败。
-6. 发布说明明确“Windows 7 SP1 x64、OCR 默认关闭、网课伴侣不支持”，并标注该系统已停止安全支持。
+6. 用 Chrome/Edge 109 回归绑定、真实 popup、置顶、播放控制、老板键隐藏/恢复和标签页归还；发布说明同时标注 Win7 已停止安全支持。
 
 只有完成上述 VM 验收后，结论才能从“可构建的兼容候选版”升级为“Win7 可用版”。
 

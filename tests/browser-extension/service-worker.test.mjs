@@ -328,6 +328,52 @@ test("macOS attach leaves source-window parking to the desktop accessibility pro
       && Object.hasOwn(call[2], "left")));
 });
 
+test("extension manifest keeps the Windows 7 browser baseline at Chrome 109", async () => {
+  const manifest = JSON.parse(await readFile(
+    new URL("../../integrations/browser-extension/manifest.json", import.meta.url), "utf8"));
+  assert.equal(manifest.minimum_chrome_version, "109");
+  assert.equal(manifest.manifest_version, 3);
+});
+
+test("Chrome 109 Windows popup path never touches macOS capture APIs", async () => {
+  const keeper = createTabCaptureKeeper({
+    chromeApi: {},
+    send: () => assert.fail("Windows compatibility path must not start tab capture"),
+    isMacOS: () => false
+  });
+
+  assert.deepEqual(await keeper.start(7), {
+    success: false,
+    skipped: true,
+    reason: "platform-not-captured"
+  });
+});
+
+test("pre-116 macOS skips the optional capture experiment without breaking the extension", async () => {
+  let captureCalled = false;
+  const keeper = createTabCaptureKeeper({
+    chromeApi: {
+      runtime: {},
+      tabCapture: {
+        getMediaStreamId: async () => {
+          captureCalled = true;
+          return "unexpected";
+        }
+      },
+      offscreen: { createDocument: async () => {} }
+    },
+    send: () => {},
+    isMacOS: () => true
+  });
+
+  assert.deepEqual(await keeper.start(7), {
+    success: false,
+    skipped: true,
+    reason: "chrome-116-capture-unavailable"
+  });
+  assert.equal(captureCalled, false);
+});
+
 test("tab capture keeper obtains the stream ID before creating the offscreen consumer", async () => {
   const calls = [];
   const keeper = createTabCaptureKeeper({
@@ -416,7 +462,7 @@ test("extension update notice leads to the official download page", async () => 
           set: async value => writes.push(value)
         }
       },
-      runtime: { getManifest: () => ({ version: "0.1.1" }) },
+      runtime: { getManifest: () => ({ version: "0.1.2" }) },
       alarms: { create() {} }
     },
     fetchImpl: async url => {

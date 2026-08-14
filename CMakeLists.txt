@@ -117,8 +117,8 @@ if(QUIZPANE_PORTABLE_CPU_BASELINE)
 endif()
 
 # 网课伴侣是桌面端的正式功能，所有构建（本地、CI 和发布）都必须具备
-# Qt WebSockets。Win7 构建仍保留桌面端协议能力，但浏览器扩展要求 Chrome 116，
-# 因此发布说明不会在 Win7 上承诺网课伴侣功能。
+# Qt WebSockets。Win7 构建保留桌面端协议能力，并与扩展的 Chrome/Edge 109
+# Windows popup 兼容路径配套；Chrome 116 专属的 tabCapture 实验只在 macOS 使用。
 if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "5")
     find_package(Qt5 5.15 REQUIRED COMPONENTS
         Core Gui Widgets Network Concurrent WebSockets)

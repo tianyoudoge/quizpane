@@ -32,11 +32,19 @@ jobs:
         shell: pwsh
         run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR"
 
+      - name: Test and package Chrome 109 companion
+        shell: bash
+        run: |
+          node --test tests/browser-extension/*.test.mjs
+          bash scripts/package-extension.sh
+
       - name: Create checksum
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release-assets | Out-Null
           Copy-Item "dist/windows7/QuizPane-windows7-x64-portable.zip" release-assets/
+          Copy-Item "dist/quizpane-course-companion.zip" `
+            "release-assets/QuizPane-course-companion-chrome109.zip"
           Get-ChildItem release-assets/*.zip | ForEach-Object {
             $Hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$Hash  $($_.Name)" | Add-Content release-assets/SHA256SUMS-windows7-x64.txt
