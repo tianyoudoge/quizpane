@@ -171,7 +171,10 @@ int compareVersionTags(QString left, QString right) {
 
 QString updateAssetForCurrentPlatform() {
 #if defined(Q_OS_WIN)
-#if defined(QUIZPANE_WINDOWS7_COMPAT)
+// 资产名跟随实际链接的 Qt 大版本：CMake 允许 Qt5 + WINDOWS7_COMPAT=OFF 的
+// 组合，这种构建同样必须找 Win7 包（Qt 5 运行时不支持 Win10/11 的 Qt 6 包），
+// 因此两个条件取或，而不是只看兼容开关。
+#if defined(QUIZPANE_WINDOWS7_COMPAT) || QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     return QStringLiteral("QuizPane-windows7-x64-portable.zip");
 #else
     return QStringLiteral("QuizPane-windows-x64-portable.zip");

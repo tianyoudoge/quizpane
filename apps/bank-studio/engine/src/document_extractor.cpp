@@ -59,8 +59,17 @@ QString decodeText(const QByteArray& bytes, QString* error) {
     if (!utf8Decoder.hasError())
         return utf8Text;
 #else
+    // 默认构造的 ConverterState 不含 ConvertInvalidBytes/ConvertInvalidChars
+    // 等标志，QTextCodec 会对 UTF-8 自动识别并跳过开头的 BOM；与 Qt 6
+    // QStringDecoder 的行为一致。此处显式加守卫，避免部署环境拿不到 UTF-8
+    // 编解码器时空指针解引用。
+    QTextCodec* utf8Codec = QTextCodec::codecForName("UTF-8");
+    if (!utf8Codec) {
+        *error = QStringLiteral("系统缺少 UTF-8 编解码器，无法读取文本");
+        return {};
+    }
     QTextCodec::ConverterState utf8State;
-    const QString utf8Text = QTextCodec::codecForName("UTF-8")->toUnicode(
+    const QString utf8Text = utf8Codec->toUnicode(
         bytes.constData(), bytes.size(), &utf8State);
     if (utf8State.invalidChars == 0)
         return utf8Text;

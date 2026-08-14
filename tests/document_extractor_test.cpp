@@ -26,6 +26,26 @@ int main(int argc, char** argv) {
         return 3;
     if (registry.extract(md).plainText.isEmpty())
         return 4;
+    // 记事本"UTF-8 (带 BOM)"保存的文件：Qt5/Qt6 两条解码路径都必须剥掉
+    // 行首 U+FEFF，否则题干首字前会多出一个不可见字符。
+    {
+        QFile file(directory.filePath(QStringLiteral("bom.txt")));
+        if (!file.open(QIODevice::WriteOnly))
+            return 12;
+        file.write(QByteArrayLiteral("\xEF\xBB\xBF") +
+                   QStringLiteral("题目：带 BOM 的记事本文件\n答案：正常").toUtf8());
+        file.close();
+        const auto bom = registry.extract(file.fileName());
+        if (!bom.error.isEmpty() || bom.plainText.startsWith(QChar(0xFEFF))) {
+            const QByteArray diagnostic =
+                QStringLiteral("BOM test failed: error=%1 first=U+%2")
+                    .arg(bom.error)
+                    .arg(bom.plainText.isEmpty() ? 0 : bom.plainText.at(0).unicode(), 4, 16, QChar('0'))
+                    .toUtf8();
+            std::fprintf(stderr, "%s\n", diagnostic.constData());
+            return 13;
+        }
+    }
     const QString docxPath = directory.filePath(QStringLiteral("sample.docx"));
     QString zipError;
     const QByteArray documentXml = QByteArrayLiteral(
