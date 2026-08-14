@@ -123,7 +123,6 @@ jobs:
             "小窗刷题.exe",
             "题库制作器.exe",
             "Qt5Core.dll",
-            "Qt5Concurrent.dll",
             "Qt5Gui.dll",
             "Qt5Network.dll",
             "Qt5Pdf.dll",
