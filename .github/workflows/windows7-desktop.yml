@@ -44,11 +44,28 @@ jobs:
           arch: win64_msvc2019_64
           cache: true
 
+      # Qt 5.15.2 官方 Windows 预编译包不含 Qt5Pdf；题库制作器的 PDF 导入
+      # 依赖它，因此从源码编译同版本模块并安装进当前 Qt 根目录。qtpdf 通过
+      # git 子模块自带各平台预编译的 pdfium 库，无需本地 Chromium 构建。
+      - name: Build Qt 5.15 QtPdf from source
+        shell: pwsh
+        run: |
+          git clone --recursive https://code.qt.io/qt/qtpdf.git -b 5.15.2 --depth 1 qtpdf
+          Push-Location qtpdf
+          & "$env:QT_ROOT_DIR/bin/qmake.exe" qtpdf.pro
+          if ($LASTEXITCODE -ne 0) { throw "qmake failed for qtpdf" }
+          nmake
+          if ($LASTEXITCODE -ne 0) { throw "nmake failed for qtpdf" }
+          nmake install
+          if ($LASTEXITCODE -ne 0) { throw "nmake install failed for qtpdf" }
+          Pop-Location
+
       - name: Verify Qt 5 modules
         shell: pwsh
         run: |
           $Required = @(
-            "Qt5WebSockets/Qt5WebSocketsConfig.cmake"
+            "Qt5WebSockets/Qt5WebSocketsConfig.cmake",
+            "Qt5Pdf/Qt5PdfConfig.cmake"
           )
           foreach ($Module in $Required) {
             $Config = Join-Path "$env:QT_ROOT_DIR/lib/cmake" $Module
@@ -71,8 +88,10 @@ jobs:
             "小窗刷题.exe",
             "题库制作器.exe",
             "Qt5Core.dll",
+            "Qt5Concurrent.dll",
             "Qt5Gui.dll",
             "Qt5Network.dll",
+            "Qt5Pdf.dll",
             "Qt5WebSockets.dll",
             "Qt5Widgets.dll",
             "platforms/qwindows.dll"

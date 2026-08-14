@@ -15,7 +15,6 @@ $Arguments = @{
     DistDir = $DistDir
     QtMajorVersion = "5"
     Windows7Compat = $true
-    DisablePdf = $true
     DisableOcr = $true
     DebugBuild = $DebugBuild
     EnableDiagnosticLogging = $EnableDiagnosticLogging

@@ -38,8 +38,8 @@
 | --- | --- |
 | 离线题库、答题、草稿恢复、全局热键、置顶、文件关联 | 代码与依赖已进入 Win7 兼容构建，待 Win7 VM 冒烟 |
 | 题库制作器 TXT、Markdown、DOCX、AI 联网 | 进入 Win7 包，待 Win7 VM 回归与 TLS 验证 |
-| 题库制作器 PDF | Qt 5 源码 API 已适配，但 Qt 官方 5.15.2 Windows 二进制不提供 Qt5Pdf；Win7 首包显式关闭，UI 不接受 PDF |
-| OCR | 当前只用于扫描 PDF；随 Win7 首包的 PDF 能力一并关闭，不携带 Tesseract 或语言数据 |
+| 题库制作器 PDF | Qt 5 源码 API 已适配；Qt 官方 5.15.2 Windows 二进制不提供 Qt5Pdf，CI 与本地构建改从源码编译 LGPL 的 qtpdf 模块（自带预编译 pdfium）后随包发行 Qt5Pdf.dll |
+| OCR | 当前只用于扫描 PDF；Win7 包暂不携带 Tesseract 或语言数据，无文字层 PDF 会明确报错而非静默失败 |
 | 网课伴侣 | 已建立 Chrome/Edge 109 兼容基线：Windows 使用真实浏览器 popup，并由桌面端通过 Win32 置顶/隐藏/恢复；待 Win7 VM 回归 |
 
 Qt 5.15 已结束常规支持，Windows 7 也已停止安全支持。因此兼容包应作为独立产物维护，不应替换 Windows 10/11 的 Qt 6 正式包。
@@ -64,7 +64,7 @@ GitHub Actions 提供两条独立流水线：`Test Windows 7 desktop package` �
 
 1. 在干净 Windows 7 SP1 x64 VM 完整解压绿色包，确认两个 EXE 均可启动且不依赖开发机环境。
 2. 检查 EXE/DLL 导入表，确认没有 Win7 缺失的系统 API；安装所需 UCRT/VC 运行库更新后再测试。
-3. 回归题库安装、答题、草稿恢复、文件关联、全局热键、置顶、TXT/Markdown/DOCX 导入与题库导出；Win7 首包不验收 PDF。
+3. 回归题库安装、答题、草稿恢复、文件关联、全局热键、置顶、TXT/Markdown/DOCX/PDF 导入与题库导出；扫描版 PDF 在无 OCR 的 Win7 包中会报"无文字层"，属预期行为。
 4. 验证 Qt Network 在 Win7 上访问项目 HTTPS 服务的 TLS 与证书链；不得为兼容性关闭证书校验。
 5. 在没有兼容显卡驱动的 VM 中验证 Qt 软件渲染降级，避免启动白屏或平台插件失败。
 6. 用 Chrome/Edge 109 回归绑定、真实 popup、置顶、播放控制、老板键隐藏/恢复和标签页归还；发布说明同时标注 Win7 已停止安全支持。
