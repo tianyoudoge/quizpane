@@ -82,7 +82,9 @@ std::optional<QKeySequence> askBossKey(QWidget* parent,
         QStringLiteral("按下组合键可立即隐藏或显示小窗。支持修饰键加字母、数字或 F1–F12。"));
     description->setWordWrap(true);
     auto* editor = new QKeySequenceEdit(current, &dialog);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
     editor->setClearButtonEnabled(true);
+#endif
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
     buttons->button(QDialogButtonBox::Save)->setText(QStringLiteral("保存"));

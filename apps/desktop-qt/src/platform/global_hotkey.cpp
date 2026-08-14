@@ -23,9 +23,16 @@ bool parseHotkey(const QKeySequence& sequence, int* key,
         if (error) *error = QStringLiteral("老板键必须是一个按键组合");
         return false;
     }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     const QKeyCombination combination = sequence[0];
     const int parsedKey = combination.key();
     const auto parsedModifiers = combination.keyboardModifiers();
+#else
+    const int combination = sequence[0];
+    const int parsedKey = combination & ~Qt::KeyboardModifierMask;
+    const auto parsedModifiers =
+        Qt::KeyboardModifiers(combination & Qt::KeyboardModifierMask);
+#endif
     const bool portableKey =
         (parsedKey >= Qt::Key_A && parsedKey <= Qt::Key_Z) ||
         (parsedKey >= Qt::Key_0 && parsedKey <= Qt::Key_9) ||
