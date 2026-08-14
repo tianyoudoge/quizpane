@@ -56,31 +56,35 @@ jobs:
           $Url = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt5_5152/qt.qt5.5152.qtwebengine.win64_msvc2019_64/5.15.2-0-202011130602qtwebengine-Windows-Windows_10-MSVC2019-Windows-Windows_10-X86_64.7z"
           $Archive = Join-Path $env:RUNNER_TEMP "qtwebengine.7z"
           Invoke-WebRequest -Uri $Url -OutFile $Archive
-          pip install py7zr
+          pip install "py7zr==0.22.0"
           $env:QTPDF_ARCHIVE = $Archive
           @'
-          import os, sys, py7zr
+          import os, sys, py7zr, shutil, tempfile
           root = os.environ['QT_ROOT_DIR']
           archive = os.environ['QTPDF_ARCHIVE']
           marker = '5.15.2/msvc2019_64/'
-          wanted = []
           with py7zr.SevenZipFile(archive) as z:
-              for name, bio in z.readall().items():
-                  idx = name.find(marker)
-                  if idx < 0:
-                      continue
-                  rel = name[idx + len(marker):]
-                  if not rel:
-                      continue
-                  # 只提取 Qt5Pdf 二进制；debug 变体（Qt5Pdfd.*）一并带上，
-                  # 供 -DebugBuild 打包。
-                  if not os.path.basename(rel).startswith('Qt5Pdf'):
-                      continue
-                  dest = os.path.join(root, rel.replace('/', os.sep))
-                  os.makedirs(os.path.dirname(dest), exist_ok=True)
-                  with open(dest, 'wb') as f:
-                      f.write(bio.read())
-                  wanted.append(rel)
+              names = z.getnames()
+          targets = [n for n in names
+                     if marker in n
+                     and os.path.basename(n).startswith('Qt5Pdf')]
+          if not targets:
+              print('no Qt5Pdf files found in archive')
+              sys.exit(1)
+          tmp = tempfile.mkdtemp()
+          with py7zr.SevenZipFile(archive) as z:
+              z.extract(targets=targets, path=tmp)
+          wanted = []
+          for name in targets:
+              rel = name[name.find(marker) + len(marker):]
+              if not rel:
+                  continue
+              src = os.path.join(tmp, name)
+              dest = os.path.join(root, rel.replace('/', os.sep))
+              os.makedirs(os.path.dirname(dest), exist_ok=True)
+              shutil.move(src, dest)
+              wanted.append(rel)
+          shutil.rmtree(tmp, ignore_errors=True)
           print('\n'.join(wanted))
           if 'lib/Qt5Pdf.lib' not in wanted or 'bin/Qt5Pdf.dll' not in wanted:
               sys.exit(1)
