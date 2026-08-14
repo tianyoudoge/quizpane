@@ -16,6 +16,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_AUTOMOC ON)
 
+# MSVC otherwise interprets UTF-8 source files using the runner's active code
+# page.  Besides corrupting Chinese UI text, that makes non-ASCII char16_t
+# literals fail to compile on the Windows 7 compatibility toolchain.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 option(QUIZPANE_BUILD_TESTS "Build QuizPane tests" ON)
 option(QUIZPANE_BUILD_BANK_GENERATOR
        "Build the experimental local question-bank generator" OFF)
