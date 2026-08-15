@@ -2,6 +2,8 @@ param(
     [string]$QtRoot = $env:QT_ROOT,
     [string]$BuildDir = "build/release-windows7",
     [string]$DistDir = "dist/windows7",
+    [ValidateSet("x64", "x86")]
+    [string]$Architecture = "x64",
     [switch]$DebugBuild,
     [switch]$EnableDiagnosticLogging,
     [switch]$VerboseLogs
@@ -14,6 +16,7 @@ $Arguments = @{
     BuildDir = $BuildDir
     DistDir = $DistDir
     QtMajorVersion = "5"
+    Architecture = $Architecture
     Windows7Compat = $true
     DisableOcr = $true
     DebugBuild = $DebugBuild

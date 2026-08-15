@@ -7,6 +7,8 @@ param(
     [string]$TessdataDir = $env:TESSDATA_DIR,
     [ValidateSet("5", "6")]
     [string]$QtMajorVersion = "6",
+    [ValidateSet("x64", "x86")]
+    [string]$Architecture = "x64",
     [switch]$Windows7Compat,
     [switch]$DisableOcr,
     [switch]$DisablePdf,
@@ -92,7 +94,7 @@ if (-not $DisableOcr) {
     Copy-Item $Source $Tessdata -Force
   }
 }
-$PlatformName = if ($Windows7Compat) { "windows7-x64" } else { "windows-x64" }
+$PlatformName = if ($Windows7Compat) { "windows7-$Architecture" } else { "windows-$Architecture" }
 $PortableArchive = Join-Path $Dist "QuizPane-$PlatformName-portable$PackageSuffix.zip"
 if (Test-Path $PortableArchive) { Remove-Item $PortableArchive -Force }
 
