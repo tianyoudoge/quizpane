@@ -176,6 +176,142 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows7:
+    if: ${{ !inputs.test_extension_only }}
+    name: Windows 7 ${{ matrix.arch }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            qt_arch: win64_msvc2019_64
+            qtpdf_package: win64_msvc2019_64
+            qtpdf_archive: 5.15.2-0-202011130602qtwebengine-Windows-Windows_10-MSVC2019-Windows-Windows_10-X86_64.7z
+            qtpdf_marker: 5.15.2/msvc2019_64/
+          - arch: x86
+            qt_arch: win32_msvc2019
+            qtpdf_package: win32_msvc2019
+            qtpdf_archive: 5.15.2-0-202011130602qtwebengine-Windows-Windows_10-MSVC2019-Windows-Windows_10-X86.7z
+            qtpdf_marker: 5.15.2/msvc2019/
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Configure MSVC 2019 toolset
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+          toolset: 14.29
+
+      - name: Install Qt 5.15
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+
+      # Qt 5.15.2 官方 Windows 预编译包不含独立 QtPdf；从官方 qtwebengine
+      # 包中只提取 Qt5Pdf DLL/导入库，头文件使用仓库 vendored 副本。
+      - name: Install Qt 5.15 QtPdf binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Url = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt5_5152/qt.qt5.5152.qtwebengine.${{ matrix.qtpdf_package }}/${{ matrix.qtpdf_archive }}"
+          $Archive = Join-Path $env:RUNNER_TEMP "qtwebengine.7z"
+          Invoke-WebRequest -Uri $Url -OutFile $Archive
+          pip install "py7zr==0.22.0"
+          $env:QTPDF_ARCHIVE = $Archive
+          $env:QTPDF_MARKER = "${{ matrix.qtpdf_marker }}"
+          @'
+          import os, sys, py7zr, shutil, tempfile
+          root = os.environ['QT_ROOT_DIR']
+          archive = os.environ['QTPDF_ARCHIVE']
+          marker = os.environ['QTPDF_MARKER']
+          with py7zr.SevenZipFile(archive) as z:
+              names = z.getnames()
+          targets = [n for n in names
+                     if marker in n
+                     and os.path.basename(n).startswith('Qt5Pdf')]
+          if not targets:
+              print('no Qt5Pdf files found in archive')
+              sys.exit(1)
+          tmp = tempfile.mkdtemp()
+          with py7zr.SevenZipFile(archive) as z:
+              z.extract(targets=targets, path=tmp)
+          wanted = []
+          for name in targets:
+              rel = name[name.find(marker) + len(marker):]
+              if not rel:
+                  continue
+              src = os.path.join(tmp, name)
+              dest = os.path.join(root, rel.replace('/', os.sep))
+              os.makedirs(os.path.dirname(dest), exist_ok=True)
+              shutil.move(src, dest)
+              wanted.append(rel)
+          shutil.rmtree(tmp, ignore_errors=True)
+          if 'lib/Qt5Pdf.lib' not in wanted or 'bin/Qt5Pdf.dll' not in wanted:
+              sys.exit(1)
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\extract_qtpdf.py" -Encoding UTF8
+          python "$env:RUNNER_TEMP\extract_qtpdf.py"
+          if ($LASTEXITCODE -ne 0) { throw "Qt5Pdf extraction failed" }
+
+      - name: Verify Qt 5 modules
+        shell: pwsh
+        run: |
+          $WebSockets = Join-Path "$env:QT_ROOT_DIR/lib/cmake" "Qt5WebSockets/Qt5WebSocketsConfig.cmake"
+          if (-not (Test-Path $WebSockets)) { throw "Missing Qt5 WebSockets module" }
+          foreach ($RelativePath in @("lib/Qt5Pdf.lib", "bin/Qt5Pdf.dll")) {
+            if (-not (Test-Path (Join-Path $env:QT_ROOT_DIR $RelativePath))) {
+              throw "Missing $RelativePath"
+            }
+          }
+
+      - name: Build, test and package Win7
+        shell: pwsh
+        run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }}
+
+      - name: Inspect portable ZIP
+        shell: pwsh
+        run: |
+          $Archive = "dist/windows7/QuizPane-windows7-${{ matrix.arch }}-portable.zip"
+          if (-not (Test-Path $Archive)) { throw "Windows 7 archive was not created" }
+          $Inspect = Join-Path $env:RUNNER_TEMP "quizpane-windows7-inspect"
+          Expand-Archive -Path $Archive -DestinationPath $Inspect -Force
+          $Root = Join-Path $Inspect "QuizPane"
+          $Required = @(
+            "小窗刷题.exe", "题库制作器.exe", "Qt5Core.dll", "Qt5Gui.dll",
+            "Qt5Network.dll", "Qt5Pdf.dll", "Qt5WebSockets.dll", "Qt5Widgets.dll",
+            "MSVCP140.dll", "VCRUNTIME140.dll", "ucrtbase.dll",
+            "api-ms-win-crt-runtime-l1-1-0.dll", "platforms/qwindows.dll"
+          )
+          foreach ($RelativePath in $Required) {
+            if (-not (Test-Path (Join-Path $Root $RelativePath))) {
+              throw "Missing packaged runtime file: $RelativePath"
+            }
+          }
+          if (Get-ChildItem $Root -Recurse -Filter "Qt6*.dll") {
+            throw "Windows 7 package unexpectedly contains Qt 6 DLLs"
+          }
+
+      - name: Prepare checksums
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item "dist/windows7/QuizPane-windows7-${{ matrix.arch }}-portable.zip" release-assets/
+          Get-ChildItem release-assets/*.zip | ForEach-Object {
+            $Hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$Hash  $($_.Name)" | Add-Content release-assets/SHA256SUMS-windows7-${{ matrix.arch }}.txt
+          }
+
+      - name: Upload Windows 7 packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.test_windows_only && format('QuizPane-windows7-{0}-test-{1}', matrix.arch, github.sha) || format('release-windows7-{0}', matrix.arch) }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
   linux:
     if: ${{ !inputs.test_windows_only && !inputs.test_extension_only }}
     name: Linux x64 (UOS and Kylin compatible)
@@ -241,7 +377,7 @@ jobs:
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v') && !inputs.test_windows_only && !inputs.test_extension_only
-    needs: [macos, windows, linux, browser-extension]
+    needs: [macos, windows, windows7, linux, browser-extension]
     runs-on: ubuntu-22.04
     steps:
       - name: Download all platform packages
