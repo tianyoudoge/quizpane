@@ -96,7 +96,7 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 3. 打开页面中的“开发者模式”，点击“加载已解压的扩展程序”，选择刚才解压出来的文件夹；
 4. 打开课程播放页，点击浏览器右上角的“小窗刷题网课伴侣”图标，再点 **绑定并进入视频聚焦小窗**。
 
-首次绑定某个课程网站时，浏览器会要求授权当前站点；同意后扩展才能控制这个页面的标准 HTML5 视频。之后可在扩展弹窗里暂停/继续、显示视频小窗或放回原浏览器。Chrome / Edge 116+ 可用；跨域 iframe 或站点自定义播放器的兼容性会因课程平台而异。
+首次绑定某个课程网站时，浏览器会要求授权当前站点；同意后扩展才能控制这个页面的标准 HTML5 视频。之后可在扩展弹窗里暂停/继续、显示视频小窗或放回原浏览器。Windows 的真实浏览器小窗路径支持 Chrome / Edge 109+；macOS 的实验捕获诊断仍需要 116+。跨域 iframe 或站点自定义播放器的兼容性会因课程平台而异。
 
 ## 用起来顺手的小细节
 
@@ -278,7 +278,29 @@ cd quizpane
 .\scripts\build-windows.ps1 -QtRoot C:\Qt\6.8.0\msvc2022_64
 ```
 
-Windows 7 不使用当前 Qt 6 主线，需要单独的 Qt 5.15 兼容分支。
+## Windows 7 SP1 x64 兼容构建
+
+Win7 使用 Qt 5.15.2 与 MSVC 2019/v142，不能运行上面的 Qt 6 包。在安装了
+Qt 5.15.2 `msvc2019_64` 的 Visual Studio 2019 x64 Developer Prompt 中执行：
+
+```powershell
+.\scripts\build-windows7.ps1 -QtRoot C:\Qt\5.15.2\msvc2019_64
+```
+
+产物为 `dist/windows7/QuizPane-windows7-x64-portable.zip`。Win7 首包默认关闭
+OCR 和 PDF 导入：Qt 官方 5.15.2 Windows 二进制不提供 Qt5Pdf，源码完整构建
+QtWebEngine/Chromium 不适合普通发布流水线。制作器仍支持 TXT、Markdown 和
+DOCX。由于当前 OCR 只用于扫描 PDF，Win7 首包也不会携带 Tesseract 和语言数据。
+
+这条构建线只面向 Windows 7 SP1 x64，并配套维护 Chrome/Edge 109 网课伴侣：
+课程标签页会被移入真实浏览器 popup，再由桌面端置顶、隐藏和恢复，不依赖 116
+才具备的 tabCapture 跨上下文能力。正式对外标记为可用前，还必须在干净 Win7
+SP1 VM 和 Chrome/Edge 109 上完成本文档列出的冒烟验收。
+
+配套扩展可单独执行 `bash scripts/package-extension.sh` 打包。Actions 中有两条
+互不影响的测试流水线：`Test Windows 7 desktop package` 验证并上传桌面 ZIP，
+`Test Chrome 109 extension package` 验证并上传
+`QuizPane-course-companion-chrome109.zip`。
 
 ## UOS 与银河麒麟构建
 

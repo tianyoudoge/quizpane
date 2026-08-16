@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
 
     quizpane::studio::CheckpointStore store;
     quizpane::studio::GenerationCheckpoint value;
-    value.sourcePaths = {source};
+    value.sourcePaths = QStringList{source};
     value.taskId = store.taskIdForSources(value.sourcePaths);
     QString error;
     if (!store.createFingerprints(value.sourcePaths, &value.sources, &error))

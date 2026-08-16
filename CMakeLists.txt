@@ -16,10 +16,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_AUTOMOC ON)
 
+# MSVC otherwise interprets UTF-8 source files using the runner's active code
+# page.  Besides corrupting Chinese UI text, that makes non-ASCII char16_t
+# literals fail to compile on the Windows 7 compatibility toolchain.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 option(QUIZPANE_BUILD_TESTS "Build QuizPane tests" ON)
 option(QUIZPANE_BUILD_BANK_GENERATOR
        "Build the experimental local question-bank generator" OFF)
 option(QUIZPANE_BUILD_BANK_STUDIO "Build the QuizPane Question Maker GUI" ON)
+option(QUIZPANE_ENABLE_QT_PDF
+       "Enable PDF import and review in Question Maker" ON)
 option(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING
        "Write rotating diagnostic logs for local debug packages" OFF)
 option(QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS
@@ -30,6 +39,32 @@ option(QUIZPANE_ENABLE_PCH "Use a shared precompiled header for C++ targets" ON)
 option(QUIZPANE_ENABLE_UNITY_BUILD
        "Batch translation units for faster clean builds (best used in the fast preset)" OFF)
 option(QUIZPANE_ENABLE_COMPILER_CACHE "Use ccache or sccache when available" ON)
+set(QUIZPANE_QT_MAJOR_VERSION "6" CACHE STRING
+    "Qt major version used to build QuizPane (5 or 6)")
+set_property(CACHE QUIZPANE_QT_MAJOR_VERSION PROPERTY STRINGS 5 6)
+option(QUIZPANE_WINDOWS7_COMPAT
+       "Target the Windows 7 SP1 API baseline (requires Qt 5.15 and MSVC 2019)" OFF)
+
+if(QUIZPANE_WINDOWS7_COMPAT)
+    if(NOT WIN32)
+        message(FATAL_ERROR "QUIZPANE_WINDOWS7_COMPAT is only valid on Windows")
+    endif()
+    if(NOT QUIZPANE_QT_MAJOR_VERSION STREQUAL "5")
+        message(FATAL_ERROR "Windows 7 compatibility requires QUIZPANE_QT_MAJOR_VERSION=5")
+    endif()
+    if(NOT MSVC)
+        message(FATAL_ERROR "Windows 7 compatibility requires the MSVC 2019 toolchain")
+    endif()
+    if(DEFINED MSVC_TOOLSET_VERSION AND NOT MSVC_TOOLSET_VERSION EQUAL 142)
+        message(FATAL_ERROR
+            "Windows 7 compatibility requires the MSVC v142 toolset; detected v${MSVC_TOOLSET_VERSION}")
+    endif()
+    add_compile_definitions(
+        QUIZPANE_WINDOWS7_COMPAT=1
+        WINVER=0x0601
+        _WIN32_WINNT=0x0601
+        NTDDI_VERSION=0x06010000)
+endif()
 
 if(QUIZPANE_ENABLE_COMPILER_CACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
     find_program(QUIZPANE_COMPILER_CACHE NAMES sccache ccache)
@@ -91,14 +126,79 @@ if(QUIZPANE_PORTABLE_CPU_BASELINE)
 endif()
 
 # 网课伴侣是桌面端的正式功能，所有构建（本地、CI 和发布）都必须具备
-# Qt WebSockets。缺少模块时在配置阶段明确失败，避免悄悄产出没有浏览器联动的包。
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network Concurrent WebSockets)
+# Qt WebSockets。Win7 构建保留桌面端协议能力，并与扩展的 Chrome/Edge 109
+# Windows popup 兼容路径配套；Chrome 116 专属的 tabCapture 实验只在 macOS 使用。
+if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "5")
+    find_package(Qt5 5.15 REQUIRED COMPONENTS
+        Core Gui Widgets Network Concurrent WebSockets)
+    set(QUIZPANE_QT_PACKAGE Qt5)
+elseif(QUIZPANE_QT_MAJOR_VERSION STREQUAL "6")
+    find_package(Qt6 6.5 REQUIRED COMPONENTS
+        Core Gui Widgets Network Concurrent WebSockets)
+    set(QUIZPANE_QT_PACKAGE Qt6)
+else()
+    message(FATAL_ERROR "QUIZPANE_QT_MAJOR_VERSION must be 5 or 6")
+endif()
 set(QUIZPANE_HAVE_WEBSOCKETS ON)
 if(QUIZPANE_BUILD_BANK_STUDIO)
-    # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
-    # （QStringConverter 内置编码不含 GB18030），其余模块不需要它。
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Core5Compat Pdf)
+    if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "5")
+        if(QUIZPANE_ENABLE_QT_PDF)
+            # Qt 5.15.2 的官方 Windows 二进制包没有 Qt5Pdf 的 CMake 配置：
+            # qtwebengine 模块包里有 Qt5Pdf.dll/.lib（pdfium 静态链接）但不带
+            # 头文件，因此链接 vendored 公共头（third_party/qtpdf-5.15.2/）与
+            # Qt 安装目录里的官方导入库。
+            get_target_property(QUIZPANE_QT5_CORE_LIBRARY Qt5::Core IMPORTED_LOCATION_RELEASE)
+            if(NOT QUIZPANE_QT5_CORE_LIBRARY)
+                get_target_property(QUIZPANE_QT5_CORE_LIBRARY Qt5::Core IMPORTED_LOCATION)
+            endif()
+            get_filename_component(QUIZPANE_QT5_CORE_LIB_DIR
+                "${QUIZPANE_QT5_CORE_LIBRARY}" DIRECTORY)
+            # 动态 Qt 的 IMPORTED_LOCATION 指向 bin/Qt5Core.dll；导入库在同级
+            # lib 目录。静态 Qt 则两者同目录。两个位置都查。
+            find_library(QUIZPANE_QT5_PDF_LIBRARY
+                NAMES Qt5Pdf
+                PATHS ${QUIZPANE_QT5_CORE_LIB_DIR}/../lib
+                      ${QUIZPANE_QT5_CORE_LIB_DIR}
+                NO_DEFAULT_PATH)
+            if(NOT QUIZPANE_QT5_PDF_LIBRARY)
+                message(FATAL_ERROR
+                    "QUIZPANE_ENABLE_QT_PDF 需要 Qt 安装目录(${QUIZPANE_QT5_CORE_LIB_DIR})包含 Qt5Pdf.lib。"
+                    "官方 Qt 5.15.2 qtwebengine 模块包提供该文件；请安装后重试，"
+                    "或对 Qt 5 构建传 -DQUIZPANE_ENABLE_QT_PDF=OFF。")
+            endif()
+            add_library(quizpane_qt5_pdf INTERFACE)
+            target_include_directories(quizpane_qt5_pdf INTERFACE
+                ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qtpdf-5.15.2/include)
+            target_link_libraries(quizpane_qt5_pdf INTERFACE
+                ${QUIZPANE_QT5_PDF_LIBRARY})
+        endif()
+    else()
+        # Core5Compat 只给题库制作器的文档提取器提供 GB18030 编码回退
+        # （QStringConverter 内置编码不含 GB18030），其余模块不需要它。
+        find_package(Qt6 6.5 REQUIRED COMPONENTS Core5Compat)
+        if(QUIZPANE_ENABLE_QT_PDF)
+            find_package(Qt6 6.5 REQUIRED COMPONENTS Pdf)
+        endif()
+    endif()
 endif()
+
+function(quizpane_add_executable target)
+    if(QUIZPANE_QT_MAJOR_VERSION STREQUAL "6")
+        qt_add_executable(${target} ${ARGN})
+    else()
+        add_executable(${target} ${ARGN})
+    endif()
+endfunction()
+
+function(quizpane_apply_windows7_manifest target)
+    if(QUIZPANE_WINDOWS7_COMPAT)
+        # 声明 Win7 supportedOS，避免系统对版本检测 API 启用旧版兼容垫片。
+        # /MANIFESTINPUT 会把该片段与链接器生成的默认 UAC manifest 合并。
+        target_link_options(${target} PRIVATE
+            "/MANIFEST:EMBED"
+            "/MANIFESTINPUT:${PROJECT_SOURCE_DIR}/packaging/windows/windows7.manifest")
+    endif()
+endfunction()
 
 option(QUIZPANE_ENABLE_TESSERACT_OCR
        "Enable the native Tesseract OCR backend in Question Maker" ON)

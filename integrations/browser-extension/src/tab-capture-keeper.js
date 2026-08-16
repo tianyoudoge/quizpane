@@ -1,6 +1,7 @@
-// 该控制器只在 macOS 的实验镜像路径中使用。它不保存、上传或重编码视频；目的
-// 是让扩展的 offscreen document 持有 Chrome tabCapture 流，并上报其活跃状态与
-// 帧率，验证 Chrome 在源窗被覆盖/隐藏时是否仍持续合成视频帧。
+// 该控制器只在 macOS 的实验镜像路径中使用。Windows（包括 Chrome 109/Win7）
+// 操作的是真实浏览器 popup，不需要捕获视频。Chrome 116 以前不能把 service
+// worker 获取的 stream ID 交给 offscreen document，因此旧浏览器必须在触碰这些
+// API 前安全跳过，不能影响其余网课伴侣功能。
 export function createTabCaptureKeeper({ chromeApi, send, isMacOS }) {
   let activeTabId = null;
   let starting = null;
@@ -18,7 +19,14 @@ export function createTabCaptureKeeper({ chromeApi, send, isMacOS }) {
   }
 
   async function start(tabId) {
-    if (!isMacOS() || !Number.isInteger(tabId)) return { success: false, skipped: true };
+    if (!isMacOS() || !Number.isInteger(tabId)) {
+      return { success: false, skipped: true, reason: "platform-not-captured" };
+    }
+    if (typeof chromeApi.runtime?.getContexts !== "function"
+        || typeof chromeApi.tabCapture?.getMediaStreamId !== "function"
+        || typeof chromeApi.offscreen?.createDocument !== "function") {
+      return { success: false, skipped: true, reason: "chrome-116-capture-unavailable" };
+    }
     if (activeTabId === tabId) return { success: true, alreadyActive: true };
     if (starting) return starting;
     starting = (async () => {

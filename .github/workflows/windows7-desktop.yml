@@ -1,0 +1,188 @@
+name: Test Windows 7 desktop package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - refeactor_win7_support
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows7-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Qt 5.15 / MSVC v142 (${{ matrix.arch }}) desktop ZIP
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            qt_arch: win64_msvc2019_64
+            qtpdf_package: win64_msvc2019_64
+            qtpdf_archive: 5.15.2-0-202011130602qtwebengine-Windows-Windows_10-MSVC2019-Windows-Windows_10-X86_64.7z
+            qtpdf_marker: 5.15.2/msvc2019_64/
+          - arch: x86
+            qt_arch: win32_msvc2019
+            qtpdf_package: win32_msvc2019
+            qtpdf_archive: 5.15.2-0-202011130602qtwebengine-Windows-Windows_10-MSVC2019-Windows-Windows_10-X86.7z
+            qtpdf_marker: 5.15.2/msvc2019/
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Configure MSVC 2019 toolset
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+          toolset: 14.29
+
+      - name: Verify build tools
+        shell: pwsh
+        run: |
+          cmake --version
+          ninja --version
+          cl 2>&1 | Select-String "Version 19.29" | Out-Null
+
+      - name: Install Qt 5.15
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+
+      # Qt 5.15.2 官方 Windows 预编译包不含独立的 Qt5Pdf 模块，但 qtwebengine
+      # 模块包内附带 Qt5Pdf.dll/.lib（pdfium 已静态链接进 Qt5Pdf.dll，导入表
+      # 只依赖 Qt5Core/Gui/Network 和系统库，与 Chromium 无运行时耦合）。
+      # 从官方源下载该包，仅提取 Qt5Pdf 相关文件合并进 install-qt-action
+      # 安装的 Qt 根目录；头文件使用仓库 vendored 副本（third_party/qtpdf-5.15.2/）。
+      - name: Install Qt 5.15 QtPdf binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Url = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt5_5152/qt.qt5.5152.qtwebengine.${{ matrix.qtpdf_package }}/${{ matrix.qtpdf_archive }}"
+          $Archive = Join-Path $env:RUNNER_TEMP "qtwebengine.7z"
+          Invoke-WebRequest -Uri $Url -OutFile $Archive
+          pip install "py7zr==0.22.0"
+          $env:QTPDF_ARCHIVE = $Archive
+          $env:QTPDF_MARKER = "${{ matrix.qtpdf_marker }}"
+          @'
+          import os, sys, py7zr, shutil, tempfile
+          root = os.environ['QT_ROOT_DIR']
+          archive = os.environ['QTPDF_ARCHIVE']
+          marker = os.environ['QTPDF_MARKER']
+          with py7zr.SevenZipFile(archive) as z:
+              names = z.getnames()
+          targets = [n for n in names
+                     if marker in n
+                     and os.path.basename(n).startswith('Qt5Pdf')]
+          if not targets:
+              print('no Qt5Pdf files found in archive')
+              sys.exit(1)
+          tmp = tempfile.mkdtemp()
+          with py7zr.SevenZipFile(archive) as z:
+              z.extract(targets=targets, path=tmp)
+          wanted = []
+          for name in targets:
+              rel = name[name.find(marker) + len(marker):]
+              if not rel:
+                  continue
+              src = os.path.join(tmp, name)
+              dest = os.path.join(root, rel.replace('/', os.sep))
+              os.makedirs(os.path.dirname(dest), exist_ok=True)
+              shutil.move(src, dest)
+              wanted.append(rel)
+          shutil.rmtree(tmp, ignore_errors=True)
+          print('\n'.join(wanted))
+          if 'lib/Qt5Pdf.lib' not in wanted or 'bin/Qt5Pdf.dll' not in wanted:
+              sys.exit(1)
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\extract_qtpdf.py" -Encoding UTF8
+          python "$env:RUNNER_TEMP\extract_qtpdf.py"
+          if ($LASTEXITCODE -ne 0) { throw "Qt5Pdf extraction failed" }
+          $PdfLib = Join-Path $env:QT_ROOT_DIR "lib\Qt5Pdf.lib"
+          if (-not (Test-Path $PdfLib)) { throw "Qt5Pdf.lib not found after extraction" }
+          $PdfDll = Join-Path $env:QT_ROOT_DIR "bin\Qt5Pdf.dll"
+          if (-not (Test-Path $PdfDll)) { throw "Qt5Pdf.dll not found after extraction" }
+
+      - name: Verify Qt 5 modules
+        shell: pwsh
+        run: |
+          $Required = @(
+            "Qt5WebSockets/Qt5WebSocketsConfig.cmake"
+          )
+          foreach ($Module in $Required) {
+            $Config = Join-Path "$env:QT_ROOT_DIR/lib/cmake" $Module
+            if (-not (Test-Path $Config)) { throw "Missing Qt module: $Config" }
+          }
+
+      - name: Build, test and package
+        shell: pwsh
+        run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }}
+
+      - name: Inspect portable ZIP
+        shell: pwsh
+        run: |
+          $Archive = "dist/windows7/QuizPane-windows7-${{ matrix.arch }}-portable.zip"
+          if (-not (Test-Path $Archive)) { throw "Desktop archive was not created" }
+          $Inspect = Join-Path $env:RUNNER_TEMP "quizpane-windows7-inspect"
+          Expand-Archive -Path $Archive -DestinationPath $Inspect -Force
+          $Root = Join-Path $Inspect "QuizPane"
+          $Required = @(
+            "小窗刷题.exe",
+            "题库制作器.exe",
+            "Qt5Core.dll",
+            "Qt5Gui.dll",
+            "Qt5Network.dll",
+            "Qt5Pdf.dll",
+            "Qt5WebSockets.dll",
+            "Qt5Widgets.dll",
+            "MSVCP140.dll",
+            "VCRUNTIME140.dll",
+            "ucrtbase.dll",
+            "api-ms-win-crt-runtime-l1-1-0.dll",
+            "platforms/qwindows.dll"
+          )
+          foreach ($RelativePath in $Required) {
+            $File = Join-Path $Root $RelativePath
+            if (-not (Test-Path $File)) { throw "Missing packaged runtime file: $RelativePath" }
+          }
+          if (Get-ChildItem $Root -Recurse -Filter "Qt6*.dll") {
+            throw "Windows 7 package unexpectedly contains Qt 6 DLLs"
+          }
+
+      - name: Verify packaged executable architecture
+        shell: pwsh
+        run: |
+          $Root = Join-Path $env:RUNNER_TEMP "quizpane-windows7-inspect/QuizPane"
+          $ExpectedMachine = "machine (${{ matrix.arch }})"
+          foreach ($Executable in @("小窗刷题.exe", "题库制作器.exe")) {
+            $Headers = & dumpbin /headers (Join-Path $Root $Executable)
+            if (-not ($Headers | Select-String -SimpleMatch $ExpectedMachine)) {
+              throw "$Executable is not a ${{ matrix.arch }} executable"
+            }
+          }
+
+      - name: Prepare desktop artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item "dist/windows7/QuizPane-windows7-${{ matrix.arch }}-portable.zip" release-assets/
+          Get-ChildItem release-assets/*.zip | ForEach-Object {
+            $Hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$Hash  $($_.Name)" | Add-Content release-assets/SHA256SUMS-windows7-${{ matrix.arch }}.txt
+          }
+
+      - name: Upload desktop test package
+        uses: actions/upload-artifact@v7
+        with:
+          name: QuizPane-windows7-${{ matrix.arch }}-desktop-${{ github.sha }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14

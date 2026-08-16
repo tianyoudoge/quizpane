@@ -7,6 +7,7 @@
 #include <QPixmap>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QtMath>
 
 namespace quizpane::ui {
 

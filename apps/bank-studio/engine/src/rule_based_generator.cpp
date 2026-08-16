@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QRegularExpression>
 #include <QSet>
+#include <QtMath>
 
 #include <limits>
 #include <algorithm>

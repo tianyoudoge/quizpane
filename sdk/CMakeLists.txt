@@ -22,7 +22,7 @@ set_source_files_properties(src/secret_store.cpp PROPERTIES
     SKIP_UNITY_BUILD_INCLUSION ON)
 target_include_directories(quizpane_provider_host PUBLIC include)
 target_link_libraries(quizpane_provider_host
-    PUBLIC quizpane_provider_sdk Qt6::Core Qt6::Network
+    PUBLIC quizpane_provider_sdk ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Network
     PRIVATE quizpane_core miniz
 )
 quizpane_optimize_target(quizpane_provider_host)

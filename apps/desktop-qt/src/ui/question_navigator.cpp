@@ -5,6 +5,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStyle>
+#include <QVariant>
 #include <QVBoxLayout>
 
 namespace quizpane::ui {

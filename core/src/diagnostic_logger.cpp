@@ -204,7 +204,11 @@ void installFatalSignalHandlers() {
 #endif
 
 QString fieldValue(const QVariant& value) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     if (value.metaType().id() == QMetaType::Bool)
+#else
+    if (value.type() == QVariant::Bool)
+#endif
         return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     return value.toString().replace(QChar('\n'), QChar(' ')).left(500);
 }

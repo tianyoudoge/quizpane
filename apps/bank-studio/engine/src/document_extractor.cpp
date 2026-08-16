@@ -1,6 +1,9 @@
 #include "quizpane/studio/document_extractor.hpp"
 
 #include "quizpane/diagnostic_logger.hpp"
+#ifdef QUIZPANE_HAS_QT_PDF
+#include "quizpane/studio/qt_pdf_compat.hpp"
+#endif
 
 #include <QCoreApplication>
 #include <QDir>
@@ -11,12 +14,17 @@
 #include <QColor>
 #include <QImage>
 #include <QImageWriter>
+#ifdef QUIZPANE_HAS_QT_PDF
 #include <QPdfDocument>
 #include <QPdfSelection>
+#endif
 #include <QSet>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QStringConverter>
 #include <QStringDecoder>
+#endif
 #include <QTextCodec>
+#include <QtMath>
 #include <QXmlStreamReader>
 
 #include <miniz.h>
@@ -41,14 +49,31 @@ bool hasSuffix(const QString& path, const QStringList& suffixes) {
 }
 
 // UTF-8 严格解码失败（出现非法字节序列）时回退到 GB18030，覆盖国内用户
-// 常见的 Windows 记事本"ANSI"编码保存的 TXT 文件。BOM 由 QStringDecoder
-// 自动识别并跳过。GB18030 不在 QStringConverter 内置编码里，需要
-// Qt6::Core5Compat 提供的 QTextCodec。
+// 常见的 Windows 记事本"ANSI"编码保存的 TXT 文件。Qt 6 用
+// QStringDecoder，Qt 5 用 QTextCodec；两条路径都严格拒绝非法 UTF-8，再回退
+// GB18030。Qt 6 的 QTextCodec 来自 Core5Compat，Qt 5 则由 Core 直接提供。
 QString decodeText(const QByteArray& bytes, QString* error) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QStringDecoder utf8Decoder(QStringConverter::Utf8);
     const QString utf8Text = utf8Decoder.decode(bytes);
     if (!utf8Decoder.hasError())
         return utf8Text;
+#else
+    // 默认构造的 ConverterState 不含 ConvertInvalidBytes/ConvertInvalidChars
+    // 等标志，QTextCodec 会对 UTF-8 自动识别并跳过开头的 BOM；与 Qt 6
+    // QStringDecoder 的行为一致。此处显式加守卫，避免部署环境拿不到 UTF-8
+    // 编解码器时空指针解引用。
+    QTextCodec* utf8Codec = QTextCodec::codecForName("UTF-8");
+    if (!utf8Codec) {
+        *error = QStringLiteral("系统缺少 UTF-8 编解码器，无法读取文本");
+        return {};
+    }
+    QTextCodec::ConverterState utf8State;
+    const QString utf8Text = utf8Codec->toUnicode(
+        bytes.constData(), bytes.size(), &utf8State);
+    if (utf8State.invalidChars == 0)
+        return utf8Text;
+#endif
 
     QTextCodec* gbCodec = QTextCodec::codecForName("GB18030");
     if (!gbCodec) {
@@ -127,16 +152,17 @@ QString docxPlainText(const QByteArray& xmlBytes, QString* error) {
     while (!xml.atEnd()) {
         xml.readNext();
         if (xml.isStartElement()) {
-            const QStringView name = xml.name();
-            if (name == u"p") {
+            const auto name = xml.name();
+            if (name == QLatin1String("p")) {
                 inParagraph = true;
                 paragraph.clear();
-            } else if (name == u"t" && inParagraph) {
+            } else if (name == QLatin1String("t") && inParagraph) {
                 paragraph += xml.readElementText(QXmlStreamReader::IncludeChildElements);
-            } else if ((name == u"tab" || name == u"br") && inParagraph) {
-                paragraph += name == u"tab" ? QChar('\t') : QChar('\n');
+            } else if ((name == QLatin1String("tab") || name == QLatin1String("br")) &&
+                       inParagraph) {
+                paragraph += name == QLatin1String("tab") ? QChar('\t') : QChar('\n');
             }
-        } else if (xml.isEndElement() && xml.name() == u"p" && inParagraph) {
+        } else if (xml.isEndElement() && xml.name() == QLatin1String("p") && inParagraph) {
             const QString cleaned = paragraph.trimmed();
             if (!cleaned.isEmpty()) {
                 if (!result.isEmpty())
@@ -153,6 +179,7 @@ QString docxPlainText(const QByteArray& xmlBytes, QString* error) {
     return result;
 }
 
+#ifdef QUIZPANE_HAS_QT_PDF
 bool hasVisibleInk(const QImage& source) {
     if (source.isNull())
         return false;
@@ -177,7 +204,7 @@ QImage renderPdfPage(QPdfDocument* document, int page) {
     // 对屏幕预览、原卷局部裁切和 AI 定位而言 1.5x（约 108 DPI）仍有足够的笔画
     // 细节，却把每页像素量降至原来的 56%，是整理阶段最主要的确定性加速点。
     constexpr qreal kPreviewScale = 1.5;
-    const QSizeF points = document->pagePointSize(page);
+    const QSizeF points = pdfPagePointSize(document, page);
     const QSize pixels(qBound(1, static_cast<int>(std::ceil(points.width() * kPreviewScale)), 5000),
                        qBound(1, static_cast<int>(std::ceil(points.height() * kPreviewScale)), 5000));
     return document->render(page, pixels);
@@ -199,7 +226,7 @@ bool writePreviewPng(const QImage& image, QByteArray* destination) {
 QRectF normalizedSelectionBounds(QPdfDocument* document, int page, int start, int length) {
     if (length <= 0)
         return {};
-    const QSizeF pageSize = document->pagePointSize(page);
+    const QSizeF pageSize = pdfPagePointSize(document, page);
     if (pageSize.width() <= 0.0 || pageSize.height() <= 0.0)
         return {};
     const QRectF bounds = document->getSelectionAtIndex(page, start, length).boundingRectangle();
@@ -284,6 +311,7 @@ void collectPdfTextAnchors(QPdfDocument* document, int page, const QString& text
         lineStart = lineEnd + 1;
     }
 }
+#endif
 
 #ifdef QUIZPANE_HAS_TESSERACT_OCR
 QString bundledTessdataPath() {
@@ -389,18 +417,27 @@ ExtractedDocument DocxExtractor::extract(const QString& path) const {
 }
 
 bool PdfExtractor::supports(const QString& path) const {
+#ifdef QUIZPANE_HAS_QT_PDF
     return hasSuffix(path, {"pdf"});
+#else
+    Q_UNUSED(path)
+    return false;
+#endif
 }
 
 ExtractedDocument PdfExtractor::extract(const QString& path) const {
     ExtractedDocument result;
     result.sourcePath = path;
+#ifndef QUIZPANE_HAS_QT_PDF
+    result.error = QStringLiteral("当前兼容构建未包含 PDF 导入，请改用 TXT、Markdown 或 DOCX");
+    return result;
+#else
     QElapsedTimer elapsed;
     elapsed.start();
     QPdfDocument document;
-    const QPdfDocument::Error loadError = document.load(path);
-    if (loadError != QPdfDocument::Error::None || document.pageCount() <= 0) {
-        result.error = QStringLiteral("无法读取 PDF（错误码 %1）").arg(static_cast<int>(loadError));
+    const int loadError = loadPdfDocument(&document, path);
+    if (!pdfLoadSucceeded(loadError) || document.pageCount() <= 0) {
+        result.error = QStringLiteral("无法读取 PDF（错误码 %1）").arg(loadError);
         return result;
     }
     QStringList pages;
@@ -458,16 +495,22 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
          {QStringLiteral("previewBytes"), previewBytes},
          {QStringLiteral("elapsedMs"), elapsed.elapsed()}});
     return result;
+#endif
 }
 
 void detectPdfUnderlinesForCandidateLines(
     ExtractedDocument* extracted, const QHash<int, QStringList>& candidateLinesByPage) {
+#ifndef QUIZPANE_HAS_QT_PDF
+    Q_UNUSED(extracted)
+    Q_UNUSED(candidateLinesByPage)
+    return;
+#else
     if (!extracted || candidateLinesByPage.isEmpty() ||
         !hasSuffix(extracted->sourcePath, {"pdf"}))
         return;
 
     QPdfDocument document;
-    if (document.load(extracted->sourcePath) != QPdfDocument::Error::None)
+    if (!pdfLoadSucceeded(loadPdfDocument(&document, extracted->sourcePath)))
         return;
 
     for (auto pageIt = candidateLinesByPage.cbegin(); pageIt != candidateLinesByPage.cend(); ++pageIt) {
@@ -535,9 +578,15 @@ void detectPdfUnderlinesForCandidateLines(
             lineStart = lineEnd + 1;
         }
     }
+#endif
 }
 
 void ensurePdfPageImages(ExtractedDocument* extracted, const QList<int>& pageNumbers) {
+#ifndef QUIZPANE_HAS_QT_PDF
+    Q_UNUSED(extracted)
+    Q_UNUSED(pageNumbers)
+    return;
+#else
     if (!extracted || pageNumbers.isEmpty() || !hasSuffix(extracted->sourcePath, {"pdf"}))
         return;
     // 大量图题可能共享同一页。先在内存缓存中去重并短路，避免每道题都重新打开
@@ -549,7 +598,7 @@ void ensurePdfPageImages(ExtractedDocument* extracted, const QList<int>& pageNum
     if (requested.isEmpty())
         return;
     QPdfDocument document;
-    if (document.load(extracted->sourcePath) != QPdfDocument::Error::None)
+    if (!pdfLoadSucceeded(loadPdfDocument(&document, extracted->sourcePath)))
         return;
     for (const int pageNumber : requested) {
         if (pageNumber > document.pageCount())
@@ -559,6 +608,7 @@ void ensurePdfPageImages(ExtractedDocument* extracted, const QList<int>& pageNum
         if (writePreviewPng(image, &png))
             extracted->pageImages.insert(pageNumber, png);
     }
+#endif
 }
 
 ExtractorRegistry::ExtractorRegistry() = default;
