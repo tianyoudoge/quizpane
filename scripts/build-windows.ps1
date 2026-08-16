@@ -84,6 +84,30 @@ if (-not $DisablePdf -and $QtMajorVersion -eq "5") {
   if (-not (Test-Path $PdfRuntime)) { throw "缺少 Qt5Pdf 运行库：$PdfRuntime" }
   Copy-Item $PdfRuntime $Stage -Force
 }
+# Win7 绿色包不能假定系统已经安装 VC++ Redistributable 或 Universal CRT。
+# v142 的 MSVCP/VCRUNTIME DLL 和完整 UCRT（含 api-ms-win-crt 转发 DLL）必须与
+# EXE 放在同一目录；否则干净的 Win7 SP1 会在进程加载阶段报缺少 MSVCP140.dll。
+if ($Windows7Compat) {
+  $V142Redist = if ($env:VSINSTALLDIR -and $env:VCToolsVersion) {
+    Join-Path $env:VSINSTALLDIR "VC\Redist\MSVC\$($env:VCToolsVersion)\$Architecture\Microsoft.VC142.CRT"
+  }
+  if (-not $V142Redist -or -not (Test-Path $V142Redist)) {
+    $V142Redist = if ($env:VCToolsRedistDir) {
+      Join-Path $env:VCToolsRedistDir "$Architecture\Microsoft.VC142.CRT"
+    }
+  }
+  if (-not $V142Redist -or -not (Test-Path $V142Redist)) {
+    throw "找不到 MSVC v142 可再发行运行库目录；请在 VS 2019/v142 开发者命令行中构建"
+  }
+  $UcrtRedist = if ($env:UniversalCRTSdkDir) {
+    Join-Path $env:UniversalCRTSdkDir "Redist\ucrt\DLLs\$Architecture"
+  }
+  if (-not $UcrtRedist -or -not (Test-Path $UcrtRedist)) {
+    throw "找不到 Universal CRT 可再发行运行库目录；请安装 Windows SDK"
+  }
+  Copy-Item (Join-Path $V142Redist "*.dll") $Stage -Force
+  Copy-Item (Join-Path $UcrtRedist "*.dll") $Stage -Force
+}
 if (-not $DisableOcr) {
   if (-not $TessdataDir) { throw "请通过 -TessdataDir 或 TESSDATA_DIR 指定 OCR 语言数据目录" }
   $Tessdata = Join-Path $Stage "tessdata"

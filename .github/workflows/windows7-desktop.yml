@@ -143,6 +143,10 @@ jobs:
             "Qt5Pdf.dll",
             "Qt5WebSockets.dll",
             "Qt5Widgets.dll",
+            "MSVCP140.dll",
+            "VCRUNTIME140.dll",
+            "ucrtbase.dll",
+            "api-ms-win-crt-runtime-l1-1-0.dll",
             "platforms/qwindows.dll"
           )
           foreach ($RelativePath in $Required) {
