@@ -57,6 +57,8 @@
 | Mac（M1/M2/M3/M4） | `QuizPane-macos-arm64.dmg` |
 | Intel Mac | `QuizPane-macos-x86_64.dmg` |
 | Windows 10/11 64 位 | `QuizPane-windows-x64-portable.zip` |
+| Windows 7 SP1 64 位 | `QuizPane-windows7-x64-portable.zip` |
+| Windows 7 SP1 32 位 | `QuizPane-windows7-x86-portable.zip` |
 | Linux、统信 UOS、银河麒麟 x64 | `QuizPane-linux-x86_64.deb`；也可选 `.tar.gz` / `.tar.xz` |
 
 Mac 打开 DMG 后把应用拖进“应用程序”；Windows 完整解压绿色版 ZIP 后运行 `QuizPane/小窗刷题.exe`；Linux 优先安装 `.deb`，也可完整解压后运行 `QuizPane.AppDir/AppRun`。不要只把压缩包里的单个程序文件拖出来运行。
@@ -68,7 +70,7 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 重启。若 macOS 的应用程序目录没有写权限，会打开 DMG 供手动拖拽覆盖。Linux 目前
 只打开官网下载页。更新不会修改题库、练习记录、模型配置或其他用户数据。
 
-> Windows 7、Linux ARM64、macOS 10.14/10.15 还没有可用版本。统信 UOS、银河麒麟目前是 Linux x64 兼容构建，尚未完成官方认证和真机验收。
+> Windows 7 SP1 提供独立的 x64/x86 兼容包；Windows 7 已停止安全支持，请在真实设备验证后使用。Linux ARM64、macOS 10.14/10.15 暂无可用版本。统信 UOS、银河麒麟目前是 Linux x64 兼容构建，尚未完成官方认证和真机验收。
 
 ### 2. 装一份题库
 
@@ -117,14 +119,14 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 - 本地示例题库，以及从文本、Word、PDF 整理题库的制作器；支持有答案/无答案整套题库、图片/公式选项、共享材料与作答结果长图；
 - 题库制作完成后自动交接给已运行的小窗刷题；没有运行实例时启动同一安装包内的主程序；
 - Chrome / Edge 网课伴侣扩展：绑定当前课程页面的视频，进入浏览器视频聚焦小窗，并能随小窗刷题的隐藏/显示操作同步暂停、收起或恢复；
-- Windows 10/11 x64、Apple Silicon Mac、Intel Mac、Linux x64 的构建产物。
+- Windows 10/11 x64、Windows 7 SP1 x64/x86 兼容包、Apple Silicon Mac、Intel Mac、Linux x64 的构建产物；
 
 ### 正在完善，暂不承诺可用
 
 - 题库市场和一键找题库；
 - 首批经授权的在线题库及扫码登录接入；
 - 更多资料格式：CSV、JSON、QTI；
-- 统信 UOS、银河麒麟的真机验收，Linux ARM64、Windows 7、旧版 macOS 支持；
+- 统信 UOS、银河麒麟与 Windows 7 的持续真机验收，Linux ARM64、旧版 macOS 支持；
 - 题库签名、来源审核、投诉和下架机制。
 
 ## 常见问题
@@ -139,7 +141,7 @@ SHA-256，退出后自动覆盖程序目录并重启；macOS 会下载 DMG 并�
 
 ### 网课伴侣支持哪些浏览器和课程？
 
-目前支持 Chrome、Edge 116+。扩展只在你手动绑定后控制当前课程页的标准 HTML5 `<video>`；普通课程播放页通常可以使用。若播放器放在跨域 iframe 中，或课程平台使用了特殊播放器，视频聚焦、暂停和恢复能力可能受浏览器或站点限制。
+Windows 上支持 Chrome、Edge 109+；macOS 的实验捕获诊断需要 116+。扩展只在你手动绑定后控制当前课程页的标准 HTML5 `<video>`；普通课程播放页通常可以使用。若播放器放在跨域 iframe 中，或课程平台使用了特殊播放器，视频聚焦、暂停和恢复能力可能受浏览器或站点限制。
 
 ### Mac 提示无法打开怎么办？
 
@@ -278,24 +280,31 @@ cd quizpane
 .\scripts\build-windows.ps1 -QtRoot C:\Qt\6.8.0\msvc2022_64
 ```
 
-## Windows 7 SP1 x64 兼容构建
+## Windows 7 SP1 x64/x86 兼容构建
 
-Win7 使用 Qt 5.15.2 与 MSVC 2019/v142，不能运行上面的 Qt 6 包。在安装了
-Qt 5.15.2 `msvc2019_64` 的 Visual Studio 2019 x64 Developer Prompt 中执行：
+Win7 使用 Qt 5.15.2 与 MSVC 2019/v142，不能运行上面的 Qt 6 包。在相应架构的
+Visual Studio 2019 Developer Prompt 中执行。x64 使用 Qt 5.15.2 `msvc2019_64`：
 
 ```powershell
 .\scripts\build-windows7.ps1 -QtRoot C:\Qt\5.15.2\msvc2019_64
 ```
 
-产物为 `dist/windows7/QuizPane-windows7-x64-portable.zip`。Win7 首包默认关闭
-OCR 和 PDF 导入：Qt 官方 5.15.2 Windows 二进制不提供 Qt5Pdf，源码完整构建
-QtWebEngine/Chromium 不适合普通发布流水线。制作器仍支持 TXT、Markdown 和
-DOCX。由于当前 OCR 只用于扫描 PDF，Win7 首包也不会携带 Tesseract 和语言数据。
+32 位使用 Qt 5.15.2 `msvc2019`：
 
-这条构建线只面向 Windows 7 SP1 x64，并配套维护 Chrome/Edge 109 网课伴侣：
+```powershell
+.\scripts\build-windows7.ps1 -Architecture x86 -QtRoot C:\Qt\5.15.2\msvc2019
+```
+
+产物分别为 `dist/windows7/QuizPane-windows7-x64-portable.zip` 和
+`dist/windows7/QuizPane-windows7-x86-portable.zip`。兼容包会将 v142 VC++ 与 UCRT
+运行库一并放入应用目录，无需另外安装 Visual C++ 运行库。制作器支持 TXT、Markdown、
+DOCX 和 PDF；PDF 功能使用随包的 Qt5Pdf。OCR 在 Win7 兼容包中保持关闭，因此扫描型
+PDF 需要先具备可提取的文字层或改在受支持的新系统中处理。
+
+这条构建线面向 Windows 7 SP1 x64/x86，并配套维护 Chrome/Edge 109 网课伴侣：
 课程标签页会被移入真实浏览器 popup，再由桌面端置顶、隐藏和恢复，不依赖 116
-才具备的 tabCapture 跨上下文能力。正式对外标记为可用前，还必须在干净 Win7
-SP1 VM 和 Chrome/Edge 109 上完成本文档列出的冒烟验收。
+才具备的 tabCapture 跨上下文能力。由于 Windows 7 已结束安全支持，请在干净 Win7
+SP1 设备和 Chrome/Edge 109 上完成本文档列出的冒烟验收后再投入日常使用。
 
 配套扩展可单独执行 `bash scripts/package-extension.sh` 打包。Actions 中有两条
 互不影响的测试流水线：`Test Windows 7 desktop package` 验证并上传桌面 ZIP，
@@ -362,7 +371,7 @@ CSV/QTI 导入、`.quizpane-bank` 分块压缩、签名、加密和图形化向�
 
 ## 参与平台构建
 
-我们需要 Intel macOS、Windows 10/11、统信 UOS 和银河麒麟用户帮助构建。提交产物时必须同时提供：
+我们需要 Intel macOS、Windows 10/11、Windows 7 SP1、统信 UOS 和银河麒麟用户帮助构建。提交产物时必须同时提供：
 
 - 对应 Git commit；
 - 操作系统、CPU、编译器、Qt 和系统库版本；
@@ -378,7 +387,7 @@ QuizPane is a compact, native desktop quiz window designed to stay in a corner i
 
 ### Install
 
-Each `QuizPane-*` download includes both the floating quiz client and Question Maker. Choose `macos-arm64` for Apple Silicon, `macos-x86_64` for Intel Macs, `windows-x64-portable.zip` for 64-bit Windows 10/11, or `linux-x86_64` for Linux/UOS/Kylin. Extract the complete Windows ZIP before running `QuizPane/小窗刷题.exe`; do not run a copied-out executable by itself. Question Maker adds finished local banks directly to QuizPane. Windows 7, Linux ARM64, and macOS 10.14/10.15 are not supported by the current release.
+Each `QuizPane-*` download includes both the floating quiz client and Question Maker. Choose `macos-arm64` for Apple Silicon, `macos-x86_64` for Intel Macs, `windows-x64-portable.zip` for 64-bit Windows 10/11, `windows7-x64-portable.zip` or `windows7-x86-portable.zip` for Windows 7 SP1, or `linux-x86_64` for Linux/UOS/Kylin. Extract the complete Windows ZIP before running `QuizPane/小窗刷题.exe`; do not run a copied-out executable by itself. Question Maker adds finished local banks directly to QuizPane. Windows 7 packages are maintained as a separate compatibility build; verify them on the target device before use, as Windows 7 is no longer security-supported. Linux ARM64 and macOS 10.14/10.15 are not supported by the current release.
 
 The current build is an unnotarized technical preview. Verify the SHA-256 published with the release and do not disable Gatekeeper globally.
 
