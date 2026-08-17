@@ -9,6 +9,7 @@
   "hero": {
     "headline": "自建题库，随手一刷",
     "subhead": "PDF 真题做成自己的题库，图表、图片和公式选项不丢；轻量小窗随时练。",
+    "notice": "Windows 7 版本现已开放下载",
     "primaryCta": "下载最新版",
     "secondaryCta": "查看功能"
   },
@@ -130,6 +131,9 @@
       "label": "macOS",
       "sublabel": "Apple Silicon / Intel",
       "icon": "assets/icons/apple.svg",
+      "buttonLabel": "选择机型",
+      "pickerTitle": "选择你的 Mac 芯片",
+      "pickerHint": "点左上角  →“关于本机”即可查看芯片型号。",
       "choices": [
         {
           "label": "Apple Silicon",
@@ -144,11 +148,30 @@
       ]
     },
       {
-        "id": "windows-x64",
-        "label": "Windows 10 / 11",
-        "sublabel": "64 位 · 绿色版 ZIP",
-        "asset": "QuizPane-windows-x64-portable.zip",
-        "icon": "assets/icons/windows.svg"
+        "id": "windows",
+        "label": "Windows",
+        "sublabel": "Windows 7 / 10 / 11",
+        "icon": "assets/icons/windows.svg",
+        "buttonLabel": "选择版本",
+        "pickerTitle": "选择 Windows 版本",
+        "pickerHint": "请根据你的 Windows 版本和系统类型选择。",
+        "choices": [
+          {
+            "label": "Windows 10 / 11",
+            "detail": "64 位 · 绿色版 ZIP",
+            "asset": "QuizPane-windows-x64-portable.zip"
+          },
+          {
+            "label": "Windows 7 SP1",
+            "detail": "64 位 · 绿色版 ZIP",
+            "asset": "QuizPane-windows7-x64-portable.zip"
+          },
+          {
+            "label": "Windows 7 SP1",
+            "detail": "32 位 · 绿色版 ZIP",
+            "asset": "QuizPane-windows7-x86-portable.zip"
+          }
+        ]
       },
       {
         "id": "linux-x86_64",
