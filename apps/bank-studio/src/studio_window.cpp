@@ -6,7 +6,8 @@
 #include "quizpane/provider_installer.hpp"
 #include "quizpane/running_app_handoff.hpp"
 #include "quizpane/secret_store.hpp"
-#include "quizpane/studio/model_client.hpp"
+#include "quizpane/studio/mineru_client.hpp"
+#include "quizpane/studio/mineru_output_adapter.hpp"
 #include "quizpane/studio/generation_workflow.hpp"
 #ifdef QUIZPANE_HAS_QT_PDF
 #include "quizpane/studio/qt_pdf_compat.hpp"
@@ -30,6 +31,7 @@
 #include <QDir>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QRadioButton>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFile>
@@ -382,68 +384,68 @@ QImage renderPdfReviewPage(const QString& sourcePath, int page, QString* error) 
 #endif
 }
 
-QString loadModelApiKey() {
+QString loadMineruToken() {
     size_t size = 0;
     if (quizpane::SecretStore::read(QStringLiteral("question-maker"),
-                                    QByteArrayLiteral("api-key"), nullptr, &size) != 0 ||
+                                    QByteArrayLiteral("mineru-token"), nullptr, &size) != 0 ||
         size == 0)
         return {};
     QByteArray bytes(static_cast<qsizetype>(size), '\0');
     if (quizpane::SecretStore::read(QStringLiteral("question-maker"),
-                                    QByteArrayLiteral("api-key"),
+                                    QByteArrayLiteral("mineru-token"),
                                     reinterpret_cast<uint8_t*>(bytes.data()), &size) != 0)
         return {};
     bytes.truncate(static_cast<qsizetype>(size));
     return QString::fromUtf8(bytes);
 }
 
-ModelSettings loadStoredModelSettings() {
+MineruConfig loadStoredMineruConfig() {
     QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
-    settings.beginGroup(QStringLiteral("question-maker/model"));
-    ModelSettings result;
-    result.vendorId = settings.value(QStringLiteral("vendorId"), result.vendorId).toString();
-    result.serviceName = settings.value(QStringLiteral("serviceName"), result.serviceName).toString();
-    result.modelName = settings.value(QStringLiteral("modelName"), result.modelName).toString();
-    result.endpoint = settings.value(QStringLiteral("endpoint"), result.endpoint).toString();
-    // 旧版没有该项。仅 OpenAI 的旧默认模型按视觉模型迁移；其他厂商默认不发送图片，
-    // 让用户在模型管理中针对实际选择的模型显式确认，避免文本模型报协议错误。
-    result.supportsVision = settings.contains(QStringLiteral("supportsVision"))
-        ? settings.value(QStringLiteral("supportsVision")).toBool()
-        : result.vendorId == QStringLiteral("openai");
+    settings.beginGroup(QStringLiteral("question-maker/mineru"));
+    MineruConfig result;
+    result.modelVersion =
+        settings.value(QStringLiteral("modelVersion"), result.modelVersion).toString();
+    result.isOcr = settings.value(QStringLiteral("isOcr"), result.isOcr).toBool();
+    result.cloudEnabled =
+        settings.value(QStringLiteral("cloudEnabled"), result.cloudEnabled).toBool();
     settings.endGroup();
     // 不在启动时读取钥匙串。macOS 对从 DMG 直接运行、或尚未用稳定 Developer ID
-    // 签名的 App 可能每次读取都要求授权；只有用户实际调用 AI 或打开模型管理时
-    // 才按需访问密钥，避免每次打开题库制作器都弹系统密码。
+    // 签名的 App 可能每次读取都要求授权；只有用户实际使用云解析或打开设置时
+    // 才按需访问 Token，避免每次打开题库制作器都弹系统密码。
     return result;
 }
 
-bool storeModelSettings(const ModelSettings& value, QString* error) {
+bool storeMineruConfig(const MineruConfig& value, QString* error) {
     QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
-    settings.beginGroup(QStringLiteral("question-maker/model"));
-    settings.setValue(QStringLiteral("vendorId"), value.vendorId);
-    settings.setValue(QStringLiteral("serviceName"), value.serviceName);
-    settings.setValue(QStringLiteral("modelName"), value.modelName);
-    settings.setValue(QStringLiteral("endpoint"), value.endpoint);
-    settings.setValue(QStringLiteral("supportsVision"), value.supportsVision);
+    settings.beginGroup(QStringLiteral("question-maker/mineru"));
+    settings.setValue(QStringLiteral("modelVersion"), value.modelVersion);
+    settings.setValue(QStringLiteral("isOcr"), value.isOcr);
+    settings.setValue(QStringLiteral("cloudEnabled"), value.cloudEnabled);
     settings.endGroup();
     settings.sync();
     if (settings.status() != QSettings::NoError) {
-        if (error) *error = QStringLiteral("无法保存模型的非敏感设置");
+        if (error) *error = QStringLiteral("无法保存云解析的非敏感设置");
         return false;
     }
-    const QByteArray key = value.apiKey.toUtf8();
-    const int status = quizpane::SecretStore::write(QStringLiteral("question-maker"),
-        QByteArrayLiteral("api-key"), reinterpret_cast<const uint8_t*>(key.constData()),
-        static_cast<size_t>(key.size()));
+    const QByteArray token = value.token.toUtf8();
+    // Token 为空表示用户主动清除，删除凭据而不是写入空串。
+    const int status = token.isEmpty()
+        ? quizpane::SecretStore::remove(QStringLiteral("question-maker"),
+                                        QByteArrayLiteral("mineru-token"))
+        : quizpane::SecretStore::write(QStringLiteral("question-maker"),
+              QByteArrayLiteral("mineru-token"),
+              reinterpret_cast<const uint8_t*>(token.constData()),
+              static_cast<size_t>(token.size()));
     // 某些极简 Linux 环境没有 Secret Service/libsecret。仍保存非敏感配置并允许
-    // 当前会话继续使用 API Key，但绝不把密钥退化写入 QSettings 明文。
+    // 当前会话继续使用 Token，但绝不把凭据退化写入 QSettings 明文。
     if (status == 4) {
         if (error) *error = QStringLiteral(
-            "当前系统没有可用的安全凭据服务；API Key 仅在本次运行中保留，"
+            "当前系统没有可用的安全凭据服务；访问凭据仅在本次运行中保留，"
             "下次启动需要重新输入。");
         return true;
     }
-    if (status != 0) {
+    // remove 在凭据本来不存在时返回 1（不存在），这不是失败。
+    if (status != 0 && !(token.isEmpty() && status == 1)) {
         if (error) *error = QStringLiteral("无法写入系统凭据库（错误码 %1）").arg(status);
         return false;
     }
@@ -492,6 +494,20 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
         sideLayout->addWidget(step);
     }
     sideLayout->addStretch();
+    // 解析模式是贯穿整个流程的全局状态，因此放在侧栏而不是某一步的表单里。
+    // 做成可点击的指示灯：一眼看出当前会不会联网，点一下就能改。
+    //
+    // Win7 兼容构建不含 Qt PDF，只能导入 TXT/Markdown/DOCX，云端版面识别对这些
+    // 格式没有收益。此时完全不展示指示灯与解析方式入口——给出一个永远不生效的
+    // 开关比没有这个开关更让人困惑。
+#ifdef QUIZPANE_HAS_QT_PDF
+    parseModeChip_ = new QPushButton;
+    parseModeChip_->setObjectName(QStringLiteral("parseModeChip"));
+    parseModeChip_->setCursor(Qt::PointingHandCursor);
+    connect(parseModeChip_, &QPushButton::clicked, this, &StudioWindow::editParseModeSettings);
+    sideLayout->addWidget(parseModeChip_);
+    sideLayout->addSpacing(8);
+#endif
     auto* support = new QFrame;
     support->setObjectName(QStringLiteral("sidebarSupport"));
     auto* supportLayout = new QVBoxLayout(support);
@@ -538,18 +554,14 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     connect(nextButton_, &QPushButton::clicked, this, [this] { movePage(1); });
     connect(startButton_, &QPushButton::clicked, this, &StudioWindow::beginPreflight);
     connect(pages_, &QStackedWidget::currentChanged, this, &StudioWindow::updateNavigation);
-    modelSettings_ = loadStoredModelSettings();
-    updateAiReviewAffordance();
-    auto* networkManager = new QNetworkAccessManager(this);
-    modelClient_ = new ModelClient(networkManager, this);
-    connect(modelClient_, &ModelClient::finished, this, [this](const GenerationResult& result) {
-        if (aiCropInFlight_)
-            handleAiCropResult(result.rawText, result.ok ? QString() : result.error);
-        else
-            handleAiReviewResult(result.rawText, result.ok ? QString() : result.error);
-    });
+    mineruConfig_ = loadStoredMineruConfig();
+    updateParseModeSummary();
+    networkManager_ = new QNetworkAccessManager(this);
     auto* settingsMenu = menuBar()->addMenu(QStringLiteral("设置"));
-    settingsMenu->addAction(QStringLiteral("模型管理…"), this, &StudioWindow::editModelSettings);
+#ifdef QUIZPANE_HAS_QT_PDF
+    settingsMenu->addAction(QStringLiteral("解析方式…"), this,
+                            &StudioWindow::editParseModeSettings);
+#endif
     auto* appearanceMenu = settingsMenu->addMenu(QStringLiteral("外观"));
     auto* themeActions = new QActionGroup(appearanceMenu);
     themeActions->setExclusive(true);
@@ -579,6 +591,135 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     helpMenu->addAction(QStringLiteral("赞赏支持…"), this, &StudioWindow::showDonationDialog);
     applyStyle();
     updateNavigation();
+}
+
+void StudioWindow::updateParseModeSummary() {
+    const bool cloud = mineruConfig_.cloudEnabled;
+    // 云端解析只对 PDF/图片生效。本次没有这类资料时仍是纯本地流程，不该让用户
+    // 以为文档会被上传。
+    const bool cloudThisRun = cloud && shouldUseCloudParse();
+
+    if (parseModeChip_) {
+        // 指示灯只讲"本机/云端"，不出现服务商名称：对用户有意义的是资料会不会
+        // 离开这台电脑，用哪家服务是配置页的实现细节。
+        parseModeChip_->setText(cloud ? QStringLiteral("◉  云端增强解析")
+                                      : QStringLiteral("◉  本机解析"));
+        parseModeChip_->setProperty("mode", cloud ? QStringLiteral("cloud")
+                                                  : QStringLiteral("local"));
+        parseModeChip_->setToolTip(cloud
+            ? QStringLiteral("复杂版面（扫描件、统计图表、图形选项）会上传到云端识别，"
+                             "其余资料仍在本机处理。点击可切换或查看详情。")
+            : QStringLiteral("资料全程只在这台电脑上处理，不联网。点击可开启云端增强解析。"));
+        parseModeChip_->style()->unpolish(parseModeChip_);
+        parseModeChip_->style()->polish(parseModeChip_);
+    }
+    // 无 PDF 构建下 cloudThisRun 恒为 false，这里用它而不是 cloud：Win7 版即使
+    // 配置过云端凭据也不会上传任何东西，文案不能说"会上传"。
+    if (parseModeTitle_) {
+        parseModeTitle_->setText(cloudThisRun ? QStringLiteral("整理方式：云端增强解析")
+                                              : QStringLiteral("整理方式：本机解析"));
+    }
+    if (parseModeHint_) {
+        parseModeHint_->setText(cloudThisRun
+            ? QStringLiteral("扫描件、统计图表等复杂版面会上传到云端识别版面，其余资料在本机处理；"
+                             "题目结构、答案与复核全部在本机完成。涉密材料请切回本机解析。")
+            : QStringLiteral("资料全程只在本机读取和处理，不会上传，适合题号、选项和答案比较规范的文档。"));
+    }
+    if (parseModeSummary_) {
+        parseModeSummary_->setText(cloudThisRun
+            ? QStringLiteral("当前方式：云端增强解析 · PDF 与图片会上传处理，其余资料仍在本机整理")
+            : (cloud ? QStringLiteral("当前方式：本机解析 · 本次资料无需云端增强，不会离开这台电脑")
+                     : QStringLiteral("当前方式：本机解析 · 资料不会离开这台电脑")));
+    }
+}
+
+// 点击侧栏指示灯后的模式选择。这里也只谈"本机/云端"，服务商信息留在
+// 云端设置对话框里。
+void StudioWindow::editParseModeSettings() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("解析方式"));
+    dialog.setMinimumWidth(520);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* title = new QLabel(QStringLiteral("解析方式"));
+    title->setObjectName(QStringLiteral("pageTitle"));
+    layout->addWidget(title);
+
+    auto* localRadio = new QRadioButton(QStringLiteral("本机解析（默认）"));
+    auto* localHint = mutedLabel(QStringLiteral(
+        "资料全程只在这台电脑上处理，不联网。题号、选项、答案比较规范的文档用它就够了。"));
+    auto* cloudRadio = new QRadioButton(QStringLiteral("云端增强解析"));
+    auto* cloudHint = mutedLabel(QStringLiteral(
+        "扫描件、统计图表、图形选项等复杂版面交给云端识别版面，识别率更高；"
+        "所选 PDF 与图片会上传到云端服务处理。需要先配置访问凭据。"));
+    localRadio->setChecked(!mineruConfig_.cloudEnabled);
+    cloudRadio->setChecked(mineruConfig_.cloudEnabled);
+    layout->addWidget(localRadio);
+    layout->addWidget(localHint);
+    layout->addSpacing(10);
+    layout->addWidget(cloudRadio);
+    layout->addWidget(cloudHint);
+
+    auto* configureButton = new QPushButton(QStringLiteral("云端解析配置…"));
+    configureButton->setObjectName(QStringLiteral("secondaryButton"));
+    layout->addWidget(configureButton, 0, Qt::AlignLeft);
+    QObject::connect(configureButton, &QPushButton::clicked, &dialog, [this, cloudRadio] {
+        editMineruSettings();
+        // 配置页里可能刚填好凭据，回来时同步选中状态。
+        cloudRadio->setEnabled(true);
+    });
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    layout->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const bool wantCloud = cloudRadio->isChecked();
+    if (wantCloud && loadMineruToken().trimmed().isEmpty()) {
+        // 没有凭据时不能假装已启用，否则整理时才失败会更让人困惑。
+        const auto choice = QMessageBox::question(this, QStringLiteral("还需要配置访问凭据"),
+            QStringLiteral("云端增强解析需要先配置访问凭据。现在去配置吗？"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (choice == QMessageBox::Yes)
+            editMineruSettings();
+        return;
+    }
+    if (wantCloud == mineruConfig_.cloudEnabled)
+        return;
+    mineruConfig_.cloudEnabled = wantCloud;
+    MineruConfig persisted = mineruConfig_;
+    persisted.token = loadMineruToken();
+    QString error;
+    storeMineruConfig(persisted, &error);
+    updateParseModeSummary();
+}
+
+void StudioWindow::editMineruSettings() {
+    MineruConfig configForEditor = mineruConfig_;
+    configForEditor.token = loadMineruToken();
+    const std::optional<MineruConfig> updated =
+        quizpane::studio::editMineruSettings(this, configForEditor);
+    if (!updated)
+        return;
+    QString error;
+    if (!storeMineruConfig(*updated, &error)) {
+        QMessageBox::warning(this, QStringLiteral("云端解析配置未保存"), error);
+        return;
+    }
+    mineruConfig_ = *updated;
+    // Token 只保留在钥匙串里；成员只留非敏感配置，避免它随窗口对象长期驻留内存。
+    mineruConfig_.token.clear();
+    updateParseModeSummary();
+    const QString summary = updated->token.isEmpty()
+        ? QStringLiteral("已清除访问凭据，之后只使用本机解析。")
+        : (updated->cloudEnabled
+               ? QStringLiteral("已保存访问凭据（写入系统凭据库）。"
+                                "整理复杂版面文档时可以选择云端增强解析。")
+               : QStringLiteral("已保存访问凭据，但尚未允许上传。"
+                                "需要云端解析时请勾选“允许把文档上传到云端解析”。"));
+    QMessageBox::information(this, QStringLiteral("云端解析配置已保存"),
+                             error.isEmpty() ? summary : summary + QStringLiteral("\n") + error);
 }
 
 void StudioWindow::showDonationDialog() {
@@ -682,9 +823,13 @@ QWidget* StudioWindow::buildSourcePage() {
     modePanel->setObjectName(QStringLiteral("panel"));
     auto* modeLayout = new QVBoxLayout(modePanel);
     modeLayout->setContentsMargins(16, 12, 16, 12);
-    modeLayout->addWidget(new QLabel(QStringLiteral("整理方式：离线整理")));
-    modeLayout->addWidget(mutedLabel(
-        QStringLiteral("资料全程只在本机读取和处理，不会上传，适合题号、选项和答案比较规范的文档。")));
+    // 解析方式与隐私声明必须反映真实状态，因此这两行由 updateParseModeSummary()
+    // 按当前设置刷新，而不是写死"不会上传"。产品界面只说"本机/云端"，
+    // 不出现具体服务商名称——那属于配置页的实现细节。
+    parseModeTitle_ = new QLabel;
+    modeLayout->addWidget(parseModeTitle_);
+    parseModeHint_ = mutedLabel(QString());
+    modeLayout->addWidget(parseModeHint_);
     layout->addWidget(modePanel);
     hasAnswerKeyCheck_ = new QCheckBox(QStringLiteral("题目资料包含答案与解析"));
     hasAnswerKeyCheck_->setChecked(true);
@@ -754,10 +899,10 @@ QWidget* StudioWindow::buildProgressPage() {
     layout->addWidget(pageHeader(
         QStringLiteral("第二步"), QStringLiteral("整理题目"),
         QStringLiteral("会先读取资料并检查题目结构；关闭窗口会结束本次未完成的整理。")));
-    modelSummary_ = mutedLabel(
-        QStringLiteral("当前方式：离线整理 · 资料不会离开电脑"));
-    modelSummary_->setObjectName(QStringLiteral("notice"));
-    layout->addWidget(modelSummary_);
+    // 这句是隐私声明，必须反映真实状态：开启云解析后"资料不会离开电脑"就是错的。
+    parseModeSummary_ = mutedLabel(QString());
+    parseModeSummary_->setObjectName(QStringLiteral("notice"));
+    layout->addWidget(parseModeSummary_);
     phaseLabel_ = new QLabel(QStringLiteral("等待开始"));
     phaseLabel_->setObjectName(QStringLiteral("phaseTitle"));
     phaseDetail_ =
@@ -781,9 +926,9 @@ QWidget* StudioWindow::buildProgressPage() {
     layout->addWidget(activitySpinner_);
     layout->addWidget(progressBar_);
     auto* metrics = new QHBoxLayout;
-    metrics->addWidget(metricCard(QStringLiteral("已读取资料"), &inputTokens_));
-    metrics->addWidget(metricCard(QStringLiteral("已整理题目"), &outputTokens_));
-    metrics->addWidget(metricCard(QStringLiteral("待复核"), &totalTokens_));
+    metrics->addWidget(metricCard(QStringLiteral("已读取资料"), &sourceCount_));
+    metrics->addWidget(metricCard(QStringLiteral("已整理题目"), &generatedCount_));
+    metrics->addWidget(metricCard(QStringLiteral("待复核"), &reviewCount_));
     layout->addLayout(metrics);
     auto* stages = new QFrame;
     stages->setObjectName(QStringLiteral("panel"));
@@ -936,9 +1081,6 @@ QWidget* StudioWindow::buildReviewPage() {
     excludeReviewButton_->setObjectName(QStringLiteral("secondaryButton"));
     actions->addWidget(excludeReviewButton_);
     actions->addStretch();
-    aiReviewButton_ = new QPushButton(QStringLiteral("AI复核"));
-    aiReviewButton_->setObjectName(QStringLiteral("secondaryButton"));
-    actions->addWidget(aiReviewButton_);
     actions->addWidget(saveReviewButton_);
     actions->addWidget(confirmReviewButton_);
     questionEditorLayout->addLayout(actions);
@@ -962,7 +1104,6 @@ QWidget* StudioWindow::buildReviewPage() {
     connect(excludeReviewButton_, &QPushButton::clicked, this,
             &StudioWindow::excludeCurrentReviewQuestion);
     connect(addOptionButton, &QPushButton::clicked, this, [this] { addReviewOption(); });
-    connect(aiReviewButton_, &QPushButton::clicked, this, &StudioWindow::requestAiReview);
     connect(reviewStemEditor_, &QTextEdit::textChanged,
             this, &StudioWindow::updateReviewStemHeight);
     connect(manualMaterialUnderlineButton_, &QPushButton::clicked, this,
@@ -1085,6 +1226,7 @@ void StudioWindow::movePage(int delta) {
 }
 
 void StudioWindow::updateNavigation() {
+    updateParseModeSummary();
     const int page = pages_->currentIndex();
     backButton_->setVisible(page > 0);
     nextButton_->setVisible(page == 0 || page == 2);
@@ -1133,10 +1275,11 @@ void StudioWindow::beginPreflight() {
         }
         pages_->setCurrentIndex(2);
     });
+    updateParseModeSummary();
     progressBar_->setValue(0);
-    inputTokens_->setText(QString::number(sourcePaths_.size()));
-    outputTokens_->setText(QStringLiteral("0"));
-    totalTokens_->setText(QStringLiteral("0"));
+    sourceCount_->setText(QString::number(sourcePaths_.size()));
+    generatedCount_->setText(QStringLiteral("0"));
+    reviewCount_->setText(QStringLiteral("0"));
     startButton_->setEnabled(false);
     spinnerFrame_ = 0;
     activitySpinner_->setText(QStringLiteral("◐ 运行中"));
@@ -1145,8 +1288,109 @@ void StudioWindow::beginPreflight() {
     QList<SourceMaterialGroup> groups;
     const bool hasAnswerKey = hasAnswerKeyCheck_->isChecked();
     for (const QString& question : sourcePaths_)
-        groups.append({question, answerPathsByQuestion_.value(question), hasAnswerKey});
-    workflow_->startRuleBased(groups);
+        groups.append({question, answerPathsByQuestion_.value(question), hasAnswerKey, {}, {}});
+    startCloudParseThenGenerate(groups);
+}
+
+// 云解析在规则工作流之前完成：MinerU 是异步任务，而工作流内部的提取运行在
+// 工作线程里同步调用。逐份串行处理，避免一次性把多份文档推给云端。
+void StudioWindow::startCloudParseThenGenerate(const QList<SourceMaterialGroup>& groups) {
+    if (!shouldUseCloudParse()) {
+        workflow_->startRuleBased(groups);
+        return;
+    }
+    if (!cloudTempDir_) {
+        cloudTempDir_ = std::make_unique<QTemporaryDir>();
+        if (!cloudTempDir_->isValid()) {
+            cloudTempDir_.reset();
+            QMessageBox::warning(this, QStringLiteral("无法使用云端解析"),
+                                 QStringLiteral("无法创建临时目录，本次改用本机解析。"));
+            workflow_->startRuleBased(groups);
+            return;
+        }
+    }
+    pendingGroups_ = groups;
+    cloudIndex_ = 0;
+    processNextCloudSource();
+}
+
+bool StudioWindow::shouldUseCloudParse() const {
+#ifndef QUIZPANE_HAS_QT_PDF
+    // Win7 兼容构建不含 Qt PDF，文件选择器也只接受 TXT/Markdown/DOCX，
+    // 这些格式本机解析已经是无损的，云端版面识别没有用武之地。
+    return false;
+#else
+    if (!mineruConfig_.cloudEnabled)
+        return false;
+    // 只有 PDF 与图片能受益于版面理解；纯文本与 DOCX 本机解析已经是无损的。
+    for (const QString& path : sourcePaths_) {
+        const QString suffix = QFileInfo(path).suffix().toLower();
+        if (suffix == QStringLiteral("pdf") || suffix == QStringLiteral("png") ||
+            suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg"))
+            return true;
+    }
+    return false;
+#endif
+}
+
+void StudioWindow::processNextCloudSource() {
+    // 所有资料处理完毕（或都不需要云解析）后再跑规则引擎。
+    while (cloudIndex_ < pendingGroups_.size()) {
+        const QString suffix =
+            QFileInfo(pendingGroups_.at(cloudIndex_).questionPath).suffix().toLower();
+        if (suffix == QStringLiteral("pdf") || suffix == QStringLiteral("png") ||
+            suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg"))
+            break;
+        ++cloudIndex_;
+    }
+    if (cloudIndex_ >= pendingGroups_.size()) {
+        workflow_->startRuleBased(pendingGroups_);
+        return;
+    }
+
+    const QString sourcePath = pendingGroups_.at(cloudIndex_).questionPath;
+    MineruSettings settings;
+    settings.token = loadMineruToken();
+    settings.modelVersion = mineruConfig_.modelVersion;
+    settings.isOcr = mineruConfig_.isOcr;
+    if (settings.token.trimmed().isEmpty()) {
+        // Token 读不到（例如用户拒绝了钥匙串授权）时退回本机解析，而不是中断整理。
+        QMessageBox::warning(this, QStringLiteral("未能读取访问凭据"),
+                             QStringLiteral("本次改用本机解析。可在“设置 → 解析方式…”重新配置。"));
+        workflow_->startRuleBased(pendingGroups_);
+        return;
+    }
+
+    if (mineruJob_)
+        mineruJob_->deleteLater();
+    mineruJob_ = new MineruExtractionJob(networkManager_, this);
+    connect(mineruJob_, &MineruExtractionJob::stageChanged, this,
+            [this, sourcePath](MineruStage, const QString& detail) {
+                phaseLabel_->setText(QStringLiteral("云端解析"));
+                phaseDetail_->setText(QStringLiteral("%1：%2")
+                                          .arg(QFileInfo(sourcePath).fileName(), detail));
+            });
+    connect(mineruJob_, &MineruExtractionJob::progress, this, [this](int extracted, int total) {
+        if (total > 0)
+            progressBar_->setValue(qBound(0, 20 * extracted / total, 20));
+    });
+    connect(mineruJob_, &MineruExtractionJob::finished, this,
+            [this](bool ok, const QString& zipPath, const QString& error) {
+                if (!ok) {
+                    // 云解析失败不应让整批资料前功尽弃：提示后退回本机解析，
+                    // 让用户至少拿到可复核的结果。
+                    QMessageBox::warning(this, QStringLiteral("云端解析未完成"),
+                                         error + QStringLiteral("\n本次改用本机解析。"));
+                    workflow_->startRuleBased(pendingGroups_);
+                    return;
+                }
+                pendingGroups_[cloudIndex_].mineruZipPath = zipPath;
+                ++cloudIndex_;
+                processNextCloudSource();
+            });
+    const QString zipPath = cloudTempDir_->filePath(
+        QStringLiteral("mineru-%1.zip").arg(cloudIndex_));
+    mineruJob_->start(settings, sourcePath, zipPath);
 }
 
 void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
@@ -1164,7 +1408,7 @@ void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
     progressBar_->setValue(qBound(0, base + within, 100));
     phaseLabel_->setText(phase);
     phaseDetail_->setText(progress.detail);
-    inputTokens_->setText(QString::number(progress.completedSourceBlocks));
+    sourceCount_->setText(QString::number(progress.completedSourceBlocks));
 }
 
 void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
@@ -1187,8 +1431,8 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     reviewQuestions_ = candidate.needsReviewQuestions;
     generatedAssets_ = candidate.assets;
     generatedHasAnswerKey_ = candidate.hasAnswerKey;
-    outputTokens_->setText(QString::number(generatedQuestions_.size()));
-    totalTokens_->setText(QString::number(reviewQuestions_.size()));
+    generatedCount_->setText(QString::number(generatedQuestions_.size()));
+    reviewCount_->setText(QString::number(reviewQuestions_.size()));
     activeReviewFilter_.clear();
     allReviewButton_->setChecked(false);
     missingAnswerButton_->setChecked(false);
@@ -1406,9 +1650,6 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
     auto* recrop = new QPushButton(QStringLiteral("手动修正"));
     recrop->setObjectName(QStringLiteral("reviewActionButton"));
     titleRow->addWidget(recrop);
-    auto* aiCrop = new QPushButton(QStringLiteral("AI修正"));
-    aiCrop->setObjectName(QStringLiteral("reviewActionButton"));
-    titleRow->addWidget(aiCrop);
     reviewVisualLayout_->addLayout(titleRow);
 
     auto* image = new QLabel;
@@ -1417,7 +1658,7 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
     const auto selectedAsset = [validAssets, picker] {
         return validAssets.at(picker ? picker->currentIndex() : 0);
     };
-    const auto showAsset = [this, validAssets, title, image, recrop, aiCrop](int index) {
+    const auto showAsset = [this, validAssets, title, image, recrop](int index) {
         const QJsonObject asset = validAssets.at(index);
         QPixmap pixmap;
         pixmap.loadFromData(generatedAssets_.value(asset.value(QStringLiteral("path")).toString()), "PNG");
@@ -1427,19 +1668,12 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
         const bool canRecrop = asset.value(QStringLiteral("sourcePage")).toInt() > 0 &&
             !asset.value(QStringLiteral("sourceDocument")).toString().isEmpty();
         recrop->setEnabled(canRecrop);
-        // AI 修正点击时会明确说明“正在请求”或“另一项 AI 任务进行中”。不能
-        // 静默禁用按钮，否则用户看起来就像点击没有反应。
-        aiCrop->setEnabled(canRecrop);
-        aiCrop->setText(aiCropInFlight_ ? QStringLiteral("AI修正中…")
-                                         : QStringLiteral("AI修正"));
     };
     showAsset(0);
     if (picker)
         connect(picker, qOverload<int>(&QComboBox::currentIndexChanged), this, showAsset);
     connect(recrop, &QPushButton::clicked, this,
             [this, selectedAsset] { recropReviewAsset(selectedAsset()); });
-    connect(aiCrop, &QPushButton::clicked, this,
-            [this, selectedAsset] { requestAiCrop(selectedAsset()); });
     reviewVisualPanel_->setVisible(true);
 }
 
@@ -1532,136 +1766,7 @@ bool StudioWindow::commitReviewCrop(const QJsonObject& asset, const QImage& page
     return true;
 }
 
-void StudioWindow::requestAiCrop(const QJsonObject& asset) {
-    if (!ensureModelApiKeyLoaded()) {
-        if (confirmAction(this, QStringLiteral("您还未配置模型"),
-                          QStringLiteral("配置模型后即可使用 AI 修正。仅会上传当前裁切位置"
-                                         "附近的一小块原卷区域，用于建议新的裁切框。"),
-                          QStringLiteral("配置模型")))
-            editModelSettings();
-        return;
-    }
-    if (!modelClient_) {
-        QMessageBox::warning(this, QStringLiteral("AI 修正不可用"),
-            QStringLiteral("AI 服务尚未初始化，请关闭并重新打开题库制作器后重试。"));
-        return;
-    }
-    if (aiCropInFlight_) {
-        QMessageBox::information(this, QStringLiteral("AI 修正进行中"),
-            QStringLiteral("当前题目的局部截图已经在定位中，请等待本次结果返回。"));
-        return;
-    }
-    if (aiReviewInFlight_) {
-        QMessageBox::information(this, QStringLiteral("AI 任务进行中"),
-            QStringLiteral("当前有一项 AI 复核正在进行。完成后即可使用 AI 修正。"));
-        return;
-    }
-    if (!canSendImageInput(modelSettings_)) {
-        QMessageBox::information(this, QStringLiteral("当前模型不能用于 AI 修正"),
-            QStringLiteral("“%1”目前未声明支持图片输入，因此没有上传任何截图。"
-                           "请到“模型管理”选择视觉模型，并勾选“该模型支持图片输入（用于 AI 修正）”。")
-                .arg(modelSettings_.modelName));
-        return;
-    }
-    const QString documentName = asset.value(QStringLiteral("sourceDocument")).toString();
-    const int page = asset.value(QStringLiteral("sourcePage")).toInt();
-    QString sourcePath;
-    for (const QString& candidate : sourcePaths_) {
-        if (QFileInfo(candidate).fileName() == documentName) {
-            sourcePath = candidate;
-            break;
-        }
-    }
-    if (sourcePath.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("找不到原卷"),
-            QStringLiteral("找不到“%1”。请重新添加原题 PDF 后再次整理。").arg(documentName));
-        return;
-    }
-    QString error;
-    const QImage pageImage = renderPdfReviewPage(sourcePath, page, &error);
-    if (pageImage.isNull()) {
-        QMessageBox::warning(this, QStringLiteral("无法进行 AI 定位"), error);
-        return;
-    }
-    const QRectF automaticCrop = cropRectFromJson(asset.value(QStringLiteral("autoCrop")).toObject());
-    const QRectF savedCrop = cropRectFromJson(asset.value(QStringLiteral("crop")).toObject());
-    const QRectF automatic = automaticCrop.isEmpty() ? QRectF(0.05, 0.05, 0.90, 0.90) : automaticCrop;
-    const QRectF contextAnchor = savedCrop.isEmpty() ? automatic : savedCrop;
-    // current crop 是原页绝对坐标锚点；模型只看它附近的局部，返回值再由 context
-    // 换算回同一张原页的绝对坐标。这样无需人工先确认或标记粉色框。
-    const QRectF context = cropContextAround(contextAnchor);
-    const QImage contextImage = cropNormalizedImage(pageImage, context);
-    QByteArray png;
-    QBuffer buffer(&png);
-    if (!buffer.open(QIODevice::WriteOnly) || !contextImage.save(&buffer, "PNG")) {
-        QMessageBox::warning(this, QStringLiteral("无法进行 AI 定位"), QStringLiteral("无法准备局部截图。"));
-        return;
-    }
-    const QString systemPrompt = QStringLiteral(
-        "你是试卷图片裁切定位助手。找出图片中心的一整道题目的 bbox："
-        "完整包含题干、图表、公式和图形选项，但不包含相邻题目。"
-        "只输出 JSON："
-        "{x:number,y:number,width:number,height:number,summary:string}。"
-        "x/y/width/height 必须相对于这张局部图片，范围为 0 到 1。");
-    const QString userContent = QStringLiteral(
-        "返回图片中央这一道题的 bbox。不要解题、不要转录题目、不要生成图片；"
-        "只返回裁切框 JSON。");
-    pendingCropAsset_ = asset;
-    pendingCropPage_ = pageImage;
-    pendingCropContext_ = context;
-    aiCropInFlight_ = true;
-    aiReviewInFlight_ = true;
-    reviewDetailStatus_->setText(QStringLiteral("正在上传当前题目附近的局部截图，请 AI 定位完整题目…"));
-    updateAiReviewAffordance();
-    modelClient_->generate(modelSettings_, {systemPrompt, userContent, modelSettings_.modelName, png});
-}
 
-void StudioWindow::handleAiCropResult(const QString& rawText, const QString& error) {
-    aiCropInFlight_ = false;
-    aiReviewInFlight_ = false;
-    updateAiReviewAffordance();
-    if (!error.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("AI 定位失败"), error);
-        return;
-    }
-    QJsonParseError parseError;
-    QJsonDocument document = QJsonDocument::fromJson(rawText.toUtf8(), &parseError);
-    if (!document.isObject()) {
-        const int first = rawText.indexOf(u'{');
-        const int last = rawText.lastIndexOf(u'}');
-        if (first >= 0 && last > first)
-            document = QJsonDocument::fromJson(rawText.mid(first, last - first + 1).toUtf8(), &parseError);
-    }
-    if (!document.isObject()) {
-        QMessageBox::warning(this, QStringLiteral("AI 返回格式错误"),
-            QStringLiteral("未得到裁切框 JSON：%1").arg(parseError.errorString()));
-        return;
-    }
-    const QJsonObject response = document.object();
-    const QJsonObject cropObject = response.value(QStringLiteral("crop")).toObject().isEmpty()
-        ? response : response.value(QStringLiteral("crop")).toObject();
-    const double x = cropObject.value(QStringLiteral("x")).toDouble(-1.0);
-    const double y = cropObject.value(QStringLiteral("y")).toDouble(-1.0);
-    const double width = cropObject.value(QStringLiteral("width")).toDouble(-1.0);
-    const double height = cropObject.value(QStringLiteral("height")).toDouble(-1.0);
-    if (!cropObject.value(QStringLiteral("x")).isDouble() ||
-        !cropObject.value(QStringLiteral("y")).isDouble() ||
-        !cropObject.value(QStringLiteral("width")).isDouble() ||
-        !cropObject.value(QStringLiteral("height")).isDouble() ||
-        x < 0.0 || y < 0.0 || width < 0.01 || height < 0.01 ||
-        x + width > 1.0 || y + height > 1.0) {
-        QMessageBox::warning(this, QStringLiteral("AI 建议无效"),
-            QStringLiteral("AI 返回的裁切范围不在局部图片内。请改用人工重新裁切。"));
-        return;
-    }
-    const QRectF localCrop = cropRectFromJson(cropObject);
-    const QRectF suggested(pendingCropContext_.x() + localCrop.x() * pendingCropContext_.width(),
-                           pendingCropContext_.y() + localCrop.y() * pendingCropContext_.height(),
-                           localCrop.width() * pendingCropContext_.width(),
-                           localCrop.height() * pendingCropContext_.height());
-    if (commitReviewCrop(pendingCropAsset_, pendingCropPage_, suggested))
-        reviewDetailStatus_->setText(QStringLiteral("已应用 AI 定位结果并重新渲染原卷截图；可继续手动修正或确认本题。"));
-}
 
 void StudioWindow::setReviewOptions(const QJsonArray& options) {
     QLayoutItem* child;
@@ -1743,7 +1848,6 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
     saveReviewButton_->setEnabled(available);
     confirmReviewButton_->setEnabled(available);
     excludeReviewButton_->setEnabled(available);
-    updateAiReviewAffordance();
     if (!available) {
         reviewStemEditor_->setReadOnly(isMaterial);
         reviewQuestionEditorPanel_->setVisible(false);
@@ -2012,138 +2116,7 @@ void StudioWindow::excludeCurrentReviewQuestion() {
             .toJsonObject().value("id").toString()}});
 }
 
-void StudioWindow::editModelSettings() {
-    ModelSettings settingsForEditor = modelSettings_;
-    if (settingsForEditor.vendorId != QStringLiteral("ollama"))
-        settingsForEditor.apiKey = loadModelApiKey();
-    const std::optional<ModelSettings> updated = quizpane::studio::editModelSettings(this, settingsForEditor);
-    if (!updated)
-        return;
-    QString error;
-    if (!storeModelSettings(*updated, &error)) {
-        QMessageBox::warning(this, QStringLiteral("模型管理未保存"), error);
-        return;
-    }
-    modelSettings_ = *updated;
-    updateAiReviewAffordance();
-    QMessageBox::information(this, QStringLiteral("模型管理已保存"), error.isEmpty()
-        ? QStringLiteral("已保存 %1 的连接信息；API Key 已写入系统凭据库。\n"
-                         "可在“设置 → 模型管理…”中打开供应商控制台查询用量，"
-                         "或修改模型配置。")
-              .arg(modelSettings_.serviceName)
-        : error);
-}
 
-bool StudioWindow::ensureModelApiKeyLoaded() {
-    if (modelSettings_.vendorId == QStringLiteral("ollama"))
-        return true;
-    if (!modelSettings_.apiKey.trimmed().isEmpty())
-        return true;
-    modelSettings_.apiKey = loadModelApiKey();
-    return !modelSettings_.apiKey.trimmed().isEmpty();
-}
-
-void StudioWindow::updateAiReviewAffordance() {
-    if (!aiReviewButton_)
-        return;
-    aiReviewButton_->setText(aiReviewInFlight_ ? QStringLiteral("AI复核中…")
-                                                : QStringLiteral("AI复核"));
-    aiReviewButton_->setEnabled(currentReviewItem_ && !aiReviewInFlight_);
-}
-
-void StudioWindow::requestAiReview() {
-    if (!ensureModelApiKeyLoaded()) {
-        if (confirmAction(this, QStringLiteral("您还未配置模型"),
-                          QStringLiteral("配置模型后即可使用 AI 复核。AI 只会给出建议，"
-                                         "仍需由你保存并确认。"),
-                          QStringLiteral("配置模型")))
-            editModelSettings();
-        return;
-    }
-    if (!currentReviewItem_ || !modelClient_) {
-        QMessageBox::information(this, QStringLiteral("选择题目"),
-            QStringLiteral("请先从左侧选择一道题目，再使用 AI 复核。"));
-        return;
-    }
-    const QJsonObject question = currentReviewItem_->data(0, Qt::UserRole).toJsonObject();
-    QJsonObject context{{QStringLiteral("question"), question}};
-    const QString materialId = question.value(QStringLiteral("materialId")).toString();
-    for (const QJsonValue& value : generatedMaterials_) {
-        const QJsonObject material = value.toObject();
-        if (material.value(QStringLiteral("id")).toString() == materialId) {
-            context.insert(QStringLiteral("material"), material);
-            break;
-        }
-    }
-    const bool hasVisuals = question.contains(QStringLiteral("stemImage")) || !materialId.isEmpty();
-    const QString systemPrompt = QStringLiteral(
-        "你是题库复核助手。只能审计给定的题目草稿，不得新增题目或虚构原文。"
-        "输出 JSON：{summary:string,issues:[string],suggestedQuestion:{stem:string,"
-        "options:[{id:string,text:string}],answer:{optionIds:[string]},solution:string}}。"
-        "suggestedQuestion 仅在确有明确修正建议时提供；答案必须引用已有选项 ID。"
-        "用户会在本地审核后决定是否应用，不能把建议视为最终答案。");
-    const QString userContent = QString::fromUtf8(
-        QJsonDocument(context).toJson(QJsonDocument::Compact)) +
-        (hasVisuals ? QStringLiteral("\n注意：本次请求未上传原卷截图；图表、下划线和裁图正确性请只"
-                                     "提示用户在本地预览核对，不可臆测图片内容。")
-                    : QString());
-    aiReviewInFlight_ = true;
-    aiReviewButton_->setEnabled(false);
-    aiReviewButton_->setText(QStringLiteral("AI复核中…"));
-    modelClient_->generate(modelSettings_, {systemPrompt, userContent, modelSettings_.modelName});
-}
-
-void StudioWindow::handleAiReviewResult(const QString& rawText, const QString& error) {
-    aiReviewInFlight_ = false;
-    updateAiReviewAffordance();
-    if (!error.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("AI 检查失败"), error);
-        return;
-    }
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(rawText.toUtf8(), &parseError);
-    if (!document.isObject()) {
-        QMessageBox::warning(this, QStringLiteral("AI 返回格式错误"),
-            QStringLiteral("未得到可读取的 JSON 建议：%1").arg(parseError.errorString()));
-        return;
-    }
-    const QJsonObject response = document.object();
-    QStringList issues;
-    for (const QJsonValue& value : response.value(QStringLiteral("issues")).toArray())
-        issues.append(value.toString());
-    const QString summary = response.value(QStringLiteral("summary")).toString();
-    const QJsonObject suggestion = response.value(QStringLiteral("suggestedQuestion")).toObject();
-    QMessageBox dialog(this);
-    dialog.setWindowTitle(QStringLiteral("AI 复核建议"));
-    dialog.setIcon(QMessageBox::Information);
-    dialog.setText(summary.isEmpty() ? QStringLiteral("AI 未发现明确的结构性问题。") : summary);
-    if (!issues.isEmpty())
-        dialog.setInformativeText(issues.join(QStringLiteral("\n• ")).prepend(QStringLiteral("• ")));
-    dialog.setDetailedText(rawText);
-    QPushButton* apply = nullptr;
-    if (!suggestion.isEmpty())
-        apply = dialog.addButton(QStringLiteral("填入建议，继续人工确认"), QMessageBox::AcceptRole);
-    dialog.addButton(QStringLiteral("关闭"), QMessageBox::RejectRole);
-    dialog.exec();
-    if (dialog.clickedButton() != apply)
-        return;
-    reviewStemEditor_->setPlainText(suggestion.value(QStringLiteral("stem")).toString(
-        reviewStemEditor_->toPlainText()));
-    if (suggestion.value(QStringLiteral("options")).isArray()) {
-        setReviewOptions(suggestion.value(QStringLiteral("options")).toArray());
-    }
-    if (suggestion.value(QStringLiteral("answer")).isObject()) {
-        QStringList ids;
-        for (const QJsonValue& value : suggestion.value(QStringLiteral("answer")).toObject()
-                                      .value(QStringLiteral("optionIds")).toArray())
-            ids.append(value.toString());
-        reviewAnswerEditor_->setText(ids.join(QStringLiteral(", ")));
-    }
-    if (suggestion.contains(QStringLiteral("solution")))
-        reviewSolutionEditor_->setPlainText(suggestion.value(QStringLiteral("solution")).toString());
-    reviewDetailStatus_->setText(QStringLiteral(
-        "AI 建议已填入草稿，尚未生效；请核对后保存草稿并确认本题。"));
-}
 
 void StudioWindow::updateReviewStemHeight() {
     if (!reviewStemEditor_)

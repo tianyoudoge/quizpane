@@ -10,6 +10,10 @@ QLabel#eyebrow { color: #aeb5bd; font-size: 11px; font-weight: 600; }
 QLabel#muted { color: #9ca3ab; }
 QLabel#sideStep { color: #aeb5bd; padding: 9px 10px; border-radius: 7px; }
 QLabel#sideStep[active="true"] { color: #ffffff; background: #252a31; }
+QPushButton#parseModeChip { background: #16191e; color: #9aa3ad; border: 1px solid #2b3138; border-radius: 8px; padding: 8px 10px; text-align: left; font-size: 12px; }
+QPushButton#parseModeChip:hover { border-color: #3c444d; color: #c8ced5; }
+QPushButton#parseModeChip[mode="local"] { color: #7fb98a; }
+QPushButton#parseModeChip[mode="cloud"] { color: #79a9d8; }
 QFrame#sidebarSupport { background: #1d1813; border: 1px solid #58432e; border-radius: 8px; }
 QPushButton#sidebarSupportButton { background: transparent; color: #f1bd77; border: none; padding: 2px 0; text-align: left; font-weight: 650; }
 QPushButton#sidebarSupportButton:hover { color: #ffd5a0; background: transparent; }

@@ -43,8 +43,13 @@ struct MaterialMarker {
 };
 
 const QRegularExpression& questionPattern() {
+    // `\.(?!\d)` 用来把 “1.5 倍”这类小数挡在题号之外。但资料分析题的题干几乎
+    // 都以年份开头（“111.2016年～2020年，……”），负向前瞻会连真题号一起否掉，
+    // 导致整份卷子只剩题干不以数字开头的那几道题。
+    // 追加一条例外：句点后是四位数字且紧跟年份记号（“年”或区间连接符）时按题号
+    // 处理——真小数不会写成 “.2016年”，因而不会被这条例外误伤。
     static const QRegularExpression value(QStringLiteral(
-        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?(\d{1,4})\s*(?:题|[．、:：\)）]|\.(?!\d))\s*(.*)$)"));
+        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?(\d{1,4})\s*(?:题|[．、:：\)）]|\.(?!\d)|\.(?=\d{4}\s*[年\-~～—]))\s*(.*)$)"));
     return value;
 }
 
@@ -98,8 +103,25 @@ const QRegularExpression& solutionPattern() {
 
 bool isAnswerSectionHeader(const QString& text) {
     static const QRegularExpression pattern(
-        QStringLiteral(R"(^\s*(?:答案|参考答案|答案汇总|答案及解析|参考答案及解析)\s*[:：]?\s*$)"));
+        QStringLiteral(R"(^\s*【?\s*(?:答案|参考答案|答案汇总|答案及解析|参考答案及解析)\s*】?\s*[:：]?\s*$)"));
     return pattern.match(text).hasMatch();
+}
+
+// 答案串与标题排在同一行的答案区头，例如“【参考答案】CAACD DBABC”。
+// 排版紧凑的真题（以及按视觉行还原文本的解析后端）常把二者合并，此时若坚持
+// 要求标题独占一行，整份答案都会被漏掉、每道题都以“未识别到答案”打回复核。
+//
+// 判定必须比“标题后有内容”更严：单题的“答案：A”同样是标题加内容，把它当成
+// 答案区起点会切断题目块，反而让本来正常的题失去答案。区分依据是措辞——
+// “参考答案/答案汇总”是整卷答案页的固定说法，两个字母起就足以判定；裸“答案”
+// 则同时用于单题，要求长到不可能是单题多选（六个字母以上）才算答案区。
+bool isInlineAnswerSectionHeader(const QString& text) {
+    static const QRegularExpression collective(QStringLiteral(
+        R"(^\s*【?\s*(?:参考答案|答案汇总|答案及解析|参考答案及解析)\s*】?\s*[:：]?\s*)"
+        R"((?=(?:[A-Fa-f]\s*){2,}$)[A-Fa-f\s]+$)"));
+    static const QRegularExpression bare(QStringLiteral(
+        R"(^\s*【?\s*答案\s*】?\s*[:：]?\s*(?=(?:[A-Fa-f]\s*){6,}$)[A-Fa-f\s]+$)"));
+    return collective.match(text).hasMatch() || bare.match(text).hasMatch();
 }
 
 bool isMaterialHeader(const QString& text) {
@@ -967,11 +989,16 @@ int answerSectionEnd(const QList<SourceLine>& lines, int sectionStart,
     return end;
 }
 
-QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionStart, int sectionEnd) {
+// includeSectionStartLine：答案区头与答案串排在同一行时（“【参考答案】CAACD…”），
+// 标题行本身携带答案，必须纳入扫描；标题独占一行时跳过它，避免把标题文字
+// 当作答案 token。
+QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionStart, int sectionEnd,
+                                  bool includeSectionStartLine = false) {
     QHash<int, QString> answers;
     if (sectionStart < 0)
         return answers;
     const int limit = sectionEnd >= 0 ? sectionEnd : lines.size();
+    const int scanStart = includeSectionStartLine ? sectionStart : sectionStart + 1;
     // 表格化答案区：形如
     //   题号 | 1 | 2 | 3
     //   答案 | A | B | C
@@ -982,7 +1009,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
     static const QRegularExpression pipeMarker(QStringLiteral("[|｜]"));
     static const QRegularExpression numberHeader(QStringLiteral("题号|题"));
     static const QRegularExpression answerHeader(QStringLiteral("答案|答"));
-    for (int index = sectionStart + 1; index < limit && index < lines.size(); ++index) {
+    for (int index = scanStart; index < limit && index < lines.size(); ++index) {
         const QString a = lines.at(index).text.trimmed();
         if (a.isEmpty() || !a.contains(pipeMarker))
             continue;
@@ -1041,7 +1068,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
     static const QRegularExpression narrativeAnswer(narrativePattern);
     int currentNumber = 0;
     const int lineLimit = sectionEnd >= 0 ? sectionEnd : lines.size();
-    for (int index = sectionStart + 1; index < lineLimit && index < lines.size(); ++index) {
+    for (int index = scanStart; index < lineLimit && index < lines.size(); ++index) {
         const QString line = lines.at(index).text;
         const auto record = answerRecord.match(line);
         if (record.hasMatch()) currentNumber = record.captured(1).toInt();
@@ -1095,6 +1122,31 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             const QString answer = normalizeAnswer(narrative.captured(1));
             if (!answer.isEmpty()) answers.insert(currentNumber, answer);
         }
+    }
+    return answers;
+}
+
+// 连续答案串：形如“CAACD DBABC BBCCD DABAC”，整段只有字母、没有任何题号。
+// 真题的末页答案页几乎都是这种排版，而按题号配对的规则对它完全无能为力。
+// 这里只负责把字母抽成有序序列，是否采用交由调用方按“数量必须与题号完全
+// 相等”判断——错位写入比不写入更有害。
+QStringList contiguousAnswerRun(const QString& text) {
+    static const QRegularExpression stripHeader(QStringLiteral(
+        R"(^\s*【?\s*(?:答案|参考答案|答案汇总|答案及解析|参考答案及解析)\s*】?\s*[:：]?\s*)"));
+    QString body = text;
+    body.remove(stripHeader);
+    if (body.trimmed().isEmpty())
+        return {};
+    QStringList answers;
+    for (const QChar& ch : body) {
+        if (ch.isSpace())
+            continue;
+        // 出现字母与空白之外的任何字符（数字、标点、汉字）说明这不是纯答案串，
+        // 例如“答案见解析”“1.A 2.B”。整行放弃，交给按题号的规则处理。
+        const QString one = normalizeAnswer(QString(ch));
+        if (one.isEmpty())
+            return {};
+        answers.append(one);
     }
     return answers;
 }
@@ -1705,10 +1757,18 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         // 收集所有答案区头行号。整体前后分开的文件只有一个，阶段分组的文件
         // 会有多个（每个阶段一组题+一组答案）。答案区头本身不作为题目终点，
         // 但它界定了“从这里开始进入答案文本”。
+        // 排版紧凑的真题会把答案串直接接在标题后（“【参考答案】CAACD…”），
+        // 这类行同样是答案区起点，只是扫描时必须连它自己一起读。
         QList<int> answerSections;
+        QSet<int> inlineAnswerSections;
         for (int index = 0; index < lines.size(); ++index) {
-            if (isAnswerSectionHeader(lines.at(index).text))
+            const QString& text = lines.at(index).text;
+            if (isAnswerSectionHeader(text)) {
                 answerSections.append(index);
+            } else if (isInlineAnswerSectionHeader(text)) {
+                answerSections.append(index);
+                inlineAnswerSections.insert(index);
+            }
         }
         const int firstAnswerSection = answerSections.isEmpty() ? -1 : answerSections.first();
         // contentEnd 用于框定材料扫描范围与题目块终点：在没有任何答案区头时，整
@@ -1907,7 +1967,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             const int sectionStart = answerSections.at(sectionIndex);
             const int sectionEnd =
                 answerSectionEnd(lines, sectionStart, anchors, materialMarkers);
-            const auto segmentAnswers = globalAnswers(lines, sectionStart, sectionEnd);
+            const auto segmentAnswers = globalAnswers(lines, sectionStart, sectionEnd,
+                                                      inlineAnswerSections.contains(sectionStart));
             for (auto it = segmentAnswers.cbegin(); it != segmentAnswers.cend(); ++it)
                 if (!answers.contains(it.key()))
                     answers.insert(it.key(), it.value());
@@ -1934,6 +1995,83 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                 for (int index = 0; index < anchors.size(); ++index)
                     if (!answers.contains(anchors.at(index).number))
                         answers.insert(anchors.at(index).number, leadingAnswers.at(index));
+            }
+        }
+
+        // 末页答案区常见的“【参考答案】CAACD DBABC…”整串排版：没有任何题号，
+        // 只能按顺序对应题号锚点。与上面的“题干前集中答案”同一条安全约束——
+        // 数量必须完全对得上才采用，且不覆盖已有的显式答案；对不上时宁可让题目
+        // 进复核，也不产出错位的答案。
+        //
+        // 不能用 answers.isEmpty() 当守卫：其他规则可能已给某些题配上答案（比如
+        // 把末行 “ABC” 当成最后一题的多选答案），此时数量恰好对上时仍应采用。
+        if (hasAnswerKey && !anchors.isEmpty()) {
+            int missingCount = 0;
+            for (const auto& anchor : anchors)
+                if (!answers.contains(anchor.number))
+                    ++missingCount;
+            if (missingCount > 0) {
+                for (const int sectionStart : answerSections) {
+                    const int sectionEnd =
+                        answerSectionEnd(lines, sectionStart, anchors, materialMarkers);
+                    const int limit = sectionEnd >= 0 ? sectionEnd : lines.size();
+                    QStringList run;
+                    for (int line = sectionStart; line < limit && line < lines.size(); ++line) {
+                        const QStringList lineRun = contiguousAnswerRun(lines.at(line).text);
+                        if (lineRun.isEmpty())
+                            continue;
+                        run.append(lineRun);
+                    }
+                    if (run.isEmpty())
+                        continue;
+
+                    // 整卷题数与答案数相等是最强证据，直接顺序配对。
+                    if (run.size() == anchors.size()) {
+                        for (int index = 0; index < anchors.size(); ++index)
+                            if (!answers.contains(anchors.at(index).number))
+                                answers.insert(anchors.at(index).number, run.at(index));
+                        break;
+                    }
+
+                    // 真题的答案串常常只覆盖主体大题，卷末还会附带没有答案的练习
+                    // （“读题圈圈”“速算练习”等）。此时整卷数量对不上，但答案串仍能
+                    // 严格对应某一段连续题号。只在恰好存在唯一一段长度相符、且题号
+                    // 严格连续递增的锚点区间时采用——多于一段就无法判断该绑哪段，
+                    // 一律放弃，避免错位。
+                    int matchStart = -1;
+                    int matchCount = 0;
+                    for (int start = 0; start + run.size() <= anchors.size(); ++start) {
+                        bool contiguous = true;
+                        for (int offset = 1; offset < run.size(); ++offset) {
+                            if (anchors.at(start + offset).number !=
+                                anchors.at(start + offset - 1).number + 1) {
+                                contiguous = false;
+                                break;
+                            }
+                        }
+                        if (!contiguous)
+                            continue;
+                        // 紧邻的题号也必须断开，否则这段只是更长连续序列的一部分，
+                        // 起点无法确定。
+                        if (start > 0 &&
+                            anchors.at(start).number == anchors.at(start - 1).number + 1)
+                            continue;
+                        const int end = start + static_cast<int>(run.size());
+                        if (end < anchors.size() &&
+                            anchors.at(end).number == anchors.at(end - 1).number + 1)
+                            continue;
+                        matchStart = start;
+                        ++matchCount;
+                    }
+                    if (matchCount != 1)
+                        continue;
+                    for (int offset = 0; offset < run.size(); ++offset) {
+                        const int number = anchors.at(matchStart + offset).number;
+                        if (!answers.contains(number))
+                            answers.insert(number, run.at(offset));
+                    }
+                    break;
+                }
             }
         }
 

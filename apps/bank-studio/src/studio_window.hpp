@@ -3,12 +3,17 @@
 #include <QHash>
 #include <QImage>
 #include <QMainWindow>
-#include "model_settings_dialog.hpp"
+#include "mineru_settings_dialog.hpp"
+#include "quizpane/studio/generation_workflow.hpp"
 #include "quizpane/studio/review_result.hpp"
 #include <QJsonArray>
 #include <QList>
 #include <QSet>
 #include <QStringList>
+
+#include <QTemporaryDir>
+
+#include <memory>
 
 class QLabel;
 class QCheckBox;
@@ -25,10 +30,11 @@ class QVBoxLayout;
 class QHBoxLayout;
 class QTimer;
 class QCloseEvent;
+class QNetworkAccessManager;
 
 namespace quizpane::studio {
 class GenerationWorkflow;
-class ModelClient;
+class MineruExtractionJob;
 class SourceRowWidget;
 class StyledDropdown;
 using GeneratedBankCandidate = ReviewResult;
@@ -63,6 +69,9 @@ private:
     void updateNavigation();
     void movePage(int delta);
     void beginPreflight();
+    void startCloudParseThenGenerate(const QList<SourceMaterialGroup>& groups);
+    bool shouldUseCloudParse() const;
+    void processNextCloudSource();
     void updateWorkflowProgress(const WorkflowProgress& progress);
     void populateReview(const GeneratedBankCandidate& candidate);
     void applyReviewFilter();
@@ -74,19 +83,15 @@ private:
     void addManualMaterialUnderline();
     void displayReviewAssets(const QList<QJsonObject>& assets);
     void recropReviewAsset(const QJsonObject& asset);
-    void requestAiCrop(const QJsonObject& asset);
-    void handleAiCropResult(const QString& rawText, const QString& error);
     bool commitReviewCrop(const QJsonObject& asset, const QImage& page,
                           const QRectF& normalizedCrop);
     void setReviewOptions(const QJsonArray& options);
     QJsonArray reviewOptions() const;
     void addReviewOption(const QString& id = {}, const QString& text = {});
-    void requestAiReview();
-    void handleAiReviewResult(const QString& rawText, const QString& error);
-    void editModelSettings();
+    void editMineruSettings();
+    void updateParseModeSummary();
+    void editParseModeSettings();
     void showDonationDialog();
-    bool ensureModelApiKeyLoaded();
-    void updateAiReviewAffordance();
     void updateReviewStemHeight();
     void packageProvider();
     void applyStyle();
@@ -97,13 +102,16 @@ private:
     QWidget* sourcePanel_ = nullptr;
     QLabel* sourceSummary_ = nullptr;
     QCheckBox* hasAnswerKeyCheck_ = nullptr;
-    QLabel* modelSummary_ = nullptr;
+    QLabel* parseModeSummary_ = nullptr;
+    QLabel* parseModeTitle_ = nullptr;
+    QLabel* parseModeHint_ = nullptr;
+    QPushButton* parseModeChip_ = nullptr;
     QLabel* phaseLabel_ = nullptr;
     QLabel* phaseDetail_ = nullptr;
     QLabel* activitySpinner_ = nullptr;
-    QLabel* inputTokens_ = nullptr;
-    QLabel* outputTokens_ = nullptr;
-    QLabel* totalTokens_ = nullptr;
+    QLabel* sourceCount_ = nullptr;
+    QLabel* generatedCount_ = nullptr;
+    QLabel* reviewCount_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
     QTreeWidget* reviewTree_ = nullptr;
     QLabel* reviewDetailTitle_ = nullptr;
@@ -123,15 +131,11 @@ private:
     QPushButton* saveReviewButton_ = nullptr;
     QPushButton* confirmReviewButton_ = nullptr;
     QPushButton* excludeReviewButton_ = nullptr;
-    QPushButton* aiReviewButton_ = nullptr;
     QTreeWidgetItem* currentReviewItem_ = nullptr;
     QTreeWidgetItem* currentMaterialItem_ = nullptr;
     QPushButton* manualMaterialUnderlineButton_ = nullptr;
-    bool aiReviewInFlight_ = false;
-    bool aiCropInFlight_ = false;
     QJsonObject pendingCropAsset_;
     QImage pendingCropPage_;
-    QRectF pendingCropContext_;
     QPushButton* allReviewButton_ = nullptr;
     QPushButton* missingAnswerButton_ = nullptr;
     QPushButton* duplicateButton_ = nullptr;
@@ -148,8 +152,15 @@ private:
     QPushButton* nextButton_ = nullptr;
     QPushButton* startButton_ = nullptr;
     GenerationWorkflow* workflow_ = nullptr;
-    ModelClient* modelClient_ = nullptr;
-    ModelSettings modelSettings_;
+    QNetworkAccessManager* networkManager_ = nullptr;
+    // 只保存非敏感配置；Token 始终按需从系统钥匙串读取，不驻留在窗口对象里。
+    MineruConfig mineruConfig_;
+    MineruExtractionJob* mineruJob_ = nullptr;
+    // 云解析中间产物只存活于本次整理：QTemporaryDir 析构时自动清理，避免用户
+    // 材料的副本长期留在磁盘上。
+    std::unique_ptr<QTemporaryDir> cloudTempDir_;
+    QList<SourceMaterialGroup> pendingGroups_;
+    int cloudIndex_ = 0;
     QTimer* activityTimer_ = nullptr;
     int spinnerFrame_ = 0;
     QStringList sourcePaths_;

@@ -123,23 +123,31 @@ if(TARGET question_maker_engine)
         question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core)
     add_test(NAME rule_based_generator_test COMMAND rule_based_generator_test)
 
+    add_executable(mineru_output_adapter_test mineru_output_adapter_test.cpp)
+    target_link_libraries(mineru_output_adapter_test PRIVATE
+        question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core)
+    target_compile_definitions(mineru_output_adapter_test PRIVATE
+        MINERU_LAYOUT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mineru-layout-fixture.json"
+    )
+    add_test(NAME mineru_output_adapter_test COMMAND mineru_output_adapter_test)
+
+    add_executable(mineru_client_test mineru_client_test.cpp)
+    target_link_libraries(mineru_client_test PRIVATE
+        question_maker_engine ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Network)
+    add_test(NAME mineru_client_test COMMAND mineru_client_test)
+
     # Manual regression harness for real paired PDFs. Callers provide the PDFs and an
     # isolated output directory, so it is intentionally not registered with CTest.
     add_executable(pdf_regression_harness pdf_regression_harness.cpp)
     target_link_libraries(pdf_regression_harness PRIVATE
         question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core)
 
-    add_executable(checkpoint_store_test checkpoint_store_test.cpp)
-    target_link_libraries(checkpoint_store_test PRIVATE question_maker_engine ${QUIZPANE_QT_PACKAGE}::Core)
-    add_test(NAME checkpoint_store_test COMMAND checkpoint_store_test)
-
-    add_executable(model_client_test model_client_test.cpp)
-    target_link_libraries(model_client_test PRIVATE question_maker_engine ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Network)
-    add_test(NAME model_client_test COMMAND model_client_test)
-
-    add_executable(chunker_test chunker_test.cpp)
-    target_link_libraries(chunker_test PRIVATE question_maker_engine ${QUIZPANE_QT_PACKAGE}::Core)
-    add_test(NAME chunker_test COMMAND chunker_test)
+    # Same rationale as above: real exam papers are third-party copyrighted material and
+    # are not shipped with the repo, so this harness stays out of CTest. The synthetic
+    # fixture in mineru_output_adapter_test covers the structural contract.
+    add_executable(mineru_regression_harness mineru_regression_harness.cpp)
+    target_link_libraries(mineru_regression_harness PRIVATE
+        question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core)
 
     add_executable(generation_workflow_test generation_workflow_test.cpp)
     target_link_libraries(generation_workflow_test PRIVATE

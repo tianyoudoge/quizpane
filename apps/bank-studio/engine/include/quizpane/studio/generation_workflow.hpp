@@ -20,8 +20,6 @@ struct WorkflowProgress {
     WorkflowStage stage = WorkflowStage::Idle;
     int completedSourceBlocks = 0;
     int totalSourceBlocks = 0;
-    qint64 inputTokens = 0;
-    qint64 outputTokens = 0;
     QString detail;
 };
 
@@ -33,11 +31,19 @@ struct SourceMaterialGroup {
     QString questionPath;
     QString answerPath;
     bool hasAnswerKey = true;
+    // 云解析结果 ZIP 的本地路径。非空时用 MinerU 的版面数据替代本机 PDF 文字层，
+    // 其余流程（规则引擎、复核、打包）完全一致。
+    // 上传与下载由 MineruExtractionJob 在本工作流之前完成——它是异步的，而这里
+    // 的提取运行在工作线程里同步调用，不能塞进去。
+    QString mineruZipPath;
+    QString mineruAnswerZipPath;
 };
 
-// 完全离线的规则结构化工作流：读取资料、跑规则引擎、发布候选 DTO。没有网络
-// 请求、没有检查点/断点续传语义——规则引擎是纯函数，相同输入总产生相同输出，
-// 重跑一次的成本远低于维护一套跨进程续传状态机。
+// 规则结构化工作流：读取资料、跑规则引擎、发布候选 DTO。本身不发起网络请求；
+// 需要云解析时由调用方先用 MineruExtractionJob 取得结果 ZIP，再经
+// SourceMaterialGroup::mineruZipPath 传入。没有检查点/断点续传语义——规则引擎
+// 是纯函数，相同输入总产生相同输出，重跑一次的成本远低于维护一套跨进程续传
+// 状态机。
 class GenerationWorkflow final : public QObject {
     Q_OBJECT
   public:

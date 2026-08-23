@@ -2,6 +2,7 @@
 
 #include "quizpane/diagnostic_logger.hpp"
 #include "quizpane/studio/document_extractor.hpp"
+#include "quizpane/studio/mineru_output_adapter.hpp"
 #include "quizpane/studio/rule_based_generator.hpp"
 
 #include <QFileInfo>
@@ -42,7 +43,7 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                 return;
             QMetaObject::invokeMethod(owner.data(), [owner, stage, completed, total, detail] {
                 if (owner && owner->active_)
-                    emit owner->progressChanged({stage, completed, total, 0, 0, detail});
+                    emit owner->progressChanged({stage, completed, total, detail});
             }, Qt::QueuedConnection);
         };
         QElapsedTimer elapsed;
@@ -61,7 +62,26 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                             QStringLiteral("正在读取第 %1 / %2 份资料：%3")
                                 .arg(sourceIndex + 1).arg(sources.size())
                                 .arg(QFileInfo(path).fileName()));
-            ExtractedDocument document = registry.extract(QFileInfo(path).absoluteFilePath());
+            // 云解析结果存在时优先使用：它与本地提取产出同一个 ExtractedDocument，
+            // 因而下游规则引擎无需知道文档感知来自云端还是本机。
+            const auto extractOne = [&registry](const QString& filePath,
+                                                const QString& zipPath) {
+                const QString absolute = QFileInfo(filePath).absoluteFilePath();
+                if (zipPath.isEmpty())
+                    return registry.extract(absolute);
+                MineruAdaptResult adapted = adaptMineruZip(zipPath, absolute);
+                if (!adapted.error.isEmpty()) {
+                    ExtractedDocument failed;
+                    failed.sourcePath = absolute;
+                    failed.error = adapted.error;
+                    return failed;
+                }
+                adapted.document.warnings.append(
+                    QStringLiteral("本份资料由 MinerU 云解析（%1 %2）识别，请重点核对图表与表格")
+                        .arg(adapted.backend, adapted.versionName));
+                return adapted.document;
+            };
+            ExtractedDocument document = extractOne(path, source.mineruZipPath);
             if (!document.error.isEmpty()) {
                 failure = QStringLiteral("%1：%2").arg(QFileInfo(path).fileName(), document.error);
                 break;
@@ -71,8 +91,8 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                     failure = QStringLiteral("无答案题库不能配对答案文件");
                     break;
                 }
-                const ExtractedDocument answers = registry.extract(
-                    QFileInfo(source.answerPath).absoluteFilePath());
+                const ExtractedDocument answers =
+                    extractOne(source.answerPath, source.mineruAnswerZipPath);
                 if (!answers.error.isEmpty()) {
                     failure = QStringLiteral("%1：%2")
                         .arg(QFileInfo(source.answerPath).fileName(), answers.error);
@@ -136,7 +156,7 @@ void GenerationWorkflow::publish(WorkflowStage stage, const QString& detail) {
     diagnostic::event(QStringLiteral("workflow"), QStringLiteral("progress"),
         {{QStringLiteral("stage"), static_cast<int>(stage)},
          {QStringLiteral("detail"), detail}});
-    emit progressChanged({stage, 0, 0, 0, 0, detail});
+    emit progressChanged({stage, 0, 0, detail});
 }
 
 } // namespace quizpane::studio
