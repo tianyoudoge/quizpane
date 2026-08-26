@@ -521,7 +521,9 @@ const FEEDBACK_MAX_FIELDS = {
   client: 64,
   description: 8000,
   logs: 2 * 1024 * 1024,
-  crashFile: 6 * 1024 * 1024,
+  // 客户端最多读取 5 MiB 的 minidump，Base64 编码后最大为约 6.67 MiB。
+  // 这里必须按编码后的字符串大小校验，否则合法的最大附件会被误拒绝。
+  crashFile: 7 * 1024 * 1024,
   submittedAt: 64,
 };
 

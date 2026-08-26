@@ -46,11 +46,12 @@ constexpr int kRetainedLogs = 2;
 // - QUIZPANE_PROD_DIAGNOSTICS：release 可用的最小集——只落 warning+ 的 Qt 消息
 //   和自有 event() 面包屑，崩溃捕获常开，运行时可被用户设置关闭。
 // 两者同时打开时以 DEBUG 语义为准（prod 分支全部退化为无条件行为）。
-constexpr bool kProdMode =
+// 这必须是预处理宏：模式差异不仅影响运行时逻辑，还影响 platform-specific
+// 符号是否编译。不能以 C++ constexpr 替代后再写进 #if。
 #if defined(QUIZPANE_PROD_DIAGNOSTICS) && !defined(QUIZPANE_DIAGNOSTIC_LOGGING)
-    true;
+#define QUIZPANE_DIAGNOSTIC_PROD_MODE 1
 #else
-    false;
+#define QUIZPANE_DIAGNOSTIC_PROD_MODE 0
 #endif
 
 // 全局单例状态，用 QMutex 保护并发写入（日志可能来自多个线程的 qInfo 调用）。
@@ -78,7 +79,7 @@ LogState& state() {
     return *value;
 }
 
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
 // 生产包运行时开关（QSettings，默认开）。用裸 atomic 缓存一份：崩溃 handler
 // 里不能碰 QSettings（非 async-signal-safe），只能读这个标志。
 std::atomic<bool> enabledFlag{true};
@@ -96,7 +97,7 @@ QString redact(QString message) {
     return message;
 }
 
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
 // 生产日志随反馈上报离开本机，完整路径里带着用户名，落盘前只保留末两级。
 QString maskPaths(QString message) {
     auto shorten = [](const QString& matched, QChar separator) {
@@ -108,7 +109,7 @@ QString maskPaths(QString message) {
     static const QRegularExpression unixPath(
         QStringLiteral(R"((?:/Users|/home)/[\w.-]+(?:/[\w.-]+)*)"));
     static const QRegularExpression windowsPath(
-        QStringLiteral(R"(([A-Za-z]:\\(Users|Public|程序数据|ProgramData)\\[\w.-]+(\\[\w.-]+)*)"));
+        QStringLiteral(R"(([A-Za-z]:\\(?:Users|Public|程序数据|ProgramData)\\[\w.-]+(?:\\[\w.-]+)*))"));
     // Qt 的 replace 没有回调重载，这里按 globalMatch 的结果手动拼接。
     auto apply = [&shorten](QString& text, const QRegularExpression& pattern, QChar separator) {
         QString result;
@@ -138,6 +139,12 @@ QString levelName(QtMsgType type) {
     case QtFatalMsg: return QStringLiteral("FATAL");
     }
     return QStringLiteral("UNKNOWN");
+}
+
+bool isWarningOrWorse(QtMsgType type) {
+    // QtMsgType 的枚举值并不按严重程度单调排列：QtInfoMsg 的值高于
+    // QtWarningMsg，不能以 type >= QtWarningMsg 判断。
+    return type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg;
 }
 
 void rotate(const QString& path) {
@@ -178,15 +185,15 @@ void messageHandler(QtMsgType type, const QMessageLogContext& context,
     LogState& log = state();
     {
         QMutexLocker locker(&log.mutex);
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
         // 每次消息都刷新一次开关（QSettings 有内存缓存，成本很低）：
         // 用户在设置里重新打开日志后，下一条 warning 就会自动重开文件。
         enabledFlag = QSettings().value(QStringLiteral("diagnosticsEnabled"),
                                         true).toBool();
-        if (log.initialized && enabledFlag && type >= QtWarningMsg) {
+        if (log.initialized && enabledFlag && isWarningOrWorse(type)) {
             if (!log.file.isOpen()) {
                 log.file.setFileName(log.path);
-                log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+                (void)log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
             }
             const QString safe = maskPaths(redact(message));
             appendLine(log, levelName(type), safe);
@@ -214,7 +221,7 @@ void messageHandler(QtMsgType type, const QMessageLogContext& context,
 // QString/QFile，只能用最原始的 write() 系统调用）。
 #if defined(Q_OS_WIN)
 void writeMiniDump(EXCEPTION_POINTERS* exception) {
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
     if (!enabledFlag.load(std::memory_order_relaxed))
         return;
 #endif
@@ -244,7 +251,7 @@ LONG WINAPI unhandledExceptionFilter(EXCEPTION_POINTERS* exception) {
 // async-signal-safe 的函数。write/backtrace_symbols_fd
 // 满足这个要求，QFile/QString 不满足。
 void writeBacktrace(int signalNumber) {
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
     if (!enabledFlag.load(std::memory_order_relaxed) || crashPathBuffer[0] == '\0')
         return;
     // open() 是 async-signal-safe 的；崩溃时现开，无需 initialize 预开。
@@ -265,7 +272,7 @@ void writeBacktrace(int signalNumber) {
     static constexpr char footer[] = "=== end backtrace ===\n";
     ::write(descriptor, footer, sizeof(footer) - 1);
     ::fsync(descriptor);
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
     ::close(descriptor);
 #endif
     ::signal(signalNumber, SIG_DFL);
@@ -316,7 +323,7 @@ QString fieldValue(const QVariant& value) {
 } // namespace
 
 bool isDiagnosticsEnabled() {
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
     return QSettings().value(QStringLiteral("diagnosticsEnabled"), true).toBool();
 #else
     return true;
@@ -324,7 +331,7 @@ bool isDiagnosticsEnabled() {
 }
 
 void setDiagnosticsEnabled(bool enabled) {
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
     QSettings().setValue(QStringLiteral("diagnosticsEnabled"), enabled);
     enabledFlag.store(enabled);
 #else
@@ -351,7 +358,7 @@ bool initialize(const QString& component) {
 #endif
     log.initialized = true;
     log.previousHandler = qInstallMessageHandler(messageHandler);
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
     // 生产包：即使用户已关闭日志，也要装好 handler——崩溃捕获不受
     // 「日志开关」之外的因素影响，且用户随时可以在设置里重新打开。
     enabledFlag = isDiagnosticsEnabled();
@@ -360,7 +367,7 @@ bool initialize(const QString& component) {
     if (enabledFlag.load(std::memory_order_relaxed)) {
         rotate(log.path);
         log.file.setFileName(log.path);
-        log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+        (void)log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     }
     installCrashHandlers();
 #else
@@ -437,7 +444,7 @@ void event(const QString& area, const QString& name, const QVariantMap& fields) 
     const QString line = QStringLiteral("[%1] %2%3")
                              .arg(area, name, parts.isEmpty()
                                  ? QString{} : QStringLiteral(" ") + parts.join(QChar(' ')));
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
     // 生产包里 event() 是我们自己的低频结构化面包屑，不走 messageHandler
     // 的 warning+ 过滤（否则全被丢掉），直接落盘；同样先脱敏。
     enabledFlag = isDiagnosticsEnabled();
@@ -446,7 +453,7 @@ void event(const QString& area, const QString& name, const QVariantMap& fields) 
     QMutexLocker locker(&log.mutex);
     if (!log.file.isOpen()) {
         log.file.setFileName(log.path);
-        log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+        (void)log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     }
     appendLine(log, QStringLiteral("EVENT"), maskPaths(redact(line)));
 #else
@@ -462,7 +469,7 @@ void shutdown() {
           {{QStringLiteral("exit"), QStringLiteral("clean")}});
     QMutexLocker locker(&log.mutex);
     log.file.flush();
-#if kProdMode
+#if QUIZPANE_DIAGNOSTIC_PROD_MODE
     // 生产包恢复 Qt 原生的消息处理器，退出后不再有任何 Qt 消息回调开销。
     log.file.close();
     if (log.previousHandler)

@@ -1465,11 +1465,16 @@ void MainWindow::requestResults() {
     pages_->setCurrentWidget(solutionPage_);
     applyUiSize(uiSize_);
     QString error;
-    provider_.request({{"id", "attempt-report"}, {"method", "attempt.report"},
-                       {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error);
-    if (attemptHasAnswerKey_)
-        provider_.request({{"id", "attempt-solutions"}, {"method", "attempt.solutions"},
-                           {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error);
+    if (!provider_.request({{"id", "attempt-report"}, {"method", "attempt.report"},
+                            {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error)) {
+        QMessageBox::warning(this, QStringLiteral("无法生成答题结果"), error);
+        return;
+    }
+    if (attemptHasAnswerKey_ &&
+        !provider_.request({{"id", "attempt-solutions"}, {"method", "attempt.solutions"},
+                            {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error)) {
+        QMessageBox::warning(this, QStringLiteral("无法加载题目解析"), error);
+    }
 }
 
 void MainWindow::showSolution(int index) {

@@ -4,7 +4,6 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
-#include <QDeadlineTimer>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
@@ -16,9 +15,11 @@
 #include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QStorageInfo>
+#include <QTimer>
 #include <QUrl>
 
 namespace quizpane::feedback {
@@ -46,7 +47,7 @@ QString maskPaths(QString message) {
     static const QRegularExpression unixPath(
         QStringLiteral(R"((?:/Users|/home)/[\w.-]+(?:/[\w.-]+)*)"));
     static const QRegularExpression windowsPath(
-        QStringLiteral(R"(([A-Za-z]:\\(Users|Public|程序数据|ProgramData)\\[\w.-]+(\\[\w.-]+)*)"));
+        QStringLiteral(R"(([A-Za-z]:\\(?:Users|Public|程序数据|ProgramData)\\[\w.-]+(?:\\[\w.-]+)*))"));
     // Qt 的 replace 没有回调重载，这里按 globalMatch 的结果手动拼接。
     auto apply = [&shorten](QString& text, const QRegularExpression& pattern, QChar separator) {
         QString result;
@@ -96,12 +97,70 @@ QString readTailLines(const QString& path, int maxLines) {
         return {};
     // 日志有 5MiB 轮转上限，直接全量读入再取尾部即可。
     const QString content = QString::fromUtf8(file.readAll());
+    constexpr qsizetype kMaximumUploadLogBytes = 512 * 1024;
     const QStringList lines = content.split(QChar('\n'));
-    const int start = qMax(0, lines.size() - maxLines);
     QStringList selected;
-    for (int index = start; index < lines.size(); ++index)
-        selected.append(maskPaths(redact(lines.at(index))));
+    qsizetype selectedBytes = 0;
+    int index = lines.size() - 1;
+    if (index >= 0 && lines.at(index).isEmpty())
+        --index;
+    for (; index >= 0 && selected.size() < qMax(0, maxLines); --index) {
+        const QString safe = maskPaths(redact(lines.at(index)));
+        const QByteArray encoded = safe.toUtf8();
+        const qsizetype separatorBytes = selected.isEmpty() ? 0 : 1;
+        if (selectedBytes + separatorBytes + encoded.size() > kMaximumUploadLogBytes) {
+            if (selected.isEmpty()) {
+                QByteArray truncated = encoded.right(kMaximumUploadLogBytes);
+                // 从 UTF-8 字符边界开始，避免截断半个多字节字符后反而生成替换字符。
+                while (!truncated.isEmpty() &&
+                       (static_cast<unsigned char>(truncated.front()) & 0xc0) == 0x80)
+                    truncated.remove(0, 1);
+                selected.prepend(QString::fromUtf8(truncated));
+            }
+            break;
+        }
+        selected.prepend(safe);
+        selectedBytes += separatorBytes + encoded.size();
+    }
     return selected.join(QChar('\n'));
+}
+
+SendResult buildReportPayload(const QString& description, bool includeLogs,
+                              bool includeCrash, QByteArray* body) {
+    const QString descriptionText = description.trimmed();
+    if (descriptionText.isEmpty())
+        return {false, QStringLiteral("请先填写问题描述。")};
+    if (descriptionText.size() > 8000)
+        return {false, QStringLiteral("问题描述过长，请精简后再发送。")};
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("user-feedback"));
+    payload.insert(QStringLiteral("client"), QStringLiteral("quizpane"));
+    payload.insert(QStringLiteral("description"), descriptionText);
+    payload.insert(QStringLiteral("environment"), buildEnvironmentInfo());
+    payload.insert(QStringLiteral("submittedAt"),
+                   QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
+    payload.insert(QStringLiteral("logs"), includeLogs ? buildLogTail() : QString());
+    if (includeCrash) {
+        const QString crashPath = diagnostic::crashArtifactPath();
+        const QFileInfo info(crashPath);
+        // 只附最近 24h 内的崩溃产物；Windows 的 minidump 限制 5MiB 以内。
+        if (info.isFile() && info.size() > 0 &&
+            QDateTime::currentDateTime().secsTo(info.lastModified()) < 24 * 3600) {
+            const qint64 limit =
+#if defined(Q_OS_WIN)
+                5 * 1024 * 1024;
+#else
+                1 * 1024 * 1024;
+#endif
+            payload.insert(QStringLiteral("crashFile"), crashFileBase64(crashPath, limit));
+            payload.insert(QStringLiteral("crashFileTruncated"), info.size() > limit);
+        }
+    }
+    *body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+    if (body->size() > 8 * 1024 * 1024)
+        return {false, QStringLiteral("诊断包超过大小上限，请取消「附上日志」后重试。")};
+    return {true, {}};
 }
 
 } // namespace
@@ -130,44 +189,28 @@ QString buildLogTail(int maxLines) {
     return readTailLines(diagnostic::logFilePath(), maxLines);
 }
 
+SendResult exportReport(const QString& description, bool includeLogs,
+                        bool includeCrash, const QString& filePath) {
+    if (filePath.isEmpty())
+        return {false, QStringLiteral("请先选择诊断包保存位置。")};
+    QByteArray body;
+    const SendResult prepared = buildReportPayload(description, includeLogs, includeCrash, &body);
+    if (!prepared.success)
+        return prepared;
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly))
+        return {false, QStringLiteral("无法创建诊断包文件，请检查保存位置。")};
+    if (file.write(body) != body.size() || !file.commit())
+        return {false, QStringLiteral("无法保存诊断包，请检查磁盘空间后重试。")};
+    return {true, QStringLiteral("诊断包已导出：%1").arg(QFileInfo(filePath).fileName())};
+}
+
 SendResult sendReport(const QString& description, bool includeLogs,
                       bool includeCrash, const QString& endpoint, int timeoutMs) {
-    const QString descriptionText = description.trimmed();
-    if (descriptionText.isEmpty())
-        return {false, QStringLiteral("请先填写问题描述。")};
-    if (descriptionText.size() > 8000)
-        return {false, QStringLiteral("问题描述过长，请精简后再发送。")};
-
-    QJsonObject payload;
-    payload.insert(QStringLiteral("type"), QStringLiteral("user-feedback"));
-    payload.insert(QStringLiteral("client"), QStringLiteral("quizpane"));
-    payload.insert(QStringLiteral("description"), descriptionText);
-    payload.insert(QStringLiteral("environment"), buildEnvironmentInfo());
-    payload.insert(QStringLiteral("submittedAt"),
-                   QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
-    const QString logs = includeLogs ? readTailLines(diagnostic::logFilePath(), 200)
-                                     : QString();
-    payload.insert(QStringLiteral("logs"), logs);
-    if (includeCrash) {
-        const QString crashPath = diagnostic::crashArtifactPath();
-        const QFileInfo info(crashPath);
-        // 只附最近 24h 内的崩溃产物；Windows 的 minidump 限制 5MiB 以内。
-        if (info.isFile() && info.size() > 0 &&
-            QDateTime::currentDateTime().secsTo(info.lastModified()) < 24 * 3600) {
-            const qint64 limit =
-#if defined(Q_OS_WIN)
-                5 * 1024 * 1024;
-#else
-                1 * 1024 * 1024;
-#endif
-            payload.insert(QStringLiteral("crashFile"), crashFileBase64(crashPath, limit));
-            payload.insert(QStringLiteral("crashFileTruncated"),
-                           info.size() > limit ? true : false);
-        }
-    }
-    const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
-    if (body.size() > 8 * 1024 * 1024)
-        return {false, QStringLiteral("上报内容超过大小上限，请取消「附上日志」后重试。")};
+    QByteArray body;
+    const SendResult prepared = buildReportPayload(description, includeLogs, includeCrash, &body);
+    if (!prepared.success)
+        return prepared;
 
     QNetworkAccessManager manager;
     const QUrl url = endpoint.isEmpty()
@@ -182,14 +225,34 @@ SendResult sendReport(const QString& description, bool includeLogs,
 
     SendResult result;
     QEventLoop loop;
-    QNetworkReply* reply = nullptr;
-    QObject::connect(&manager, &QNetworkAccessManager::finished,
-                     [&loop, &result](QNetworkReply* finished) {
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    bool completed = false;
+    QNetworkReply* reply = manager.post(request, body);
+    QObject::connect(reply, &QNetworkReply::finished, &loop,
+                     [&loop, &result, &completed, reply] {
+                         completed = true;
                          const int status =
-                             finished->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+                             reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
                                  .toInt();
-                         finished->deleteLater();
-                         if (status == 200) {
+                         if (status == 0) {
+                             switch (reply->error()) {
+                             case QNetworkReply::HostNotFoundError:
+                             case QNetworkReply::ConnectionRefusedError:
+                             case QNetworkReply::RemoteHostClosedError:
+                                 result.message = QStringLiteral(
+                                     "无法连接反馈服务，请检查网络后重试。");
+                                 break;
+                             case QNetworkReply::SslHandshakeFailedError:
+                                 result.message = QStringLiteral(
+                                     "反馈服务的安全连接验证失败，请检查系统时间或网络设置后重试。");
+                                 break;
+                             default:
+                                 result.message = QStringLiteral(
+                                     "网络连接失败，请检查网络后重试。");
+                                 break;
+                             }
+                         } else if (status == 200) {
                              result.success = true;
                              result.message = QStringLiteral("反馈已发送，感谢！");
                          } else if (status == 413) {
@@ -201,20 +264,22 @@ SendResult sendReport(const QString& description, bool includeLogs,
                          } else if (status == 429) {
                              result.message =
                                  QStringLiteral("发送过于频繁，请稍后再试。");
+                         } else if (status >= 500) {
+                             result.message =
+                                 QStringLiteral("反馈服务暂时不可用，请稍后重试。");
                          } else {
-                             result.message = QStringLiteral("发送失败（HTTP %1），请稍后重试。")
-                                                 .arg(status);
+                             result.message = QStringLiteral("反馈发送未完成，请稍后重试。");
                          }
                          loop.quit();
                      });
-    reply = manager.post(request, body);
-    const QDeadlineTimer deadline(timeoutMs);
-    while (loop.isRunning() && !deadline.hasExpired())
-        loop.processEvents(QEventLoop::AllEvents, 50);
-    if (loop.isRunning() && reply) {
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timeout.start(qMax(0, timeoutMs));
+    loop.exec();
+    if (!completed) {
         reply->abort();
         result.message = QStringLiteral("发送超时，请稍后重试。");
     }
+    reply->deleteLater();
     return result;
 }
 

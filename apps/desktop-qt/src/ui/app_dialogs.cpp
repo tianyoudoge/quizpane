@@ -6,6 +6,8 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QKeySequenceEdit>
 #include <QLabel>
@@ -14,6 +16,7 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QVBoxLayout>
 
 namespace quizpane::ui {
@@ -217,7 +220,7 @@ bool showFeedback(QWidget* parent, const QString& endpoint) {
     auto* hint = new QLabel(QStringLiteral(
         "请尽量描述复现步骤和实际/预期表现。发送会附带运行环境信息；"
         "勾选的日志与崩溃信息已做脱敏（不含账号、题目与完整路径），"
-        "将上传到 xutianyou.cc 供排查。"));
+        "将上传到 xutianyou.cc 供排查。没有网络时，也可导出诊断包后转交。"));
     hint->setWordWrap(true);
     hint->setStyleSheet(QStringLiteral("color: #7d8794; font-size: 12px;"));
     auto* editor = new QPlainTextEdit;
@@ -229,11 +232,31 @@ bool showFeedback(QWidget* parent, const QString& endpoint) {
     crashCheck->setChecked(true);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
     auto* send = buttons->addButton(QStringLiteral("发送"), QDialogButtonBox::AcceptRole);
+    auto* exportBundle = buttons->addButton(QStringLiteral("导出诊断包…"),
+                                             QDialogButtonBox::ActionRole);
     send->setEnabled(false);
-    QObject::connect(editor, &QPlainTextEdit::textChanged, [send](const QString& text) {
-        send->setEnabled(!text.trimmed().isEmpty());
+    exportBundle->setEnabled(false);
+    QObject::connect(editor, &QPlainTextEdit::textChanged, [editor, send, exportBundle] {
+        const bool hasDescription = !editor->toPlainText().trimmed().isEmpty();
+        send->setEnabled(hasDescription);
+        exportBundle->setEnabled(hasDescription);
     });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(exportBundle, &QPushButton::clicked, [&dialog, logsCheck, crashCheck, editor] {
+        const QString suggested = QDir(QStandardPaths::writableLocation(
+            QStandardPaths::DocumentsLocation)).filePath(QStringLiteral("quizpane-feedback.json"));
+        const QString path = QFileDialog::getSaveFileName(
+            &dialog, QStringLiteral("导出诊断包"), suggested,
+            QStringLiteral("QuizPane 诊断包 (*.json)"));
+        if (path.isEmpty())
+            return;
+        const auto result = feedback::exportReport(
+            editor->toPlainText(), logsCheck->isChecked(), crashCheck->isChecked(), path);
+        if (result.success)
+            QMessageBox::information(&dialog, QStringLiteral("导出诊断包"), result.message);
+        else
+            QMessageBox::warning(&dialog, QStringLiteral("导出诊断包"), result.message);
+    });
     QObject::connect(send, &QPushButton::clicked, [&dialog, endpoint, logsCheck, crashCheck,
                                                     editor] {
         const auto result =

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QElapsedTimer>
+#include <QHash>
 #include <QJsonObject>
 #include <QLibrary>
 #include <QObject>
@@ -32,6 +34,11 @@ signals:
     void providerLog(int level, const QString& message);
 
 private:
+    struct PendingRequest {
+        QString method;
+        QElapsedTimer startedAt;
+    };
+
     // C ABI 只能传函数指针，不能直接传 C++ 成员函数。下面的静态 thunk 先从
     // void* context 找回 this，再转发到对象方法。
     static void responseThunk(void* userData, const char* json, size_t size);
@@ -53,6 +60,9 @@ private:
     qp_provider_cancel_fn cancelFn_ = nullptr;
     qp_provider_destroy_fn destroyFn_ = nullptr;
     qp_host_api_v1 hostApi_{};
+    // 用请求 ID 关联发起与回包；只记录方法、耗时和错误摘要，不保存题目、答案等
+    // RPC 参数，便于用户反馈排查且不扩大日志中的内容范围。
+    QHash<QString, PendingRequest> pendingRequests_;
     // 每次 load 递增的代。Provider 的响应回调可能跨线程异步到达，
     // 当用户在 0ms 投递窗口内切换/卸载题库时，排队中的回包会携带旧代号，
     // acceptResponse 据此丢弃属于已卸载题库的陈旧响应，避免错路由。
