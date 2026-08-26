@@ -87,6 +87,7 @@ private:
     void handleAiReviewResult(const QString& rawText, const QString& error);
     void editModelSettings();
     void showDonationDialog();
+    void showFeedbackDialog();
     bool ensureModelApiKeyLoaded();
     void updateAiReviewAffordance();
     void updateReviewStemHeight();

@@ -1,13 +1,18 @@
 #include "app_dialogs.hpp"
 
+#include "quizpane/feedback_report.hpp"
+
 #include <QApplication>
+#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -201,6 +206,53 @@ void showDonation(QWidget* parent) {
     layout->addWidget(close);
     dialog.setFixedWidth(360);
     dialog.exec();
+}
+
+bool showFeedback(QWidget* parent, const QString& endpoint) {
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("问题反馈"));
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(24, 20, 24, 18);
+    layout->setSpacing(10);
+    auto* hint = new QLabel(QStringLiteral(
+        "请尽量描述复现步骤和实际/预期表现。发送会附带运行环境信息；"
+        "勾选的日志与崩溃信息已做脱敏（不含账号、题目与完整路径），"
+        "将上传到 xutianyou.cc 供排查。"));
+    hint->setWordWrap(true);
+    hint->setStyleSheet(QStringLiteral("color: #7d8794; font-size: 12px;"));
+    auto* editor = new QPlainTextEdit;
+    editor->setPlaceholderText(QStringLiteral("出了什么问题？怎么触发的？"));
+    editor->setFixedHeight(140);
+    auto* logsCheck = new QCheckBox(QStringLiteral("附上最近的运行日志（已脱敏）"));
+    logsCheck->setChecked(true);
+    auto* crashCheck = new QCheckBox(QStringLiteral("附上崩溃信息（如有，最近 24 小时内）"));
+    crashCheck->setChecked(true);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    auto* send = buttons->addButton(QStringLiteral("发送"), QDialogButtonBox::AcceptRole);
+    send->setEnabled(false);
+    QObject::connect(editor, &QPlainTextEdit::textChanged, [send](const QString& text) {
+        send->setEnabled(!text.trimmed().isEmpty());
+    });
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(send, &QPushButton::clicked, [&dialog, endpoint, logsCheck, crashCheck,
+                                                    editor] {
+        const auto result =
+            feedback::sendReport(editor->toPlainText(), logsCheck->isChecked(),
+                                 crashCheck->isChecked(), endpoint);
+        if (result.success) {
+            dialog.accept();
+            QMessageBox::information(&dialog, QStringLiteral("问题反馈"), result.message);
+        } else {
+            QMessageBox::warning(&dialog, QStringLiteral("问题反馈"), result.message);
+        }
+    });
+    layout->addWidget(hint);
+    layout->addWidget(editor);
+    layout->addWidget(logsCheck);
+    layout->addWidget(crashCheck);
+    layout->addWidget(buttons);
+    dialog.setMinimumWidth(440);
+    return dialog.exec() == QDialog::Accepted;
 }
 
 }  // namespace quizpane::ui

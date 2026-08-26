@@ -154,7 +154,7 @@ if(TARGET question_maker_engine)
         question_maker_engine ${QUIZPANE_QT_PACKAGE}::Core)
     add_test(NAME generation_workflow_test COMMAND generation_workflow_test)
 
-if(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING)
+if(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING OR QUIZPANE_ENABLE_PROD_DIAGNOSTICS)
     add_executable(diagnostic_logger_test diagnostic_logger_test.cpp)
     target_link_libraries(diagnostic_logger_test PRIVATE quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
     add_test(NAME diagnostic_logger_test COMMAND diagnostic_logger_test)

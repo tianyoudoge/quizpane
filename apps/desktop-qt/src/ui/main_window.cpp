@@ -764,6 +764,8 @@ void MainWindow::initializeDesktopShell() {
                          &MainWindow::chooseProviderPackage);
     trayMenu_->addAction(QStringLiteral("老板键设置…"), this,
                          &MainWindow::configureBossKey);
+    trayMenu_->addAction(QStringLiteral("问题反馈…"), this,
+                         [this] { ui::showFeedback(this); });
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
     QAction* debugLogAction = trayMenu_->addAction(QStringLiteral("查看调试日志…"));
     connect(debugLogAction, &QAction::triggered, this, [] {
@@ -841,6 +843,8 @@ void MainWindow::initializeDesktopShell() {
                        &MainWindow::chooseProviderPackage);
     appMenu->addAction(QStringLiteral("老板键设置…"), this,
                        &MainWindow::configureBossKey);
+    appMenu->addAction(QStringLiteral("问题反馈…"), this,
+                       [this] { ui::showFeedback(this); });
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
     appMenu->addAction(debugLogAction);
 #endif
@@ -2176,6 +2180,15 @@ void MainWindow::showMainMenu() {
                    &MainWindow::showBackgroundVisibilityDialog);
     menu.addAction(QStringLiteral("老板键设置…"), this,
                    &MainWindow::configureBossKey);
+    menu.addAction(QStringLiteral("问题反馈…"), this,
+                   [this] { ui::showFeedback(this); });
+    {
+        auto* diagnosticsAction = menu.addAction(QStringLiteral("记录诊断日志"));
+        diagnosticsAction->setCheckable(true);
+        diagnosticsAction->setChecked(diagnostic::isDiagnosticsEnabled());
+        connect(diagnosticsAction, &QAction::toggled, this,
+                [](bool enabled) { diagnostic::setDiagnosticsEnabled(enabled); });
+    }
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
     menu.addAction(QStringLiteral("查看调试日志…"), this, [] {
         diagnostic::openLogFile();
