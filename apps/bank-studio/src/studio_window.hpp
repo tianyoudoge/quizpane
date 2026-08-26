@@ -69,6 +69,8 @@ private:
     void confirmRiskCategory(const QString& signal);
     void showReviewQuestion(QTreeWidgetItem* item);
     bool saveCurrentReviewQuestion();
+    bool reviewQuestionIsDirty() const;
+    bool commitOpenReviewQuestion(const QString& consequence);
     void confirmCurrentReviewQuestion();
     void excludeCurrentReviewQuestion();
     void addManualMaterialUnderline();

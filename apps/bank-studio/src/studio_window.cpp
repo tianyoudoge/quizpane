@@ -48,6 +48,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
+#include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QImage>
@@ -955,7 +956,18 @@ QWidget* StudioWindow::buildReviewPage() {
     reviewSplit->setSizes({360, 540});
     layout->addWidget(reviewSplit, 1);
     connect(reviewTree_, &QTreeWidget::currentItemChanged, this,
-            [this](QTreeWidgetItem* current, QTreeWidgetItem*) { showReviewQuestion(current); });
+            [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
+                // 切题前把当前打开且改过的题提交回去；草稿无法保存时允许用户
+                // 取消切换，避免编辑器里的修改被静默丢弃。
+                if (currentReviewItem_ && currentReviewItem_ != current &&
+                    !commitOpenReviewQuestion(QStringLiteral("切换题目"))) {
+                    reviewTree_->blockSignals(true);
+                    reviewTree_->setCurrentItem(currentReviewItem_);
+                    reviewTree_->blockSignals(false);
+                    return;
+                }
+                showReviewQuestion(current);
+            });
     connect(saveReviewButton_, &QPushButton::clicked, this,
             &StudioWindow::saveCurrentReviewQuestion);
     connect(confirmReviewButton_, &QPushButton::clicked, this,
@@ -1194,6 +1206,10 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     allReviewButton_->setChecked(false);
     missingAnswerButton_->setChecked(false);
     duplicateButton_->setChecked(false);
+    // 重建树前先把指向旧节点的指针置空，clear() 会销毁旧节点，
+    // 切题钩子还会解引用 currentReviewItem_，留着就是悬垂指针。
+    currentReviewItem_ = nullptr;
+    currentMaterialItem_ = nullptr;
     reviewTree_->clear();
     QHash<QString, int> softCategoryCounts;
     QHash<QString, QTreeWidgetItem*> groups;
@@ -1975,6 +1991,57 @@ bool StudioWindow::saveCurrentReviewQuestion() {
     return true;
 }
 
+bool StudioWindow::reviewQuestionIsDirty() const {
+    if (!currentReviewItem_)
+        return false;
+    const QJsonObject question = currentReviewItem_->data(0, Qt::UserRole).toJsonObject();
+    if (question.isEmpty())
+        return false;
+    // 与 saveCurrentReviewQuestion 的写入口径对齐：只比较保存后会发生变化的字段，
+    // 没动过编辑器的题不因格式差异（如题干尾部空白）被误判为脏。
+    if (reviewStemEditor_->toPlainText().trimmed() != question.value("stem").toString())
+        return true;
+    const QJsonArray options = reviewOptions();
+    const QJsonArray savedOptions = question.value("options").toArray();
+    if (options.size() != savedOptions.size())
+        return true;
+    for (int index = 0; index < options.size(); ++index) {
+        const QJsonObject saved = savedOptions.at(index).toObject();
+        const QJsonObject current = options.at(index).toObject();
+        if (saved.value("id") != current.value("id") ||
+            saved.value("text") != current.value("text"))
+            return true;
+    }
+    if (generatedHasAnswerKey_) {
+        QJsonArray editorAnswerIds;
+        const QStringList rawAnswerIds = reviewAnswerEditor_->text().split(
+            QRegularExpression(QStringLiteral("[,，\\s]+")), Qt::SkipEmptyParts);
+        for (const QString& id : rawAnswerIds)
+            editorAnswerIds.append(id.trimmed().toLower());
+        const QJsonArray savedAnswerIds =
+            question.value("answer").toObject().value("optionIds").toArray();
+        if (editorAnswerIds != savedAnswerIds)
+            return true;
+        if (reviewSolutionEditor_->toPlainText().trimmed() !=
+            question.value("solution").toString())
+            return true;
+    }
+    return false;
+}
+
+bool StudioWindow::commitOpenReviewQuestion(const QString& consequence) {
+    if (!currentReviewItem_ || !reviewQuestionIsDirty())
+        return true;
+    if (saveCurrentReviewQuestion())
+        return true;
+    const QMessageBox::StandardButton choice = QMessageBox::question(
+        this, QStringLiteral("有未保存的修改"),
+        QStringLiteral("当前题目的草稿无法保存，%1将丢弃未保存的修改。\n仍要继续吗？")
+            .arg(consequence),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    return choice == QMessageBox::Yes;
+}
+
 void StudioWindow::confirmCurrentReviewQuestion() {
     if (!saveCurrentReviewQuestion())
         return;
@@ -2188,6 +2255,9 @@ void StudioWindow::applyReviewFilter() {
 }
 
 void StudioWindow::packageProvider() {
+    // 打包前先把当前打开且改过的题提交回树节点数据，避免编辑器里的修改被静默丢弃。
+    if (!commitOpenReviewQuestion(QStringLiteral("继续打包")))
+        return;
     QList<QJsonObject> selectedObjects;
     QHash<QString, int> sourceOrder;
     int sourceOrdinal = 0;
