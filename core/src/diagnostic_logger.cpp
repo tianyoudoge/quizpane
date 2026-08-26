@@ -334,6 +334,17 @@ void setDiagnosticsEnabled(bool enabled) {
 #if QUIZPANE_DIAGNOSTIC_PROD_MODE
     QSettings().setValue(QStringLiteral("diagnosticsEnabled"), enabled);
     enabledFlag.store(enabled);
+    // 用户重新开启后必须立刻恢复 Qt warning 的落盘。不能只等待下一条
+    // event()：那会让开关后的第一条 warning/critical 永久丢失。
+    if (enabled) {
+        LogState& log = state();
+        QMutexLocker locker(&log.mutex);
+        if (log.initialized && !log.file.isOpen()) {
+            rotate(log.path);
+            log.file.setFileName(log.path);
+            (void)log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+        }
+    }
 #else
     Q_UNUSED(enabled);
 #endif
