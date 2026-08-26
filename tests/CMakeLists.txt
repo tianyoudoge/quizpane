@@ -106,6 +106,14 @@ target_link_libraries(browser_protocol_test PRIVATE ${QUIZPANE_QT_PACKAGE}::Core
 add_test(NAME browser_protocol_test COMMAND browser_protocol_test)
 
 if(TARGET question_maker_engine)
+    add_executable(review_draft_bank_test review_draft_bank_test.cpp)
+    target_link_libraries(review_draft_bank_test PRIVATE
+        question_maker_engine quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
+    target_compile_definitions(review_draft_bank_test PRIVATE
+        DECLARATIVE_BANK_PATH="${PROJECT_SOURCE_DIR}/schemas/examples/declarative/content/bank.json"
+    )
+    add_test(NAME review_draft_bank_test COMMAND review_draft_bank_test)
+
     add_executable(document_extractor_test document_extractor_test.cpp)
     target_link_libraries(document_extractor_test PRIVATE
         question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Gui)
