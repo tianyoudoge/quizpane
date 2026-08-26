@@ -362,8 +362,12 @@ bool initialize(const QString& component) {
     // 生产包：即使用户已关闭日志，也要装好 handler——崩溃捕获不受
     // 「日志开关」之外的因素影响，且用户随时可以在设置里重新打开。
     enabledFlag = isDiagnosticsEnabled();
+#if !defined(Q_OS_WIN)
+    // POSIX 崩溃处理器只能操作原始路径缓冲区；Windows 的 minidump
+    // 路径直接在 writeMiniDump() 中通过 Qt 状态取得。
     std::snprintf(crashPathBuffer, sizeof(crashPathBuffer), "%s",
                   log.crashPath.toUtf8().constData());
+#endif
     if (enabledFlag.load(std::memory_order_relaxed)) {
         rotate(log.path);
         log.file.setFileName(log.path);
