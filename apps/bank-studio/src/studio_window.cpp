@@ -13,6 +13,7 @@
 #endif
 #include "quizpane/zip_archive.hpp"
 #include "source_row_widget.hpp"
+#include "review_draft_bank.hpp"
 #include "source_validation.hpp"
 #include "styled_dropdown.hpp"
 
@@ -1955,16 +1956,7 @@ bool StudioWindow::saveCurrentReviewQuestion() {
             }
         }
     }
-    QJsonObject bank{{QStringLiteral("schemaVersion"), 3},
-                     {QStringLiteral("title"), QStringLiteral("复核草稿")},
-                     {QStringLiteral("answerPolicy"), generatedHasAnswerKey_
-                         ? QStringLiteral("included") : QStringLiteral("none")},
-                     {QStringLiteral("catalogs"), QJsonArray{QJsonObject{
-                         {QStringLiteral("id"), QStringLiteral("generated")},
-                         {QStringLiteral("title"), QStringLiteral("复核草稿")}}}},
-                     {QStringLiteral("questions"), QJsonArray{question}}};
-    if (!materials.isEmpty())
-        bank.insert(QStringLiteral("materials"), materials);
+    const QJsonObject bank = makeReviewDraftBank(question, materials, generatedHasAnswerKey_);
     QString error;
     if (!quizpane::validateBank(bank, &error)) {
         QMessageBox::warning(this, QStringLiteral("草稿尚不完整"),
