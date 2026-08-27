@@ -145,6 +145,11 @@ if(TARGET question_maker_engine)
         question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core)
     add_test(NAME rule_based_generator_test COMMAND rule_based_generator_test)
 
+    add_executable(embedded_answer_test embedded_answer_test.cpp)
+    target_link_libraries(embedded_answer_test PRIVATE
+        question_maker_engine quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
+    add_test(NAME embedded_answer_test COMMAND embedded_answer_test)
+
     # Manual regression harness for real paired PDFs. Callers provide the PDFs and an
     # isolated output directory, so it is intentionally not registered with CTest.
     add_executable(pdf_regression_harness pdf_regression_harness.cpp)

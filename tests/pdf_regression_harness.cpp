@@ -21,21 +21,24 @@ bool writeFile(const QString& path, const QByteArray& bytes) {
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
-    if (app.arguments().size() != 4 && app.arguments().size() != 3) {
-        qCritical("usage: pdf_regression_harness <questions.pdf> [answers.pdf] <output-dir>");
+    QStringList arguments = app.arguments();
+    const bool embeddedAnswers = arguments.removeAll(QStringLiteral("--embedded-answers")) > 0;
+    if (arguments.size() != 4 && arguments.size() != 3) {
+        qCritical("usage: pdf_regression_harness [--embedded-answers] <questions.pdf> [answers.pdf] <output-dir>");
         return 2;
     }
 
     quizpane::studio::ExtractorRegistry extractors;
-    auto questions = extractors.extract(app.arguments().at(1));
-    const bool hasAnswers = app.arguments().size() == 4;
-    const auto answers = hasAnswers ? extractors.extract(app.arguments().at(2))
+    auto questions = extractors.extract(arguments.at(1));
+    const bool separateAnswers = arguments.size() == 4;
+    const bool hasAnswers = separateAnswers || embeddedAnswers;
+    const auto answers = separateAnswers ? extractors.extract(arguments.at(2))
                                     : quizpane::studio::ExtractedDocument{};
     if (!questions.error.isEmpty() || !answers.error.isEmpty()) {
         qCritical().noquote() << questions.error << answers.error;
         return 3;
     }
-    if (hasAnswers) questions.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
+    if (separateAnswers) questions.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
     const auto result = quizpane::studio::RuleBasedBankGenerator{}.generate({questions}, hasAnswers);
     // 真题不入库；本地显式启用时锁定这份 147 页、20 套题样本的回归结果。
     if (qEnvironmentVariableIsSet("QUIZPANE_VERIFY_BOOKLET")) {
@@ -78,7 +81,11 @@ int main(int argc, char** argv) {
             valid &= orphan.value("source").toObject().value("sectionId").toString() == "set-8" &&
                      orphan.value("options").toArray().size() == 8 && orphan.contains("stemImage");
         }
-        if (!valid) { qCritical("Booklet real-fixture regression failed"); return 8; }
+        if (!valid) {
+            writeFile(QDir(arguments.last()).filePath("failed-booklet-regression.json"),
+                QJsonDocument(QJsonObject{{"questions", result.questions}, {"needsReview", result.needsReviewQuestions}}).toJson());
+            qCritical("Booklet real-fixture regression failed"); return 8;
+        }
     }
     const QJsonObject bank{
         {"schemaVersion", 3},
@@ -88,12 +95,17 @@ int main(int argc, char** argv) {
             {"practice", QJsonObject{{"mode", "all"}}}}}},
         {"materials", result.materials},
         {"questions", result.questions}};
+    const QString output = arguments.last();
+    // 校验失败也保留诊断草稿，真实题本可能有印刷重号；不把失败伪装成有效题库。
+    if (!writeFile(QDir(output).filePath("review-report.json"), QJsonDocument(QJsonObject{
+            {"needsReview", result.needsReviewQuestions}, {"warnings", QJsonArray::fromStringList(result.warnings)}})
+            .toJson(QJsonDocument::Indented))) return 5;
     QString validationError;
     if (!quizpane::validateBank(bank, &validationError)) {
+        if (!writeFile(QDir(output).filePath("invalid-candidate.json"), QJsonDocument(bank).toJson())) return 5;
         qCritical().noquote() << validationError;
         return 4;
     }
-    const QString output = app.arguments().last();
     const QJsonObject manifest{{"manifestVersion", 2}, {"id", "local.pdf-regression"},
         {"name", "PDF regression"}, {"version", "1.0.0"}, {"kind", "declarative"},
         {"runtime", QJsonObject{{"format", "quizpane.bank+json"}, {"schemaVersion", 3},
@@ -105,9 +117,6 @@ int main(int argc, char** argv) {
     if (!writeFile(QDir(output).filePath("content/bank.json"),
                    QJsonDocument(bank).toJson(QJsonDocument::Indented)))
         return 5;
-    if (!writeFile(QDir(output).filePath("review-report.json"), QJsonDocument(QJsonObject{
-            {"needsReview", result.needsReviewQuestions}, {"warnings", QJsonArray::fromStringList(result.warnings)}})
-            .toJson(QJsonDocument::Indented))) return 5;
     for (auto it = result.assets.cbegin(); it != result.assets.cend(); ++it)
         if (!writeFile(QDir(output).filePath(it.key()), it.value()))
             return 6;

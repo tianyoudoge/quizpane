@@ -61,6 +61,8 @@ void normalizeTrailingQuestionNumberLayout(QList<SourceLine>* lines) {
         QStringLiteral(R"(^\s*(?:正确答案|你的答案)\s*[:：])"));
     static const QRegularExpression optionRow(
         QStringLiteral(R"((?:^|\s)A\s*[\.．、:：\)）].*(?:\s)B\s*[\.．、:：\)）])"));
+    static const QRegularExpression optionLine(
+        QStringLiteral(R"(^\s*(?:[A-Fa-f]\s*[.．、:：)）]|[①②③④⑤⑥⑦⑧⑨⑩]))"));
     for (int index = 0; index < lines->size(); ++index) {
         const auto marker = questionPattern().match(lines->at(index).text);
         if (!marker.hasMatch() || !marker.captured(2).trimmed().isEmpty())
@@ -70,7 +72,8 @@ void normalizeTrailingQuestionNumberLayout(QList<SourceLine>* lines) {
             const QString previous = lines->at(start - 1).text;
             const auto previousMarker = questionPattern().match(previous);
             if (previous.trimmed().isEmpty() || resultBoundary.match(previous).hasMatch() ||
-                optionRow.match(previous).hasMatch() || previousMarker.hasMatch())
+                optionRow.match(previous).hasMatch() || optionLine.match(previous).hasMatch() ||
+                previousMarker.hasMatch())
                 break;
             --start;
         }
@@ -1268,6 +1271,23 @@ QHash<int, QString> globalSolutions(const QList<SourceLine>& lines, int sectionS
     return solutions;
 }
 
+// 只匹配成对括号内的纯选项字母；中文解释、数字、公式等不在候选范围内。
+// 捕获组 2 包含括号内部的全部空白，便于清理时保留原括号而不残留答案。
+QList<QRegularExpressionMatch> bracketAnswerCandidates(const QString& text) {
+    static const QRegularExpression pattern(QStringLiteral(
+        R"(([（(\[{「『])(\s*[A-Fa-fＡ-Ｆａ-ｆ](?:[\s,，、;；/|+]*[A-Fa-fＡ-Ｆａ-ｆ]){0,5}\s*)([）)\]}」』]))"));
+    const QString opens = QStringLiteral("（([{「『");
+    const QString closes = QStringLiteral("）)]}」』");
+    QList<QRegularExpressionMatch> result;
+    auto matches = pattern.globalMatch(text);
+    while (matches.hasNext()) {
+        const auto match = matches.next();
+        if (opens.indexOf(match.captured(1)) == closes.indexOf(match.captured(3)))
+            result.append(match);
+    }
+    return result;
+}
+
 // 切分一行内的选项。返回选项列表（label 已归一化为 a/b/c…）与首个选项 marker
 // 之前的题干前缀。支持的 marker 形式：字母 `A.`、圈码 `①`、带点数字 `⒈`、
 // 括号数字 `(1)` 与尾括号数字 `1)`。
@@ -1288,11 +1308,17 @@ QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefi
         R"(|[（(\[{「『]\s*([1-9])\s*[)）\]}」』]\s*)"                  // (1) 形式（各种括号）
         R"(|(?<![A-Za-z0-9])([1-9])\s*[)）\]」』]\s*)"));               // 1) 形式
     QList<QRegularExpressionMatch> markers;
+    const auto brackets = bracketAnswerCandidates(line);
     auto iterator = marker.globalMatch(line);
     while (iterator.hasNext()) {
         const auto match = iterator.next();
-        if (!allowNumericLabels && match.captured(1).isEmpty() &&
-            match.captured(2).isEmpty() && match.captured(3).isEmpty())
+        bool inBracket = false;
+        for (const auto& bracket : brackets)
+            if (match.capturedStart() >= bracket.capturedStart() &&
+                match.capturedStart() < bracket.capturedEnd()) { inBracket = true; break; }
+        if (inBracket) continue; // “（ A ）”不是选项“A）”，即使后面紧跟真正的 A./B.。
+        // 题内已有明确 A./B. 选项时，①②等是题干中的编号陈述，不再切成选项。
+        if (!allowNumericLabels && match.captured(1).isEmpty())
             continue;
         markers.append(match);
     }
@@ -1329,29 +1355,39 @@ QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefi
     return result;
 }
 
-// 题干/选项行末尾带的答案抽取。返回归一化后的答案字母串，空表示未识别。
-// 支持两种尾随形式：
-//   1) “答案：A” / “【答案】AB” 这类带答案词的；
-//   2) “（A）” / “(A)” / “（AB）” 这类题干末尾直接括号写答案的（选择题写法）。
-// 优先级低于以答案词开头的整行答案。
-QString trailingAnswer(const QString& line) {
-    static const QRegularExpression wordAnswer(QStringLiteral(
+const QRegularExpression& trailingExplicitAnswerPattern() {
+    static const QRegularExpression pattern(QStringLiteral(
         R"((?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*([A-Fa-f]{1,6})\s*$)"));
-    auto match = wordAnswer.match(line);
-    if (match.hasMatch())
-        return normalizeAnswer(match.captured(1));
-    // 题干末尾括号答案：（A） 「AB」 [A] {A}，括号兼容各种书写习惯。要求括号前
-    // 有题干文字（start!=0），避免把整行选项“(A) ...”误判为答案。
-    static const QRegularExpression bracketAnswer(QStringLiteral(
-        R"([（(\[{「『]\s*([A-Fa-f]{1,6})\s*[)）\]}」』]\s*$)"));
-    match = bracketAnswer.match(line);
-    if (match.hasMatch()) {
-        const int start = match.capturedStart();
-        if (start == 0)
-            return {};
-        return normalizeAnswer(match.captured(1));
+    return pattern;
+}
+
+QString sortedAnswer(QString answer) {
+    std::sort(answer.begin(), answer.end());
+    return answer;
+}
+
+// 在完成题干合并和版式恢复后清理答案，同时映射 UTF-16 下划线坐标。
+void blankBracketAnswer(MaterialTextWithDecorations* stem, const QRegularExpressionMatch& match) {
+    const int start = match.capturedStart(2), end = match.capturedEnd(2);
+    const auto remap = [start, end](int position) {
+        if (position <= start) return position;
+        if (position >= end) return position - (end - start) + 1;
+        return start;
+    };
+    QJsonArray ranges;
+    for (const auto& value : stem->underlines) {
+        auto range = value.toObject();
+        const int oldStart = range.value("start").toInt();
+        const int newStart = remap(oldStart);
+        const int newEnd = remap(oldStart + range.value("length").toInt());
+        if (newEnd > newStart) {
+            range.insert("start", newStart);
+            range.insert("length", newEnd - newStart);
+            ranges.append(range);
+        }
     }
-    return {};
+    stem->body.replace(start, end - start, QStringLiteral("　"));
+    stem->underlines = ranges;
 }
 
 QString materialIdForQuestion(const QList<MaterialMarker>& materials, int questionLine,
@@ -1394,40 +1430,57 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
     };
     QList<QPair<QString, QString>> options;
     QString rawAnswer;
+    QStringList explicitAnswers;
+    const auto recordAnswer = [&](const QString& value) {
+        rawAnswer = value.trimmed();
+        explicitAnswers.append(rawAnswer);
+    };
     QStringList solutionLines;
     bool inSolution = false;
     bool afterOptions = false;
     static const QRegularExpression explicitLetterOption(QStringLiteral(
         R"((?:^|\s)[A-Fa-f]\s*[\.．、:：\)）])"));
-    bool hasExplicitLetterOptions =
-        explicitLetterOption.match(anchor.firstStemLine).hasMatch();
+    const auto hasLetterOption = [&](const QString& text) {
+        const auto brackets = bracketAnswerCandidates(text);
+        auto matches = explicitLetterOption.globalMatch(text);
+        while (matches.hasNext()) {
+            const auto match = matches.next();
+            bool inBracket = false;
+            for (const auto& bracket : brackets)
+                if (match.capturedStart() >= bracket.capturedStart() &&
+                    match.capturedStart() < bracket.capturedEnd()) { inBracket = true; break; }
+            if (!inBracket) return true;
+        }
+        return false;
+    };
+    bool hasExplicitLetterOptions = hasLetterOption(anchor.firstStemLine);
     for (int index = anchor.line + 1; index < blockEnd && !hasExplicitLetterOptions; ++index)
-        hasExplicitLetterOptions = explicitLetterOption.match(lines.at(index).text).hasMatch();
+        hasExplicitLetterOptions = hasLetterOption(lines.at(index).text);
     const bool allowNumericOptionLabels = !hasExplicitLetterOptions;
     QString firstPrefix;
     if (!anchor.firstStemLine.isEmpty()) {
+        QString firstLine = anchor.firstStemLine;
+        const auto tail = trailingExplicitAnswerPattern().match(firstLine);
+        if (tail.hasMatch()) {
+            recordAnswer(tail.captured(1));
+            firstLine = firstLine.left(tail.capturedStart()).trimmed();
+        }
         // 题号行可能同行带选项：1. 题干 A.甲 B.乙…。先抽选项，剩余文本作为题干。
         const auto firstOptions =
-            optionsOnLine(anchor.firstStemLine, &firstPrefix, allowNumericOptionLabels);
-        if (!firstOptions.isEmpty())
+            optionsOnLine(firstLine, &firstPrefix, allowNumericOptionLabels);
+        if (!firstOptions.isEmpty()) {
             options += firstOptions;
-        const QString tailAnswer = trailingAnswer(anchor.firstStemLine);
-        if (!tailAnswer.isEmpty())
-            rawAnswer = tailAnswer;
+            afterOptions = true;
+        }
         // 题干前缀：优先用切选项后剩的前缀，否则用整行（移除尾随答案）。
         if (!firstPrefix.isEmpty())
             appendStem(firstPrefix, anchor.line);
         else {
-            const auto answerMatch = inlineAnswerPattern().match(anchor.firstStemLine);
+            const auto answerMatch = inlineAnswerPattern().match(firstLine);
             if (answerMatch.hasMatch()) {
-                rawAnswer = answerMatch.captured(1).trimmed();
-            } else {
-                QString stem = anchor.firstStemLine;
-                static const QRegularExpression stripTrailing(QStringLiteral(
-                    R"((?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*[A-Fa-f]{1,6}\s*$)"));
-                stem.remove(stripTrailing);
-                appendStem(stem, anchor.line);
-            }
+                recordAnswer(answerMatch.captured(1));
+            } else if (firstOptions.isEmpty())
+                appendStem(firstLine, anchor.line);
         }
     }
 
@@ -1437,7 +1490,7 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
             continue;
         const auto answerMatch = inlineAnswerPattern().match(line);
         if (answerMatch.hasMatch()) {
-            rawAnswer = answerMatch.captured(1).trimmed();
+            recordAnswer(answerMatch.captured(1));
             inSolution = false;
             continue;
         }
@@ -1453,32 +1506,61 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
             solutionLines.append(line);
             continue;
         }
-        // 行尾可能带尾随答案（“答案：A”或题干末尾“（A）”括号答案）。先剥掉再
-        // 切选项，避免把答案文本粘到最后一个选项文本末尾。
-        static const QRegularExpression trailingAnswerCut(QStringLiteral(
-            R"(\s*(?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*[A-Fa-f]{1,6}\s*$"
-            R"(|[（(]\s*[A-Fa-f]{1,6}\s*[)）]\s*$))"));
+        // 只提前剥离显式“答案：A”。括号必须留到题干/选项分离之后再判断，
+        // 否则会误删选项里的注释，或在冲突时提前丢失原文。
         QString lineForOptions = line;
-        const auto cutMatch = trailingAnswerCut.match(lineForOptions);
+        const auto cutMatch = trailingExplicitAnswerPattern().match(lineForOptions);
         if (cutMatch.hasMatch()) {
             lineForOptions = lineForOptions.left(cutMatch.capturedStart()).trimmed();
-            const QString tailAnswer = trailingAnswer(line);
-            if (rawAnswer.isEmpty() && !tailAnswer.isEmpty())
-                rawAnswer = tailAnswer;
+            recordAnswer(cutMatch.captured(1));
         }
+        QString prefix;
         const auto parsedOptions =
-            optionsOnLine(lineForOptions, nullptr, allowNumericOptionLabels);
+            optionsOnLine(lineForOptions, &prefix, allowNumericOptionLabels);
         if (!parsedOptions.isEmpty()) {
+            if (!afterOptions && !prefix.isEmpty()) appendStem(prefix, index);
             options += parsedOptions;
             afterOptions = true;
         } else if (afterOptions && !options.isEmpty()) {
             // 选项已出现后的续行：仍可能含尾随答案，已剥过；归入最后选项文本。
             options.last().second += QStringLiteral("\n") + lineForOptions;
         } else {
-            appendStem(lineForOptions.isEmpty() ? line : lineForOptions, index);
+            appendStem(lineForOptions, index);
         }
     }
-    const auto decoratedStem = buildMaterialText(document, lines, stemSourceIndices, stemLines, false);
+    auto decoratedStem = buildMaterialText(document, lines, stemSourceIndices, stemLines, false);
+    QString bracketReviewReason;
+    const auto bracketCandidates = bracketAnswerCandidates(decoratedStem.body);
+    if (bracketCandidates.size() > 1) {
+        bracketReviewReason = QStringLiteral("题干中有多处疑似括号答案，已保留原文；请确认答案及应清理的位置");
+    } else if (bracketCandidates.size() == 1) {
+        const auto& bracket = bracketCandidates.first();
+        const QString candidate = normalizeAnswer(bracket.captured(2));
+        QSet<QString> available;
+        for (const auto& option : options) available.insert(option.first);
+        bool validOptions = available.size() >= 2 && available.size() == options.size();
+        for (const QChar letter : candidate)
+            validOptions &= available.contains(QString(letter.toLower()));
+        const bool multiple = allowMultipleAnswers || decoratedStem.body.contains(
+            QRegularExpression(QStringLiteral("多选|多项选|不定项")));
+        if (!validOptions) {
+            bracketReviewReason = QStringLiteral("括号中的疑似答案无法对应完整且唯一的选项，已保留原文；请核对");
+        } else if (candidate.size() > 1 && !multiple) {
+            bracketReviewReason = QStringLiteral("括号包含多个答案字母，但题目未标注多选，已保留原文；请核对");
+        } else {
+            bool conflict = false;
+            for (const QString& explicitAnswer : explicitAnswers)
+                conflict |= sortedAnswer(answerFromOptionText(explicitAnswer, options)) != sortedAnswer(candidate);
+            if (answerKey.contains(anchor.number))
+                conflict |= sortedAnswer(answerKey.value(anchor.number)) != sortedAnswer(candidate);
+            if (conflict) {
+                bracketReviewReason = QStringLiteral("括号答案与显式答案或答案表不一致，已保留原文；请确认正确答案");
+            } else {
+                rawAnswer = candidate;
+                blankBracketAnswer(&decoratedStem, bracket);
+            }
+        }
+    }
     stemLines = decoratedStem.body.split(QChar('\n'));
     QString answer = answerFromOptionText(rawAnswer, options);
     if (answer.isEmpty())
@@ -1567,6 +1649,7 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
     }
 
     QStringList reasons;
+    if (!bracketReviewReason.isEmpty()) reasons.append(bracketReviewReason);
     if (repeatedOptions)
         reasons.append(QStringLiteral("重复选项标签，可能缺失题号或跨题合并；请对照原卷拆分，不能直接采用"));
     if (stemLines.join(QChar('\n')).trimmed().isEmpty())
@@ -2116,6 +2199,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                 sectionHeadings.append({index, isMultiAnswerSectionHeading(text)});
         }
 
+        QHash<int, int> numberCounts;
+        for (const auto& anchor : anchors) ++numberCounts[anchor.number];
         int questionOrdinal = 0;
         for (int index = 0; index < anchors.size(); ++index) {
             const QuestionAnchor& anchor = anchors.at(index);
@@ -2147,6 +2232,19 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                                                  allowMultipleAnswers,
                                                  isInsideGraphicalReasoningPart(lines, anchor.line),
                                                  hasAnswerKey);
+            // 不同分套已在外层隔离。同一套的印刷重号不能自动采纳到打包时才报错，
+            // 也不能静默改号；所有同号候选均保留，交给用户核对、选择。
+            if (numberCounts.value(anchor.number) > 1) {
+                const QString reason = QStringLiteral("同一套题目中原始题号 %1 重复，已保留原题号；请核对并选择采用的题目")
+                    .arg(anchor.number);
+                reviewReason = reviewReason.isEmpty() ? reason : reviewReason + QStringLiteral("；") + reason;
+                auto review = question.value("review").toObject();
+                review.insert("needsReview", true);
+                review.insert("riskLevel", "hard");
+                review.insert("confidence", 0.25);
+                review.insert("reason", reviewReason);
+                question.insert("review", review);
+            }
             const QJsonObject stemImage = question.value("stemImage").toObject();
             const QString assetPath = stemImage.value("path").toString();
             if (!assetPath.isEmpty() && !result.assets.contains(assetPath)) {
