@@ -130,6 +130,8 @@ public:
         if (first->text(0) == second->text(0) || !second->text(0).contains(QStringLiteral("同号第 2 处"))) return 15;
         window.showReviewQuestion(second);
         if (window.reviewDetailTitle_->text() != second->text(0)) return 16;
+        if (window.reviewTree_->textElideMode() != Qt::ElideMiddle ||
+            first->toolTip(0) != first->text(0) || second->toolTip(0) != second->text(0)) return 18;
         if (!previewDir.isEmpty()) {
             app.processEvents();
             if (!window.grab().save(QDir(previewDir).filePath("repeated-numbers.png"))) return 17;

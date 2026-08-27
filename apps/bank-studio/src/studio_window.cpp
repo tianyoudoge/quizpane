@@ -955,6 +955,8 @@ QWidget* StudioWindow::buildReviewPage() {
     reviewTree_->header()->setObjectName(QStringLiteral("reviewTreeHeader"));
     reviewTree_->setColumnCount(2);
     reviewTree_->setHeaderLabels({QStringLiteral("材料 / 题目"), QStringLiteral("问题")});
+    // 窄列表仍保留末尾的分套/同号序次，避免两个重号题被省略成相同文字。
+    reviewTree_->setTextElideMode(Qt::ElideMiddle);
     reviewTree_->header()->setStretchLastSection(true);
     reviewTree_->header()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     reviewTree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
