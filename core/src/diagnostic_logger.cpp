@@ -186,11 +186,11 @@ void messageHandler(QtMsgType type, const QMessageLogContext& context,
     {
         QMutexLocker locker(&log.mutex);
 #if QUIZPANE_DIAGNOSTIC_PROD_MODE
-        // 每次消息都刷新一次开关（QSettings 有内存缓存，成本很低）：
-        // 用户在设置里重新打开日志后，下一条 warning 就会自动重开文件。
-        enabledFlag = QSettings().value(QStringLiteral("diagnosticsEnabled"),
-                                        true).toBool();
-        if (log.initialized && enabledFlag && isWarningOrWorse(type)) {
+        // 以进程内原子开关为准：QSettings 在 Windows 上可能保留旧缓存，
+        // 每条消息回读会让用户刚关闭的日志又被写入。初始化时读取持久化值，
+        // setDiagnosticsEnabled() 则同步更新该原子值并在启用时重开文件。
+        if (log.initialized && enabledFlag.load(std::memory_order_relaxed) &&
+            isWarningOrWorse(type)) {
             if (!log.file.isOpen()) {
                 log.file.setFileName(log.path);
                 (void)log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);

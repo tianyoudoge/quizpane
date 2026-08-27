@@ -60,7 +60,6 @@ int main(int argc, char** argv) {
 #endif
 #if defined(QUIZPANE_PROD_DIAGNOSTICS) && !defined(QUIZPANE_DIAGNOSTIC_LOGGING)
     // Release 语义：仅 warning+，用户路径不落盘，并且运行时关闭后立即停写。
-    std::fprintf(stderr, "diagnostic_logger_test contents: %s\n", contents.constData());
     if (contents.contains("info-only") ||
         !contents.contains("warning-path .../private/visible") ||
         !contents.contains("warning-windows ...\\private\\visible") ||
