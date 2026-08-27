@@ -6,11 +6,13 @@
 #include "model_settings_dialog.hpp"
 #include "quizpane/studio/review_result.hpp"
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QList>
 #include <QSet>
 #include <QStringList>
 
 class QLabel;
+class QButtonGroup;
 class QCheckBox;
 class QLineEdit;
 class QPlainTextEdit;
@@ -50,6 +52,7 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    friend class StudioWindowReviewTest;
     QWidget* buildSourcePage();
     QWidget* buildProgressPage();
     QWidget* buildReviewPage();
@@ -136,9 +139,11 @@ private:
     QImage pendingCropPage_;
     QRectF pendingCropContext_;
     QPushButton* allReviewButton_ = nullptr;
+    QPushButton* allQuestionsButton_ = nullptr;
+    QButtonGroup* reviewFilterGroup_ = nullptr;
     QPushButton* missingAnswerButton_ = nullptr;
     QPushButton* duplicateButton_ = nullptr;
-    // "全部异常/缺少答案/疑似重复" 三个筛选按钮当前选中的过滤条件；空表示不过滤。
+    // 顶部分类与风险类别共用一个互斥组；空条件明确对应“全部题目”。
     QString activeReviewFilter_;
     // 复核页里按 riskLevel=soft 信号分组展示的批量确认区域，随每次 populateReview
     // 重建；数量、按钮和信号 key 一一对应，用于点击后批量勾选同类题目。

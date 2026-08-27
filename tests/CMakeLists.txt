@@ -106,6 +106,20 @@ target_link_libraries(browser_protocol_test PRIVATE ${QUIZPANE_QT_PACKAGE}::Core
 add_test(NAME browser_protocol_test COMMAND browser_protocol_test)
 
 if(TARGET question_maker_engine)
+    add_executable(studio_review_ui_test
+        studio_review_ui_test.cpp
+        ../apps/bank-studio/src/studio_window.cpp
+        ../apps/bank-studio/src/studio_window.hpp
+        ../apps/bank-studio/src/model_settings_dialog.cpp
+        ../apps/bank-studio/src/source_row_widget.cpp
+        ../apps/bank-studio/src/styled_dropdown.cpp
+        ../apps/bank-studio/resources/resources.qrc
+    )
+    set_target_properties(studio_review_ui_test PROPERTIES AUTORCC TRUE)
+    target_link_libraries(studio_review_ui_test PRIVATE
+        question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Widgets)
+    add_test(NAME studio_review_ui_test COMMAND studio_review_ui_test)
+
     add_executable(review_draft_bank_test review_draft_bank_test.cpp)
     target_link_libraries(review_draft_bank_test PRIVATE
         question_maker_engine quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
