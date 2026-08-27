@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(QuizPane VERSION 0.5.1 LANGUAGES C CXX)
+project(QuizPane VERSION 0.5.2 LANGUAGES C CXX)
 
 if(WIN32)
     # 禁止 Windows SDK 注入 min/max 宏，避免破坏 std::min/std::max 和
@@ -31,6 +31,9 @@ option(QUIZPANE_ENABLE_QT_PDF
        "Enable PDF import and review in Question Maker" ON)
 option(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING
        "Write rotating diagnostic logs for local debug packages" OFF)
+option(QUIZPANE_ENABLE_PROD_DIAGNOSTICS
+       "Ship warning+ logs and crash capture in release builds (runtime-toggleable)"
+       ON)
 option(QUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS
        "Include bounded source and model payloads in diagnostic logs" OFF)
 option(QUIZPANE_PORTABLE_CPU_BASELINE

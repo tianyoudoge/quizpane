@@ -26,6 +26,10 @@ void showAbout(QWidget* parent);
 // 统一展示赞赏码。当前二维码是明确标示的非支付占位资源，正式发布时仅替换资源文件。
 void showDonation(QWidget* parent);
 
+// 问题反馈：填写描述并可选附上最近日志/崩溃信息，确认后 POST 到服务端。
+// 端点留空时使用 core 层的默认地址；测试可注入本地 mock 地址。
+bool showFeedback(QWidget* parent, const QString& endpoint = {});
+
 DraftDecision chooseDraft(QWidget* parent, const QList<DraftSnapshot>& drafts);
 
 bool confirm(QWidget* parent, const QString& title, const QString& message,

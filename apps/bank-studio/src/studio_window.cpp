@@ -1,6 +1,7 @@
 #include "studio_window.hpp"
 #include "quizpane/diagnostic_logger.hpp"
 
+#include "quizpane/feedback_report.hpp"
 #include "quizpane/bank_validator.hpp"
 #include "quizpane/declarative_provider.hpp"
 #include "quizpane/provider_installer.hpp"
@@ -48,6 +49,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
+#include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QImage>
@@ -576,6 +578,15 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
         diagnostic::openLogFile();
     });
 #endif
+    settingsMenu->addAction(QStringLiteral("问题反馈…"), this,
+                            &StudioWindow::showFeedbackDialog);
+    {
+        auto* diagnosticsAction = settingsMenu->addAction(QStringLiteral("记录诊断日志"));
+        diagnosticsAction->setCheckable(true);
+        diagnosticsAction->setChecked(diagnostic::isDiagnosticsEnabled());
+        connect(diagnosticsAction, &QAction::toggled, this,
+                [](bool enabled) { diagnostic::setDiagnosticsEnabled(enabled); });
+    }
     auto* helpMenu = menuBar()->addMenu(QStringLiteral("帮助"));
     helpMenu->addAction(QStringLiteral("赞赏支持…"), this, &StudioWindow::showDonationDialog);
     applyStyle();
@@ -646,6 +657,81 @@ void StudioWindow::showDonationDialog() {
     layout->addLayout(paymentRow);
     layout->addWidget(close);
     dialog.setFixedWidth(380);
+    dialog.exec();
+}
+
+void StudioWindow::showFeedbackDialog() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("问题反馈"));
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(24, 20, 24, 18);
+    layout->setSpacing(10);
+    auto* hint = new QLabel(QStringLiteral(
+        "请尽量描述复现步骤和实际/预期表现。发送会附带运行环境信息；"
+        "勾选的日志与崩溃信息已做脱敏（不含账号、题目与完整路径），"
+        "将上传到 xutianyou.cc 供排查。没有网络时，也可导出诊断包后转交。"));
+    hint->setWordWrap(true);
+    hint->setObjectName(QStringLiteral("muted"));
+    auto* editor = new QPlainTextEdit;
+    editor->setPlaceholderText(QStringLiteral("出了什么问题？怎么触发的？"));
+    editor->setFixedHeight(140);
+    auto* logsCheck = new QCheckBox(QStringLiteral("附上最近的运行日志（已脱敏）"));
+    logsCheck->setChecked(true);
+    auto* crashCheck = new QCheckBox(QStringLiteral("附上崩溃信息（如有，最近 24 小时内）"));
+    crashCheck->setChecked(true);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    auto* send = buttons->addButton(QStringLiteral("发送"), QDialogButtonBox::AcceptRole);
+    auto* exportBundle = buttons->addButton(QStringLiteral("导出诊断包…"),
+                                             QDialogButtonBox::ActionRole);
+    send->setEnabled(false);
+    exportBundle->setEnabled(false);
+    connect(editor, &QPlainTextEdit::textChanged, send,
+            [editor, send, exportBundle] {
+                const bool hasDescription = !editor->toPlainText().trimmed().isEmpty();
+                send->setEnabled(hasDescription);
+                exportBundle->setEnabled(hasDescription);
+            });
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(exportBundle, &QPushButton::clicked,
+            [&dialog, logsCheck, crashCheck, editor] {
+                const QString suggested = QDir(QStandardPaths::writableLocation(
+                    QStandardPaths::DocumentsLocation)).filePath(
+                        QStringLiteral("quizpane-feedback.json"));
+                const QString path = QFileDialog::getSaveFileName(
+                    &dialog, QStringLiteral("导出诊断包"), suggested,
+                    QStringLiteral("QuizPane 诊断包 (*.json)"));
+                if (path.isEmpty())
+                    return;
+                feedback::ReportOptions options;
+                options.description = editor->toPlainText();
+                options.includeLogs = logsCheck->isChecked();
+                options.includeCrash = crashCheck->isChecked();
+                const auto result = feedback::exportReport(options, path);
+                if (result.success)
+                    QMessageBox::information(&dialog, QStringLiteral("导出诊断包"), result.message);
+                else
+                    QMessageBox::warning(&dialog, QStringLiteral("导出诊断包"), result.message);
+            });
+    connect(send, &QPushButton::clicked,
+            [&dialog, logsCheck, crashCheck, editor] {
+                feedback::ReportOptions options;
+                options.description = editor->toPlainText();
+                options.includeLogs = logsCheck->isChecked();
+                options.includeCrash = crashCheck->isChecked();
+                const auto result = feedback::sendReport(options);
+                if (result.success) {
+                    dialog.accept();
+                    QMessageBox::information(&dialog, QStringLiteral("问题反馈"), result.message);
+                } else {
+                    QMessageBox::warning(&dialog, QStringLiteral("问题反馈"), result.message);
+                }
+            });
+    layout->addWidget(hint);
+    layout->addWidget(editor);
+    layout->addWidget(logsCheck);
+    layout->addWidget(crashCheck);
+    layout->addWidget(buttons);
+    dialog.setMinimumWidth(440);
     dialog.exec();
 }
 
@@ -955,7 +1041,18 @@ QWidget* StudioWindow::buildReviewPage() {
     reviewSplit->setSizes({360, 540});
     layout->addWidget(reviewSplit, 1);
     connect(reviewTree_, &QTreeWidget::currentItemChanged, this,
-            [this](QTreeWidgetItem* current, QTreeWidgetItem*) { showReviewQuestion(current); });
+            [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
+                // 切题前把当前打开且改过的题提交回去；草稿无法保存时允许用户
+                // 取消切换，避免编辑器里的修改被静默丢弃。
+                if (currentReviewItem_ && currentReviewItem_ != current &&
+                    !commitOpenReviewQuestion(QStringLiteral("切换题目"))) {
+                    reviewTree_->blockSignals(true);
+                    reviewTree_->setCurrentItem(currentReviewItem_);
+                    reviewTree_->blockSignals(false);
+                    return;
+                }
+                showReviewQuestion(current);
+            });
     connect(saveReviewButton_, &QPushButton::clicked, this,
             &StudioWindow::saveCurrentReviewQuestion);
     connect(confirmReviewButton_, &QPushButton::clicked, this,
@@ -1194,6 +1291,10 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     allReviewButton_->setChecked(false);
     missingAnswerButton_->setChecked(false);
     duplicateButton_->setChecked(false);
+    // 重建树前先把指向旧节点的指针置空，clear() 会销毁旧节点，
+    // 切题钩子还会解引用 currentReviewItem_，留着就是悬垂指针。
+    currentReviewItem_ = nullptr;
+    currentMaterialItem_ = nullptr;
     reviewTree_->clear();
     QHash<QString, int> softCategoryCounts;
     QHash<QString, QTreeWidgetItem*> groups;
@@ -1975,6 +2076,57 @@ bool StudioWindow::saveCurrentReviewQuestion() {
     return true;
 }
 
+bool StudioWindow::reviewQuestionIsDirty() const {
+    if (!currentReviewItem_)
+        return false;
+    const QJsonObject question = currentReviewItem_->data(0, Qt::UserRole).toJsonObject();
+    if (question.isEmpty())
+        return false;
+    // 与 saveCurrentReviewQuestion 的写入口径对齐：只比较保存后会发生变化的字段，
+    // 没动过编辑器的题不因格式差异（如题干尾部空白）被误判为脏。
+    if (reviewStemEditor_->toPlainText().trimmed() != question.value("stem").toString())
+        return true;
+    const QJsonArray options = reviewOptions();
+    const QJsonArray savedOptions = question.value("options").toArray();
+    if (options.size() != savedOptions.size())
+        return true;
+    for (int index = 0; index < options.size(); ++index) {
+        const QJsonObject saved = savedOptions.at(index).toObject();
+        const QJsonObject current = options.at(index).toObject();
+        if (saved.value("id") != current.value("id") ||
+            saved.value("text") != current.value("text"))
+            return true;
+    }
+    if (generatedHasAnswerKey_) {
+        QJsonArray editorAnswerIds;
+        const QStringList rawAnswerIds = reviewAnswerEditor_->text().split(
+            QRegularExpression(QStringLiteral("[,，\\s]+")), Qt::SkipEmptyParts);
+        for (const QString& id : rawAnswerIds)
+            editorAnswerIds.append(id.trimmed().toLower());
+        const QJsonArray savedAnswerIds =
+            question.value("answer").toObject().value("optionIds").toArray();
+        if (editorAnswerIds != savedAnswerIds)
+            return true;
+        if (reviewSolutionEditor_->toPlainText().trimmed() !=
+            question.value("solution").toString())
+            return true;
+    }
+    return false;
+}
+
+bool StudioWindow::commitOpenReviewQuestion(const QString& consequence) {
+    if (!currentReviewItem_ || !reviewQuestionIsDirty())
+        return true;
+    if (saveCurrentReviewQuestion())
+        return true;
+    const QMessageBox::StandardButton choice = QMessageBox::question(
+        this, QStringLiteral("有未保存的修改"),
+        QStringLiteral("当前题目的草稿无法保存，%1将丢弃未保存的修改。\n仍要继续吗？")
+            .arg(consequence),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    return choice == QMessageBox::Yes;
+}
+
 void StudioWindow::confirmCurrentReviewQuestion() {
     if (!saveCurrentReviewQuestion())
         return;
@@ -2188,6 +2340,9 @@ void StudioWindow::applyReviewFilter() {
 }
 
 void StudioWindow::packageProvider() {
+    // 打包前先把当前打开且改过的题提交回树节点数据，避免编辑器里的修改被静默丢弃。
+    if (!commitOpenReviewQuestion(QStringLiteral("继续打包")))
+        return;
     QList<QJsonObject> selectedObjects;
     QHash<QString, int> sourceOrder;
     int sourceOrdinal = 0;

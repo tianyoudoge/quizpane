@@ -62,6 +62,9 @@ function loadConfig() {
       .filter(Boolean),
     logLevel: env.LOG_LEVEL || "info",
     accessWindowMs: 7 * 24 * 60 * 60 * 1000,
+    feedbackDir: path.resolve(env.FEEDBACK_DIR || "./data/feedback"),
+    feedbackMaxBytes: Number.parseInt(env.FEEDBACK_MAX_BYTES || String(8 * 1024 * 1024), 10),
+    feedbackRetentionDays: Math.max(1, Number.parseInt(env.FEEDBACK_RETENTION_DAYS || "30", 10)),
   };
 }
 
@@ -76,6 +79,7 @@ function log(level, message, extra) {
 async function ensureDirs() {
   await fsp.mkdir(CONFIG.cacheDir, { recursive: true });
   await fsp.mkdir(CONFIG.stateDir, { recursive: true });
+  await fsp.mkdir(CONFIG.feedbackDir, { recursive: true });
 }
 
 async function cleanupStaleTempFiles() {
@@ -507,6 +511,111 @@ function isLoopback(req) {
   return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
 }
 
+// --- 用户反馈上报 ---
+// 客户端「问题反馈」按钮 POST 的 JSON（描述 + 环境快照 + 脱敏日志 + 可选
+// 崩溃产物 base64）。只落盘到 feedbackDir，不进 git、不进缓存目录；启动
+// 时按保留期清理旧文件。
+
+const FEEDBACK_MAX_FIELDS = {
+  type: 64,
+  client: 64,
+  description: 8000,
+  logs: 2 * 1024 * 1024,
+  // 客户端最多读取 5 MiB 的 minidump，Base64 编码后最大为约 6.67 MiB。
+  // 这里必须按编码后的字符串大小校验，否则合法的最大附件会被误拒绝。
+  crashFile: 7 * 1024 * 1024,
+  submittedAt: 64,
+};
+
+function isBoundedString(value, max) {
+  return typeof value === "string" && value.length <= max;
+}
+
+function validateFeedbackBody(raw) {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return "invalid body";
+  for (const key of ["type", "client", "description", "submittedAt"]) {
+    if (!isBoundedString(raw[key], FEEDBACK_MAX_FIELDS[key])) return `invalid ${key}`;
+  }
+  if (!raw.description.trim()) return "empty description";
+  if (raw.logs !== undefined && !isBoundedString(raw.logs, FEEDBACK_MAX_FIELDS.logs))
+    return "invalid logs";
+  if (raw.crashFile !== undefined && !isBoundedString(raw.crashFile, FEEDBACK_MAX_FIELDS.crashFile))
+    return "invalid crashFile";
+  if (raw.environment !== undefined && typeof raw.environment !== "object")
+    return "invalid environment";
+  return null;
+}
+
+async function readBody(req, maxBytes) {
+  const chunks = [];
+  let total = 0;
+  let tooLarge = false;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > maxBytes) {
+      // 不能在这里 destroy 请求：socket 一断，413 响应就送不出去
+      // （curl 只会看到一个未完成的 100-continue）。改为继续把剩余
+      // 字节读完（客户端上限与 nginx 的 8m 一致，代价可控）再回 413。
+      tooLarge = true;
+      continue;
+    }
+    if (!tooLarge) chunks.push(chunk);
+  }
+  return { tooLarge, buffer: Buffer.concat(chunks) };
+}
+
+async function cleanupFeedbackFiles() {
+  const cutoff = Date.now() - CONFIG.feedbackRetentionDays * 24 * 60 * 60 * 1000;
+  const entries = await fsp.readdir(CONFIG.feedbackDir).catch(() => []);
+  for (const name of entries) {
+    const file = path.join(CONFIG.feedbackDir, name);
+    const stat = await fsp.stat(file).catch(() => null);
+    if (stat && stat.isFile() && stat.mtimeMs < cutoff) {
+      await fsp.unlink(file).catch(() => {});
+    }
+  }
+}
+
+async function handleFeedback(req, res) {
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "method not allowed" });
+    return;
+  }
+  const { tooLarge, buffer } = await readBody(req, CONFIG.feedbackMaxBytes);
+  if (tooLarge) {
+    sendJson(res, 413, { error: "payload too large" });
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(buffer.toString("utf8"));
+  } catch {
+    sendJson(res, 400, { error: "invalid json" });
+    return;
+  }
+  const invalid = validateFeedbackBody(parsed);
+  if (invalid) {
+    sendJson(res, 400, { error: invalid });
+    return;
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const file = path.join(CONFIG.feedbackDir, `${stamp}-${crypto.randomUUID()}.json`);
+  try {
+    await fsp.writeFile(file, buffer, { mode: 0o600 });
+  } catch (error) {
+    log("error", "Failed to store feedback", { error: error.message });
+    sendJson(res, 500, { error: "store failed" });
+    return;
+  }
+  log("info", "Feedback stored", {
+    client: parsed.client,
+    version: parsed.environment?.version,
+    hasLogs: Boolean(parsed.logs),
+    hasCrash: Boolean(parsed.crashFile),
+  });
+  sendJson(res, 200, { ok: true });
+}
+
 async function handleInternalRefresh(req, res) {
   if (!isLoopback(req)) {
     sendJson(res, 403, { error: "forbidden" });
@@ -552,6 +661,10 @@ async function handleRequest(req, res) {
     await handleInternalRefresh(req, res);
     return;
   }
+  if (url.pathname === "/api/feedback") {
+    await handleFeedback(req, res);
+    return;
+  }
   const downloadMatch = /^\/download\/([^/]+)\/([^/]+)$/.exec(url.pathname);
   if (downloadMatch) {
     const tag = decodeURIComponent(downloadMatch[1]);
@@ -568,6 +681,7 @@ async function handleRequest(req, res) {
 async function main() {
   await ensureDirs();
   await cleanupStaleTempFiles();
+  await cleanupFeedbackFiles();
   await loadPersistedState();
 
   // Start listening before the first poll completes: systemd/install-artifacts.sh

@@ -69,6 +69,8 @@ private:
     void confirmRiskCategory(const QString& signal);
     void showReviewQuestion(QTreeWidgetItem* item);
     bool saveCurrentReviewQuestion();
+    bool reviewQuestionIsDirty() const;
+    bool commitOpenReviewQuestion(const QString& consequence);
     void confirmCurrentReviewQuestion();
     void excludeCurrentReviewQuestion();
     void addManualMaterialUnderline();
@@ -85,6 +87,7 @@ private:
     void handleAiReviewResult(const QString& rawText, const QString& error);
     void editModelSettings();
     void showDonationDialog();
+    void showFeedbackDialog();
     bool ensureModelApiKeyLoaded();
     void updateAiReviewAffordance();
     void updateReviewStemHeight();

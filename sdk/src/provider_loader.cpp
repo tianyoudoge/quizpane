@@ -116,6 +116,7 @@ void ProviderLoader::unload() {
     destroyFn_ = nullptr;
     descriptor_ = {};
     providerId_.clear();
+    pendingRequests_.clear();
     declarative_.unload();
     // PreventUnloadHint 告诉 Qt 在卸载原生题库后不要真正把动态库从进程地址空间
     // 移除：基于 Qt 的题库可能注册了 metatype 或进程级回调，卸载镜像会让那些
@@ -128,9 +129,16 @@ bool ProviderLoader::isLoaded() const { return handle_ != nullptr || declarative
 QJsonObject ProviderLoader::descriptor() const { return descriptor_; }
 
 bool ProviderLoader::request(const QJsonObject& request, QString* error) {
-    diagnostic::event(QStringLiteral("provider"), QStringLiteral("request"),
-        {{QStringLiteral("id"), request.value(QStringLiteral("id")).toString()},
-         {QStringLiteral("method"), request.value(QStringLiteral("method")).toString()}});
+    const QString requestId = request.value(QStringLiteral("id")).toString();
+    const QString method = request.value(QStringLiteral("method")).toString();
+    PendingRequest pending;
+    pending.method = method;
+    pending.startedAt.start();
+    if (!requestId.isEmpty())
+        pendingRequests_.insert(requestId, pending);
+    diagnostic::event(QStringLiteral("provider"), QStringLiteral("request-start"),
+        {{QStringLiteral("id"), requestId},
+         {QStringLiteral("method"), method}});
     if (declarative_.isLoaded()) {
         const QJsonObject response = declarative_.request(request);
         const quint64 generation = generation_;
@@ -143,7 +151,11 @@ bool ProviderLoader::request(const QJsonObject& request, QString* error) {
         return true;
     }
     if (!handle_ || !requestFn_) {
-        if (error) *error = QStringLiteral("题库尚未加载");
+        if (error) *error = QStringLiteral("题库尚未加载，请重新打开题库后重试。");
+        pendingRequests_.remove(requestId);
+        diagnostic::event(QStringLiteral("provider"), QStringLiteral("request-rejected"),
+            {{QStringLiteral("id"), requestId}, {QStringLiteral("method"), method},
+             {QStringLiteral("reason"), QStringLiteral("not-loaded")}});
         return false;
     }
     const QByteArray payload = QJsonDocument(request).toJson(QJsonDocument::Compact);
@@ -151,11 +163,14 @@ bool ProviderLoader::request(const QJsonObject& request, QString* error) {
                                   static_cast<size_t>(payload.size()),
                                   &ProviderLoader::responseThunk, this);
     if (result != 0 && error) {
-        *error = QStringLiteral("题库请求失败，错误码 %1").arg(result);
+        *error = QStringLiteral("题库暂时无法处理此操作，请稍后重试（错误码 %1）").arg(result);
     }
-    if (result != 0)
+    if (result != 0) {
+        pendingRequests_.remove(requestId);
         diagnostic::event(QStringLiteral("provider"), QStringLiteral("request-rejected"),
-            {{QStringLiteral("code"), result}});
+            {{QStringLiteral("id"), requestId}, {QStringLiteral("method"), method},
+             {QStringLiteral("code"), result}});
+    }
     return result == 0;
 }
 
@@ -195,7 +210,14 @@ void ProviderLoader::logThunk(void* hostContext, qp_log_level level,
     auto* self = static_cast<ProviderLoader*>(hostContext);
     const QString copy = QString::fromUtf8(message, static_cast<qsizetype>(size));
     QMetaObject::invokeMethod(
-        self, [self, level, copy] { emit self->providerLog(level, copy); },
+        self, [self, level, copy] {
+            if (level >= QP_LOG_WARNING) {
+                diagnostic::event(QStringLiteral("provider"), QStringLiteral("plugin-log"),
+                    {{QStringLiteral("level"), level},
+                     {QStringLiteral("messageCharacters"), copy.size()}});
+            }
+            emit self->providerLog(level, copy);
+        },
         Qt::QueuedConnection);
 }
 
@@ -244,9 +266,22 @@ void ProviderLoader::acceptResponse(const QByteArray& json, quint64 generation) 
         return;
     }
     const QJsonObject response = document.object();
+    const QString requestId = response.value(QStringLiteral("id")).toString();
+    const auto pending = pendingRequests_.take(requestId);
+    const QJsonObject responseError = response.value(QStringLiteral("error")).toObject();
+    const QJsonValue errorCodeValue = responseError.value(QStringLiteral("code"));
+    // Provider 返回的字符串完全不可信，错误码也只接受 JSON-RPC 常用的数值形态；
+    // 文本码或错误消息只记录存在性/长度，避免插件借字段回显题干或答案。
+    const QVariant numericErrorCode = errorCodeValue.isDouble()
+        ? QVariant(errorCodeValue.toInt()) : QVariant();
     diagnostic::event(QStringLiteral("provider"), QStringLiteral("response"),
-        {{QStringLiteral("id"), response.value(QStringLiteral("id")).toString()},
+        {{QStringLiteral("id"), requestId},
+         {QStringLiteral("method"), pending.method},
+         {QStringLiteral("elapsedMs"), pending.startedAt.isValid() ? pending.startedAt.elapsed() : -1},
          {QStringLiteral("error"), response.contains(QStringLiteral("error"))},
+         {QStringLiteral("errorCode"), numericErrorCode},
+         {QStringLiteral("errorMessageCharacters"),
+          responseError.value(QStringLiteral("message")).toString().size()},
          {QStringLiteral("bytes"), json.size()}});
     emit responseReceived(response);
 }
