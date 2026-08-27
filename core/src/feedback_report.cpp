@@ -125,9 +125,8 @@ QString readTailLines(const QString& path, int maxLines) {
     return selected.join(QChar('\n'));
 }
 
-SendResult buildReportPayload(const QString& description, bool includeLogs,
-                              bool includeCrash, QByteArray* body) {
-    const QString descriptionText = description.trimmed();
+SendResult buildReportPayload(const ReportOptions& options, QByteArray* body) {
+    const QString descriptionText = options.description.trimmed();
     if (descriptionText.isEmpty())
         return {false, QStringLiteral("请先填写问题描述。")};
     if (descriptionText.size() > 8000)
@@ -140,13 +139,14 @@ SendResult buildReportPayload(const QString& description, bool includeLogs,
     payload.insert(QStringLiteral("environment"), buildEnvironmentInfo());
     payload.insert(QStringLiteral("submittedAt"),
                    QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
-    payload.insert(QStringLiteral("logs"), includeLogs ? buildLogTail() : QString());
-    if (includeCrash) {
+    payload.insert(QStringLiteral("logs"), options.includeLogs ? buildLogTail() : QString());
+    if (options.includeCrash) {
         const QString crashPath = diagnostic::crashArtifactPath();
         const QFileInfo info(crashPath);
         // 只附最近 24h 内的崩溃产物；Windows 的 minidump 限制 5MiB 以内。
+        const qint64 ageSeconds = info.lastModified().secsTo(QDateTime::currentDateTime());
         if (info.isFile() && info.size() > 0 &&
-            QDateTime::currentDateTime().secsTo(info.lastModified()) < 24 * 3600) {
+            ageSeconds >= 0 && ageSeconds < 24 * 3600) {
             const qint64 limit =
 #if defined(Q_OS_WIN)
                 5 * 1024 * 1024;
@@ -189,12 +189,11 @@ QString buildLogTail(int maxLines) {
     return readTailLines(diagnostic::logFilePath(), maxLines);
 }
 
-SendResult exportReport(const QString& description, bool includeLogs,
-                        bool includeCrash, const QString& filePath) {
+SendResult exportReport(const ReportOptions& options, const QString& filePath) {
     if (filePath.isEmpty())
         return {false, QStringLiteral("请先选择诊断包保存位置。")};
     QByteArray body;
-    const SendResult prepared = buildReportPayload(description, includeLogs, includeCrash, &body);
+    const SendResult prepared = buildReportPayload(options, &body);
     if (!prepared.success)
         return prepared;
     QSaveFile file(filePath);
@@ -205,10 +204,9 @@ SendResult exportReport(const QString& description, bool includeLogs,
     return {true, QStringLiteral("诊断包已导出：%1").arg(QFileInfo(filePath).fileName())};
 }
 
-SendResult sendReport(const QString& description, bool includeLogs,
-                      bool includeCrash, const QString& endpoint, int timeoutMs) {
+SendResult sendReport(const ReportOptions& options, const QString& endpoint, int timeoutMs) {
     QByteArray body;
-    const SendResult prepared = buildReportPayload(description, includeLogs, includeCrash, &body);
+    const SendResult prepared = buildReportPayload(options, &body);
     if (!prepared.success)
         return prepared;
 

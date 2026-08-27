@@ -702,8 +702,11 @@ void StudioWindow::showFeedbackDialog() {
                     QStringLiteral("QuizPane 诊断包 (*.json)"));
                 if (path.isEmpty())
                     return;
-                const auto result = feedback::exportReport(
-                    editor->toPlainText(), logsCheck->isChecked(), crashCheck->isChecked(), path);
+                feedback::ReportOptions options;
+                options.description = editor->toPlainText();
+                options.includeLogs = logsCheck->isChecked();
+                options.includeCrash = crashCheck->isChecked();
+                const auto result = feedback::exportReport(options, path);
                 if (result.success)
                     QMessageBox::information(&dialog, QStringLiteral("导出诊断包"), result.message);
                 else
@@ -711,8 +714,11 @@ void StudioWindow::showFeedbackDialog() {
             });
     connect(send, &QPushButton::clicked,
             [&dialog, logsCheck, crashCheck, editor] {
-                const auto result = feedback::sendReport(
-                    editor->toPlainText(), logsCheck->isChecked(), crashCheck->isChecked());
+                feedback::ReportOptions options;
+                options.description = editor->toPlainText();
+                options.includeLogs = logsCheck->isChecked();
+                options.includeCrash = crashCheck->isChecked();
+                const auto result = feedback::sendReport(options);
                 if (result.success) {
                     dialog.accept();
                     QMessageBox::information(&dialog, QStringLiteral("问题反馈"), result.message);

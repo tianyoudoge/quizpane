@@ -2,7 +2,10 @@
 #include "quizpane/diagnostic_logger.hpp"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QHostAddress>
@@ -37,16 +40,40 @@ int main(int argc, char** argv) {
     if (!exportDirectory.isValid())
         return fail(3, "cannot create temporary export directory");
     const QString exportPath = exportDirectory.filePath(QStringLiteral("feedback.json"));
-    const auto exported = quizpane::feedback::exportReport(
-        QStringLiteral("offline export"), false, false, exportPath);
+    quizpane::feedback::ReportOptions exportOptions;
+    exportOptions.description = QStringLiteral("offline export");
+    exportOptions.includeLogs = false;
+    exportOptions.includeCrash = false;
+    const auto exported = quizpane::feedback::exportReport(exportOptions, exportPath);
     QFile exportedFile(exportPath);
     if (!exported.success || !exportedFile.open(QIODevice::ReadOnly) ||
         !exportedFile.readAll().contains("\"description\":\"offline export\""))
         return fail(4, "offline export contents assertion failed");
+    exportedFile.close();
+
+    QFile oldCrash(quizpane::diagnostic::crashArtifactPath());
+    if (!oldCrash.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        oldCrash.write("old crash") < 0)
+        return fail(5, "cannot prepare old crash artifact");
+    oldCrash.close();
+    if (!oldCrash.open(QIODevice::ReadWrite) ||
+        !oldCrash.setFileTime(QDateTime::currentDateTime().addDays(-2),
+                              QFileDevice::FileModificationTime))
+        return fail(5, "cannot age crash artifact");
+    oldCrash.close();
+    exportOptions.includeCrash = true;
+    const auto oldCrashExport = quizpane::feedback::exportReport(exportOptions, exportPath);
+    if (!oldCrashExport.success || !exportedFile.open(QIODevice::ReadOnly))
+        return fail(6, "cannot export report with old crash artifact");
+    const QJsonObject oldCrashPayload =
+        QJsonDocument::fromJson(exportedFile.readAll()).object();
+    exportedFile.close();
+    if (oldCrashPayload.contains(QStringLiteral("crashFile")))
+        return fail(7, "old crash artifact was included");
 
     QTcpServer server;
     if (!server.listen(QHostAddress::LocalHost))
-        return fail(5, "cannot listen for success-case feedback server");
+        return fail(8, "cannot listen for success-case feedback server");
 
     QByteArray request;
     bool replied = false;
@@ -69,35 +96,39 @@ int main(int argc, char** argv) {
 
     const QString endpoint = QStringLiteral("http://127.0.0.1:%1/feedback")
                                  .arg(server.serverPort());
-    const auto success = quizpane::feedback::sendReport(
-        QStringLiteral("works"), false, false, endpoint, 1000);
+    quizpane::feedback::ReportOptions sendOptions;
+    sendOptions.description = QStringLiteral("works");
+    sendOptions.includeLogs = false;
+    sendOptions.includeCrash = false;
+    const auto success = quizpane::feedback::sendReport(sendOptions, endpoint, 1000);
     if (!success.success || !replied || !request.startsWith("POST /feedback HTTP/1.1"))
-        return fail(6, "successful feedback request assertion failed");
+        return fail(9, "successful feedback request assertion failed");
 
     QTcpServer silentServer;
     if (!silentServer.listen(QHostAddress::LocalHost))
-        return fail(7, "cannot listen for timeout-case feedback server");
+        return fail(10, "cannot listen for timeout-case feedback server");
+    sendOptions.description = QStringLiteral("times out");
     const auto timeout = quizpane::feedback::sendReport(
-        QStringLiteral("times out"), false, false,
+        sendOptions,
         QStringLiteral("http://127.0.0.1:%1/feedback").arg(silentServer.serverPort()), 20);
     if (timeout.success || !timeout.message.contains(QStringLiteral("超时")))
-        return fail(8, "feedback timeout assertion failed");
+        return fail(11, "feedback timeout assertion failed");
 
     quint16 closedPort = 0;
     {
         QTcpServer temporaryServer;
         if (!temporaryServer.listen(QHostAddress::LocalHost))
-            return fail(9, "cannot allocate a closed-port test endpoint");
+            return fail(12, "cannot allocate a closed-port test endpoint");
         closedPort = temporaryServer.serverPort();
     }
+    sendOptions.description = QStringLiteral("refused");
     const auto refused = quizpane::feedback::sendReport(
-        QStringLiteral("refused"), false, false,
-        QStringLiteral("http://127.0.0.1:%1/feedback").arg(closedPort), 1000);
+        sendOptions, QStringLiteral("http://127.0.0.1:%1/feedback").arg(closedPort), 1000);
     // Windows 上关闭的 loopback 端口可能等待 SYN 超时，而不是立即报告
     // ConnectionRefused；两种结果均是用户可读的预期失败路径。
     if (refused.success ||
         (!refused.message.contains(QStringLiteral("无法连接反馈服务")) &&
          !refused.message.contains(QStringLiteral("超时"))))
-        return fail(10, "closed-port error message assertion failed");
+        return fail(13, "closed-port error message assertion failed");
     return 0;
 }

@@ -486,8 +486,7 @@ void shutdown() {
 #if QUIZPANE_DIAGNOSTIC_PROD_MODE
     // 生产包恢复 Qt 原生的消息处理器，退出后不再有任何 Qt 消息回调开销。
     log.file.close();
-    if (log.previousHandler)
-        qInstallMessageHandler(log.previousHandler);
+    qInstallMessageHandler(log.previousHandler);
     log.previousHandler = nullptr;
     log.initialized = false;
 #endif

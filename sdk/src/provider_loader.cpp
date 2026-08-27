@@ -213,7 +213,8 @@ void ProviderLoader::logThunk(void* hostContext, qp_log_level level,
         self, [self, level, copy] {
             if (level >= QP_LOG_WARNING) {
                 diagnostic::event(QStringLiteral("provider"), QStringLiteral("plugin-log"),
-                    {{QStringLiteral("level"), level}, {QStringLiteral("message"), copy}});
+                    {{QStringLiteral("level"), level},
+                     {QStringLiteral("messageCharacters"), copy.size()}});
             }
             emit self->providerLog(level, copy);
         },
@@ -268,13 +269,19 @@ void ProviderLoader::acceptResponse(const QByteArray& json, quint64 generation) 
     const QString requestId = response.value(QStringLiteral("id")).toString();
     const auto pending = pendingRequests_.take(requestId);
     const QJsonObject responseError = response.value(QStringLiteral("error")).toObject();
+    const QJsonValue errorCodeValue = responseError.value(QStringLiteral("code"));
+    // Provider 返回的字符串完全不可信，错误码也只接受 JSON-RPC 常用的数值形态；
+    // 文本码或错误消息只记录存在性/长度，避免插件借字段回显题干或答案。
+    const QVariant numericErrorCode = errorCodeValue.isDouble()
+        ? QVariant(errorCodeValue.toInt()) : QVariant();
     diagnostic::event(QStringLiteral("provider"), QStringLiteral("response"),
         {{QStringLiteral("id"), requestId},
          {QStringLiteral("method"), pending.method},
          {QStringLiteral("elapsedMs"), pending.startedAt.isValid() ? pending.startedAt.elapsed() : -1},
          {QStringLiteral("error"), response.contains(QStringLiteral("error"))},
-         {QStringLiteral("errorCode"), responseError.value(QStringLiteral("code")).toString()},
-         {QStringLiteral("errorMessage"), responseError.value(QStringLiteral("message")).toString()},
+         {QStringLiteral("errorCode"), numericErrorCode},
+         {QStringLiteral("errorMessageCharacters"),
+          responseError.value(QStringLiteral("message")).toString().size()},
          {QStringLiteral("bytes"), json.size()}});
     emit responseReceived(response);
 }
