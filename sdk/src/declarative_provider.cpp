@@ -51,7 +51,7 @@ QString paragraph(const QString& text, const QJsonArray& underlines = {}) {
     // 规则导入器用这些保留 token 表达 PDF 文字层看不见的填空横线；在宿主端
     // 统一转成真正可见的下划线，既不把占位混成普通空格，也不会影响普通题干。
     escaped.replace(QStringLiteral("〔填空〕"),
-                    QStringLiteral("<span style=\"display:inline-block; min-width:4em; border-bottom:1px solid #c8cdd3;\">&nbsp;</span>"));
+                    QStringLiteral("<span style=\"text-decoration:underline;\">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"));
     escaped.replace('\n', QStringLiteral("<br>"));
     return QStringLiteral("<p>%1</p>").arg(escaped);
 }
@@ -188,7 +188,12 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
                 hostedOption.insert("imageUrl", imageUrl);
             options.append(hostedOption);
         }
-        QString content = paragraph(source.value("stem").toString());
+        QString content = paragraph(source.value("stem").toString(), source.value("stemUnderlines").toArray());
+        const QString sectionTitle = source.value("source").toObject().value("sectionTitle").toString();
+        if (!sectionTitle.isEmpty())
+            content.prepend(QStringLiteral("<p><small>%1 · 第 %2 题</small></p>")
+                .arg(sectionTitle.toHtmlEscaped())
+                .arg(source.value("source").toObject().value("questionNumber").toInt()));
         const QString stemImageUrl = assetUrl(source.value("stemImage").toObject());
         if (!stemImageUrl.isEmpty())
             content += QStringLiteral("<p><img src=\"%1\" width=\"340\"></p>").arg(stemImageUrl);
@@ -198,6 +203,7 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
             .value("questionNumber").toInt();
         if (sourceQuestionNumber > 0)
             question.insert("sourceQuestionNumber", sourceQuestionNumber);
+        if (!sectionTitle.isEmpty()) question.insert("sourceSectionTitle", sectionTitle);
         if (source.contains("materialId")) question.insert("materialId", source.value("materialId"));
         if (withSolutions && hasAnswerKey_) {
             question.insert("correctChoice", correct);

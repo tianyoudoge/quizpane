@@ -37,6 +37,24 @@ bool hasOnlyKeys(const QJsonObject& object, const QSet<QString>& allowed) {
     return true;
 }
 
+bool validTextUnderlines(const QJsonValue& value, int textLength) {
+    if (!value.isArray()) return false;
+    int previousEnd = 0;
+    for (const auto& item : value.toArray()) {
+        if (!item.isObject()) return false;
+        const auto range = item.toObject();
+        const int start = range.value("start").toInt(-1);
+        const int length = range.value("length").toInt();
+        if (!hasOnlyKeys(range, {"start", "length"}) ||
+            !range.value("start").isDouble() || range.value("start").toDouble() != start ||
+            !range.value("length").isDouble() || range.value("length").toDouble() != length ||
+            start < previousEnd || start > textLength || length <= 0 || length > textLength - start)
+            return false;
+        previousEnd = start + length;
+    }
+    return true;
+}
+
 bool validNormalizedCrop(const QJsonValue& value) {
     if (!value.isObject()) return false;
     const QJsonObject crop = value.toObject();
@@ -274,7 +292,8 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
     }
     if (question.contains("source")) {
         const QJsonObject source = question.value("source").toObject();
-        static const QSet<QString> sourceKeys{"document", "page", "questionNumber", "questionLabel"};
+        static const QSet<QString> sourceKeys{"document", "page", "questionNumber", "questionLabel",
+                                              "sectionId", "sectionTitle"};
         const int page = source.value("page").toInt();
         const int questionNumber = source.value("questionNumber").toInt();
         if (!question.value("source").isObject() || !hasOnlyKeys(source, sourceKeys) ||
@@ -285,7 +304,13 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
             (source.contains("questionNumber") && (!source.value("questionNumber").isDouble() ||
                 source.value("questionNumber").toDouble() != questionNumber || questionNumber < 1)) ||
             (source.contains("questionLabel") && (!source.value("questionLabel").isString() ||
-                source.value("questionLabel").toString().size() > 40))) {
+                source.value("questionLabel").toString().size() > 40)) ||
+            (source.contains("sectionId") && (!source.value("sectionId").isString() ||
+                !validId(source.value("sectionId").toString()))) ||
+            (source.contains("sectionTitle") && (!source.contains("sectionId") ||
+                !source.value("sectionTitle").isString() ||
+                source.value("sectionTitle").toString().trimmed().isEmpty() ||
+                source.value("sectionTitle").toString().size() > 120))) {
             errors->append({index, id, QStringLiteral("第 %1 题的来源信息无效").arg(index + 1), {}});
         }
     }
@@ -333,14 +358,14 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
 
     QSet<QString> questionIds;
     QSet<QString> referencedMaterialIds;
-    QHash<QString, int> lastQuestionNumberByDocument;
+    QHash<QString, QHash<QString, int>> lastQuestionNumberByDocument;
     for (qsizetype index = 0; index < questions.size(); ++index) {
         if (!questions.at(index).isObject()) {
             errors.append({int(index), {}, QStringLiteral("第 %1 题必须是 JSON 对象").arg(index + 1), {}});
             continue;
         }
         const auto question = questions.at(index).toObject();
-        static const QSet<QString> questionKeys{"id", "catalogId", "materialId", "type", "stem",
+        static const QSet<QString> questionKeys{"id", "catalogId", "materialId", "type", "stem", "stemUnderlines",
             "stemImage", "options", "answer", "solution", "source", "review"};
         const QString id = question.value("id").toString();
         const QString type = question.value("type").toString();
@@ -389,6 +414,8 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
         }
         require(!question.contains("stemImage") || validAsset(question.value("stemImage")),
                 QStringLiteral("题干图片资源无效"));
+        require(!question.contains("stemUnderlines") || validTextUnderlines(question.value("stemUnderlines"), stem.size()),
+                QStringLiteral("题干下划线位置无效或越界"));
         if (invalid) continue;
         questionIds.insert(id);
 
@@ -396,14 +423,16 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
         const QString document = source.value("document").toString();
         const int sourceNumber = source.value("questionNumber").toInt();
         if (!document.isEmpty() && sourceNumber > 0) {
-            const auto last = lastQuestionNumberByDocument.constFind(document);
-            if (last != lastQuestionNumberByDocument.cend() && sourceNumber <= last.value()) {
+            auto& numbers = lastQuestionNumberByDocument[document];
+            const QString section = source.value("sectionId").toString();
+            const auto last = numbers.constFind(section);
+            if (last != numbers.cend() && sourceNumber <= last.value()) {
                 errors.append({int(index), id,
-                    QStringLiteral("第 %1 题的原始小题号 %2 未严格大于同一文档上一题 %3；"
+                    QStringLiteral("第 %1 题的原始小题号 %2 未严格大于同一文档、同一套题上一题 %3；"
                                    "禁止重号、倒序或静默重编号")
                         .arg(index + 1).arg(sourceNumber).arg(last.value()), {}});
             } else {
-                lastQuestionNumberByDocument.insert(document, sourceNumber);
+                numbers.insert(section, sourceNumber);
             }
         }
 

@@ -5,6 +5,7 @@
 #include <QBuffer>
 #include <QCryptographicHash>
 #include <QHash>
+#include <QMap>
 #include <QImage>
 #include <QJsonObject>
 #include <QPainter>
@@ -44,7 +45,7 @@ struct MaterialMarker {
 
 const QRegularExpression& questionPattern() {
     static const QRegularExpression value(QStringLiteral(
-        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?(\d{1,4})\s*(?:题|[．、:：\)）]|\.(?!\d))\s*(.*)$)"));
+        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?(\d{1,4})\s*(?:题|[．、:：\)）]|\.(?=\d{4}\s*年|\d{1,2}\s*世纪)|\.(?!\d))\s*(.*)$)"));
     return value;
 }
 
@@ -92,7 +93,7 @@ const QRegularExpression& inlineAnswerPattern() {
 
 const QRegularExpression& solutionPattern() {
     static const QRegularExpression value(
-        QStringLiteral(R"(^\s*(?:【?\s*(?:答案)?解析\s*】?|解答|说明)\s*[:：]?\s*(.*)$)"));
+        QStringLiteral(R"(^\s*(?:【\s*(?:(?:答案)?解析|解答|说明)\s*】\s*[:：]?\s*|(?:(?:答案)?解析|解答|说明)(?:\s*[:：]\s*|\s+|$))(.*)$)"));
     return value;
 }
 
@@ -104,7 +105,7 @@ bool isAnswerSectionHeader(const QString& text) {
 
 bool isMaterialHeader(const QString& text) {
     static const QRegularExpression pattern(QStringLiteral(
-        R"(^\s*(?:[（(][一二三四五六七八九十\d]+[）)]\s*)?(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*\s*[:：]?|阅读(?:下列|以下)(?:材料|文字)|根据(?:下列|以下)(?:统计)?(?:资料|材料)|原文\s*[:：])\s*.*$)"));
+        R"(^\s*(?:[（(][一二三四五六七八九十\d]+[）)]\s*)?(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*(?:\s*[:：].*|\s*)|阅读(?:下列|以下)(?:材料|文字).*|根据(?:下列|以下)(?:统计)?(?:资料|材料).*|原文\s*[:：].*)$)"));
     return pattern.match(text).hasMatch();
 }
 
@@ -367,6 +368,48 @@ QJsonArray extractMaterialLayoutImages(const ExtractedDocument& document, int fi
             : QStringLiteral("原卷材料版式（含下划线和填空）")));
     }
     return images;
+}
+
+QJsonObject captureSourceBlock(ExtractedDocument* document, const QList<SourceLine>& lines,
+                               int start, int end, const QString& id,
+                               QHash<QString, QByteArray>* assets) {
+    QMap<int, QRectF> regions;
+    for (int i = start; i < end; ++i) {
+        const auto& line = lines.at(i);
+        const QRectF bounds = lineBoundsFor(*document, line.page, line.text);
+        if (line.page > 0 && !bounds.isEmpty()) regions[line.page] = regions.value(line.page).united(bounds);
+    }
+    if (regions.isEmpty() || regions.size() > 4) return {};
+    ensurePdfPageImages(document, regions.keys());
+    QList<QImage> pieces;
+    int width = 0, height = 0;
+    QRectF firstCrop;
+    for (auto it = regions.cbegin(); it != regions.cend(); ++it) {
+        const QImage page = QImage::fromData(document->pageImages.value(it.key()), "PNG");
+        if (page.isNull()) return {}; // 不把缺页的截图当成完整原文。
+        const qreal top = qMax<qreal>(0, it.value().top() - 0.004);
+        const qreal bottom = qMin<qreal>(1, it.value().bottom() + 0.004);
+        const QRectF crop(0.04, top, 0.92, bottom - top);
+        if (firstCrop.isEmpty()) firstCrop = crop;
+        const QImage piece = page.copy(QRect(qFloor(crop.x() * page.width()), qFloor(crop.y() * page.height()),
+            qCeil(crop.width() * page.width()), qCeil(crop.height() * page.height())).intersected(page.rect()));
+        if (piece.isNull()) return {};
+        pieces.append(piece);
+        width = qMax(width, piece.width());
+        height += piece.height();
+    }
+    QImage combined(width, height, QImage::Format_RGB32);
+    combined.fill(Qt::white);
+    QPainter painter(&combined);
+    int y = 0;
+    for (const auto& piece : pieces) { painter.drawImage(0, y, piece); y += piece.height(); }
+    painter.end();
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    if (!buffer.open(QIODevice::WriteOnly) || !combined.save(&buffer, "PNG")) return {};
+    const QString path = QStringLiteral("assets/%1-%2-reference.png").arg(assetBaseName(document->sourcePath), id);
+    assets->insert(path, bytes);
+    return visualAssetDescriptor(*document, regions.firstKey(), firstCrop, path, QStringLiteral("原卷题目（请核对版式或题目边界）"));
 }
 
 QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, int page,
@@ -738,7 +781,7 @@ QString answerFromOptionText(const QString& rawAnswer,
 
 QList<SourceLine> sourceLines(const ExtractedDocument& document) {
     QList<SourceLine> result;
-    int page = document.hasPageBoundaries ? 1 : 0;
+    int page = document.hasPageBoundaries ? document.firstPageNumber : 0;
     QString current;
     bool paragraphBreakBefore = false;
     bool previousWasCarriageReturn = false;
@@ -783,6 +826,82 @@ QList<SourceLine> sourceLines(const ExtractedDocument& document) {
     return result;
 }
 
+// 只有明确标题后跟第一题才分套；目录标题和没有依据的重号不生成新作用域。
+QList<ExtractedDocument> splitBookletSections(const ExtractedDocument& document) {
+    if (!document.sectionId.isEmpty()) return {document};
+    static const QRegularExpression title(QStringLiteral(
+        R"((?:^|(?<=\f))[ \t]*(专项刷题[一二三四五六七八九十百\d]+|第[一二三四五六七八九十百\d]+套(?:试题|试卷|练习题)?|(?:试卷|套题)[一二三四五六七八九十百\d]+)[ \t]*\r?$)"),
+        QRegularExpression::MultilineOption);
+    QList<QRegularExpressionMatch> headings;
+    auto matches = title.globalMatch(document.plainText);
+    while (matches.hasNext()) headings.append(matches.next());
+    QList<QRegularExpressionMatch> boundaries;
+    for (int i = 0; i < headings.size(); ++i) {
+        const int start = headings.at(i).capturedEnd();
+        const int end = i + 1 < headings.size() ? headings.at(i + 1).capturedStart()
+                                               : document.plainText.size();
+        const QStringList lines = document.plainText.mid(start, end - start)
+            .split(QRegularExpression(QStringLiteral("[\\r\\n\\f]+")));
+        for (const auto& line : lines) {
+            const auto question = questionPattern().match(line);
+            if (!question.hasMatch()) continue;
+            if (question.captured(1).toInt() == 1) boundaries.append(headings.at(i));
+            break;
+        }
+    }
+    if (boundaries.isEmpty()) return {document};
+    QList<ExtractedDocument> result;
+    // 第一份明确标题之前可能还有未命名的试题，不能当成封面/目录丢弃。
+    const QString prefix = document.plainText.left(boundaries.first().capturedStart());
+    bool prefixQuestion = false, prefixOptions = false;
+    for (const auto& line : prefix.split(QRegularExpression(QStringLiteral("[\\r\\n\\f]+")))) {
+        prefixQuestion |= questionPattern().match(line).hasMatch();
+        prefixOptions |= QRegularExpression(QStringLiteral(R"(^\s*[A-Fa-f]\s*[.．、:：)）])")).match(line).hasMatch();
+    }
+    if (prefixQuestion && prefixOptions) {
+        ExtractedDocument ungrouped = document;
+        ungrouped.sectionId = QStringLiteral("set-prefix");
+        ungrouped.sectionTitle = QStringLiteral("未分套题目");
+        ungrouped.plainText = prefix;
+        result.append(ungrouped);
+    }
+    for (int i = 0; i < boundaries.size(); ++i) {
+        const auto& heading = boundaries.at(i);
+        const int start = heading.capturedEnd();
+        const int end = i + 1 < boundaries.size() ? boundaries.at(i + 1).capturedStart()
+                                                : document.plainText.size();
+        ExtractedDocument section = document;
+        section.sectionId = QStringLiteral("set-%1").arg(i + 1);
+        section.sectionTitle = heading.captured(1);
+        section.firstPageNumber += document.plainText.left(start).count(QChar('\f'));
+        section.plainText = document.plainText.mid(start, end - start);
+        result.append(section);
+    }
+    return result;
+}
+
+void removeRepeatedPageFurniture(const ExtractedDocument& document, QList<SourceLine>* lines) {
+    if (!document.hasPageBoundaries || document.lineAnchors.size() < 3) return;
+    const auto keyFor = [](QString text) {
+        return text.simplified().replace(QRegularExpression(QStringLiteral("\\d+")), QStringLiteral("#"));
+    };
+    QHash<QString, QSet<int>> occurrences;
+    QHash<int, QSet<QString>> marginLines;
+    for (auto page = document.lineAnchors.cbegin(); page != document.lineAnchors.cend(); ++page)
+        for (const auto& line : page.value()) {
+            if (line.bounds.bottom() >= 0.075 && line.bounds.top() <= 0.93) continue;
+            const QString key = keyFor(line.text);
+            occurrences[key].insert(page.key());
+            marginLines[page.key()].insert(line.text.simplified());
+        }
+    for (int i = lines->size() - 1; i >= 0; --i) {
+        const auto& line = lines->at(i);
+        if (marginLines.value(line.page).contains(line.text.simplified()) &&
+            occurrences.value(keyFor(line.text)).size() >= qMax(3, document.lineAnchors.size() / 4))
+            lines->removeAt(i);
+    }
+}
+
 QHash<int, QRectF> lineBoundsBySourceIndex(const ExtractedDocument& document,
                                             const QList<SourceLine>& lines) {
     QHash<int, QRectF> result;
@@ -798,27 +917,6 @@ QHash<int, QRectF> lineBoundsBySourceIndex(const ExtractedDocument& document,
                 continue;
             result.insert(index, anchors.at(anchorIndex).bounds);
             cursor = anchorIndex + 1;
-            break;
-        }
-    }
-    return result;
-}
-
-QHash<int, QList<QPair<int, int>>> underlineRangesBySourceIndex(
-    const ExtractedDocument& document, const QList<SourceLine>& lines) {
-    QHash<int, QList<QPair<int, int>>> result;
-    QHash<int, int> decorationCursors;
-    for (int index = 0; index < lines.size(); ++index) {
-        const SourceLine& source = lines.at(index);
-        const QList<PdfUnderlineDecoration>& decorations =
-            document.underlineDecorations.value(source.page);
-        int& cursor = decorationCursors[source.page];
-        for (int decorationIndex = cursor; decorationIndex < decorations.size(); ++decorationIndex) {
-            const PdfUnderlineDecoration& decoration = decorations.at(decorationIndex);
-            if (decoration.text.simplified() != source.text.simplified())
-                continue;
-            result.insert(index, decoration.ranges);
-            cursor = decorationIndex + 1;
             break;
         }
     }
@@ -882,19 +980,6 @@ QStringList reflowVisualLines(const ExtractedDocument& document,
 constexpr QChar kUnderlineStartMarker(0xe000);
 constexpr QChar kUnderlineEndMarker(0xe001);
 
-QString markDetectedUnderlines(QString text, const QList<QPair<int, int>>& ranges) {
-    // 反向插入，避免较早位置的 marker 改变后续 range 的字符索引。
-    for (int index = ranges.size() - 1; index >= 0; --index) {
-        const int start = ranges.at(index).first;
-        const int length = ranges.at(index).second;
-        if (start < 0 || length <= 0 || start + length > text.size())
-            continue;
-        text.insert(start + length, kUnderlineEndMarker);
-        text.insert(start, kUnderlineStartMarker);
-    }
-    return text;
-}
-
 struct MaterialTextWithDecorations {
     QString body;
     QJsonArray underlines;
@@ -903,17 +988,49 @@ struct MaterialTextWithDecorations {
 MaterialTextWithDecorations buildMaterialText(const ExtractedDocument& document,
                                               const QList<SourceLine>& lines,
                                               const QList<int>& sourceIndices,
-                                              const QStringList& bodyLines) {
-    const QHash<int, QList<QPair<int, int>>> rangesBySource =
-        underlineRangesBySourceIndex(document, lines);
+                                              const QStringList& bodyLines,
+                                              bool material = true) {
     QStringList markedLines;
     markedLines.reserve(bodyLines.size());
-    for (int index = 0; index < bodyLines.size(); ++index)
-        markedLines.append(markDetectedUnderlines(bodyLines.at(index),
-            rangesBySource.value(sourceIndices.value(index))));
-    const QString marked = restoreDroppedBlankLines(
-        reflowVisualLines(document, lines, sourceIndices, markedLines)
-            .join(QStringLiteral("\n\n")).trimmed());
+    for (int index = 0; index < bodyLines.size(); ++index) {
+        const QString text = bodyLines.at(index);
+        const SourceLine& source = lines.at(sourceIndices.at(index));
+        const int offset = source.text.indexOf(text);
+        QString marked;
+        bool found = false;
+        for (const auto& decoration : document.underlineDecorations.value(source.page)) {
+            if (offset < 0 || decoration.text != source.text) continue;
+            bool active = false;
+            for (int i = 0; i <= text.size(); ++i) {
+                bool underlined = false;
+                for (const auto& range : decoration.ranges)
+                    if (i < text.size() && i + offset >= range.first &&
+                        i + offset < range.first + range.second) underlined = true;
+                if (active != underlined) marked += underlined ? kUnderlineStartMarker : kUnderlineEndMarker;
+                active = underlined;
+                bool blank = false;
+                for (const auto& range : decoration.blanks) {
+                    // 题号后的空格会被 firstStemLine.trimmed() 去掉，但该空格可能
+                    // 承载真实的句首填空，必须保留几何证据对应的零宽插入位置。
+                    const int begin = qMax(0, range.first - offset);
+                    const int end = range.first + range.second - offset;
+                    if (end >= 0 && i == begin && end <= text.size()) {
+                        marked += QStringLiteral("〔填空〕");
+                        if (end > i) { i = end - 1; blank = true; }
+                        break;
+                    }
+                }
+                if (!blank && i < text.size()) marked += text.at(i);
+            }
+            found = true;
+            break;
+        }
+        markedLines.append(found ? marked : text);
+    }
+    QString marked = reflowVisualLines(document, lines, sourceIndices, markedLines)
+        .join(material ? QStringLiteral("\n\n") : QStringLiteral("\n")).trimmed();
+    if (material) marked = restoreDroppedBlankLines(marked);
+    else marked.replace(QRegularExpression(QStringLiteral("(?:_{2,}|＿{2,})")), QStringLiteral("〔填空〕"));
     MaterialTextWithDecorations result;
     int underlineStart = -1;
     for (const QChar character : marked) {
@@ -1361,7 +1478,8 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
             appendStem(lineForOptions.isEmpty() ? line : lineForOptions, index);
         }
     }
-    stemLines = reflowVisualLines(document, lines, stemSourceIndices, stemLines);
+    const auto decoratedStem = buildMaterialText(document, lines, stemSourceIndices, stemLines, false);
+    stemLines = decoratedStem.body.split(QChar('\n'));
     QString answer = answerFromOptionText(rawAnswer, options);
     if (answer.isEmpty())
         answer = answerKey.value(anchor.number);
@@ -1369,6 +1487,7 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
         solutionLines.append(solutionKey.value(anchor.number));
 
     const QString visualText = stemLines.join(QChar('\n'));
+    const bool hasLayoutCue = visualText.contains(QRegularExpression(QStringLiteral("划线|画线|横线|下划线|空白处")));
     // 判断题：题干以空括号“（ ）”结尾且没有列 A/B 选项。合成“正确/不正确”两个
     // 选项走现有 true_false 通道（schema、校验器、前端 RadioButton 全兼容），答案
     // 由 对/错/√/× 归一化到合成选项。rawAnswer 优先，其次全局答案区。
@@ -1431,9 +1550,9 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
 
     QJsonArray jsonOptions;
     QSet<QString> optionIds;
+    bool repeatedOptions = false;
     for (const auto& option : options) {
-        if (optionIds.contains(option.first))
-            continue;
+        if (optionIds.contains(option.first)) repeatedOptions = true;
         optionIds.insert(option.first);
         QJsonObject jsonOption{{"id", option.first}, {"text", option.second}};
         if (optionImages.contains(option.first))
@@ -1448,6 +1567,8 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
     }
 
     QStringList reasons;
+    if (repeatedOptions)
+        reasons.append(QStringLiteral("重复选项标签，可能缺失题号或跨题合并；请对照原卷拆分，不能直接采用"));
     if (stemLines.join(QChar('\n')).trimmed().isEmpty())
         reasons.append(QStringLiteral("缺少题干"));
     if (jsonOptions.size() < 2)
@@ -1494,12 +1615,18 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
         source.insert("page", lines.at(anchor.line).page);
     source.insert("questionNumber", anchor.number);
     source.insert("questionLabel", QString::number(anchor.number));
+    if (!document.sectionId.isEmpty()) {
+        source.insert("sectionId", document.sectionId);
+        source.insert("sectionTitle", document.sectionTitle);
+    }
     QJsonObject question{{"id", stableId},
                          {"catalogId", "generated"},
                          {"type", type},
                          {"stem", stemLines.join(QChar('\n')).trimmed()},
                          {"options", jsonOptions},
                          {"source", source}};
+    if (!decoratedStem.underlines.isEmpty() && question.value("stem").toString() == decoratedStem.body)
+        question.insert("stemUnderlines", decoratedStem.underlines);
     if (hasAnswerKey) {
         question.insert("answer", QJsonObject{{"optionIds", answerIds}});
         question.insert("solution", solutionLines.join(QChar('\n')).trimmed());
@@ -1531,6 +1658,11 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
                 QRectF(0.0, 0.0, 1.0, 1.0), path, QStringLiteral("原卷图表")));
         }
     }
+    if (!question.contains("stemImage") && (repeatedOptions ||
+        (hasLayoutCue && decoratedStem.underlines.isEmpty() && !decoratedStem.body.contains(QStringLiteral("〔填空〕"))))) {
+        const auto reference = captureSourceBlock(&document, lines, anchor.line, blockEnd, stableId, generatedAssets);
+        if (!reference.isEmpty()) question.insert("stemImage", reference);
+    }
     // 高危名单：结构可能完全合法，但内容正确性规则原理上验证不了，命中即强制
     // 复核（riskLevel=soft），不因为规则没报错就免检放行。跨页题的信号计算依赖
     // 相邻题的版面位置，留待后续批量审计阶段（RuleBasedGenerationAudit）补充。
@@ -1543,6 +1675,9 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
     if (!materialId.isEmpty() && stemJoined.contains(QRegularExpression(
             QStringLiteral("划线|填入.*(?:空白|横线|下划线)|空白处"))))
         softSignals.append(QStringLiteral("material-layout:underline-or-blank"));
+    if (materialId.isEmpty() && stemJoined.contains(QRegularExpression(
+            QStringLiteral("划线|画线|横线|下划线|空白处"))))
+        softSignals.append(QStringLiteral("stem-layout:underline-or-blank"));
     bool hasImageOption = false;
     for (const auto& optionValue : jsonOptions)
         if (optionValue.toObject().contains("image")) { hasImageOption = true; break; }
@@ -1562,7 +1697,9 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
         // 而不是像 hard 失败那样打回 needsReviewQuestions 数组。
         question.insert("review", QJsonObject{{"needsReview", true},
                                               {"confidence", document.usedOcr ? 0.6 : 0.7},
-                                              {"reason", QStringLiteral("规则无法验证图表/图形内容的正确性，请核对原图")},
+                                              {"reason", hasLayoutCue
+                                                  ? QStringLiteral("请对照原卷核对划线词句、填空数量和位置；必要时可手动标记下划线")
+                                                  : QStringLiteral("规则无法验证图表/图形内容的正确性，请核对原图")},
                                               {"riskLevel", "soft"},
                                               {"signals", QJsonArray::fromStringList(softSignals)}});
     } else {
@@ -1612,7 +1749,8 @@ void applyRuleBasedGenerationAudit(RuleBasedGenerationResult* result, bool hasAn
     for (qsizetype index = 0; index < result->questions.size(); ++index) {
         const QJsonObject question = result->questions.at(index).toObject();
         const QString document = question.value("source").toObject().value("document").toString();
-        indicesByDocument[document].append(int(index));
+        const QString section = question.value("source").toObject().value("sectionId").toString();
+        indicesByDocument[document + QChar(0x1f) + section].append(int(index));
     }
 
     for (auto it = indicesByDocument.constBegin(); it != indicesByDocument.constEnd(); ++it) {
@@ -1629,13 +1767,20 @@ void applyRuleBasedGenerationAudit(RuleBasedGenerationResult* result, bool hasAn
             if (number > 0) numbers.append(number);
         }
         if (numbers.size() == indices.size()) {
+            // 待复核的题仍然已识别，不能再次报为漏题。
+            for (const auto& value : result->needsReviewQuestions) {
+                const auto source = value.toObject().value("source").toObject();
+                if (source.value("document").toString() + QChar(0x1f) +
+                    source.value("sectionId").toString() == it.key())
+                    numbers.append(source.value("questionNumber").toInt());
+            }
             std::sort(numbers.begin(), numbers.end());
             QStringList missing;
             for (int expected = numbers.first(); expected <= numbers.last(); ++expected)
                 if (!numbers.contains(expected)) missing.append(QString::number(expected));
             if (!missing.isEmpty())
                 result->warnings.append(QStringLiteral("%1：题号 %2—%3 之间缺少第 %4 题，"
-                    "请核对是否有题目未被识别").arg(it.key()).arg(numbers.first())
+                    "请核对是否有题目未被识别").arg(QString(it.key()).replace(QChar(0x1f), QStringLiteral(" · "))).arg(numbers.first())
                     .arg(numbers.last()).arg(missing.join(QStringLiteral("、"))));
         }
 
@@ -1695,11 +1840,14 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
     RuleBasedGenerationResult result;
     result.hasAnswerKey = hasAnswerKey;
     int documentOrdinal = 0;
-    for (const auto& sourceDocument : documents) {
+    QList<ExtractedDocument> scopedDocuments;
+    for (const auto& document : documents) scopedDocuments.append(splitBookletSections(document));
+    for (const auto& sourceDocument : scopedDocuments) {
         // 下划线装饰是按需补充的版面元数据，生成时只影响当前文档的副本。
         ExtractedDocument document = sourceDocument;
         ++documentOrdinal;
         QList<SourceLine> lines = sourceLines(document);
+        removeRepeatedPageFurniture(document, &lines);
         normalizeTrailingQuestionNumberLayout(&lines);
 
         // 收集所有答案区头行号。整体前后分开的文件只有一个，阶段分组的文件
@@ -1815,6 +1963,20 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         // 它所属共享材料的正文行。这样不会再整卷逐字符扫描，也不会把无关页面
         // 的装饰误收进材料文本。
         QHash<int, QStringList> underlineCandidateLinesByPage;
+        for (int i = 0; i < anchors.size(); ++i) {
+            const int start = anchors.at(i).line;
+            const int end = i + 1 < anchors.size() ? anchors.at(i + 1).line : contentEnd;
+            bool layoutCue = false;
+            for (int j = start; j < end; ++j)
+                if (lines.at(j).text.contains(QRegularExpression(
+                        QStringLiteral("划线|画线|横线|下划线|空白处")))) layoutCue = true;
+            if (!layoutCue) continue;
+            for (int j = start; j < end; ++j) {
+                const auto& source = lines.at(j);
+                if (j > start && !optionsOnLine(source.text, nullptr, false).isEmpty()) break;
+                if (source.page > 0) underlineCandidateLinesByPage[source.page].append(source.text);
+            }
+        }
         for (int markerIndex = 0; markerIndex < materialMarkers.size(); ++markerIndex) {
             const MaterialMarker& marker = materialMarkers.at(markerIndex);
             const int materialEndLine = markerIndex + 1 < materialMarkers.size()

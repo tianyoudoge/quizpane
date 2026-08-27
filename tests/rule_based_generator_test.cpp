@@ -31,6 +31,55 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     using namespace quizpane::studio;
 
+    // 明确分套时答案独立、原题号和页码不变，标题不得流入上一题选项。
+    ExtractedDocument booklet;
+    booklet.sourcePath = QStringLiteral("booklet.txt");
+    booklet.hasPageBoundaries = true;
+    booklet.plainText = QStringLiteral(
+        "目录\n专项刷题一\n专项刷题二\n\f专项刷题一\n"
+        "1.2012年发生的事情？\nA.甲\nB.乙\n参考答案\n1.A\n"
+        "\f专项刷题二\n1.20世纪的事情？\nA.丙\nB.丁\n参考答案\n1.B\n");
+    const auto bookletResult = RuleBasedBankGenerator{}.generate({booklet});
+    if (bookletResult.questions.size() != 2 || !bookletResult.needsReviewQuestions.isEmpty()) return 150;
+    for (int i = 0; i < 2; ++i) {
+        const auto q = bookletResult.questions.at(i).toObject();
+        const auto source = q.value("source").toObject();
+        if (source.value("questionNumber").toInt() != 1 || source.value("page").toInt() != i + 2 ||
+            source.value("sectionId").toString() != QStringLiteral("set-%1").arg(i + 1) ||
+            q.value("answer").toObject().value("optionIds").toArray().first().toString() != (i ? "b" : "a")) return 151;
+    }
+    if (!quizpane::validateBankDetailed(bankFor(bookletResult)).isEmpty()) return 152;
+    ExtractedDocument prefixBooklet;
+    prefixBooklet.sourcePath = "prefix.txt";
+    prefixBooklet.plainText = QStringLiteral("1.前置题目\nA.甲\nB.乙\n答案：A\n专项刷题一\n1.后置题目\nA.丙\nB.丁\n答案：B\n");
+    if (RuleBasedBankGenerator{}.generate({prefixBooklet}).questions.size() != 2) return 157;
+    ExtractedDocument materialSentence;
+    materialSentence.sourcePath = QStringLiteral("ordinary.txt");
+    materialSentence.plainText = QStringLiteral(
+        "1.疫苗的作用。\n材料接下来最可能讲述的是（ ）。\nA.甲\nB.乙\n答案：A\n"
+        "2.独立题目。\nA.丙\nB.丁\n答案：B\n");
+    const auto ordinary = RuleBasedBankGenerator{}.generate({materialSentence});
+    if (ordinary.questions.size() != 2 || !ordinary.materials.isEmpty()) return 153;
+    ExtractedDocument decorated;
+    decorated.sourcePath = QStringLiteral("decorated.txt");
+    decorated.hasPageBoundaries = true;
+    decorated.plainText = QStringLiteral("1.甲乙 丙\nA.一\nB.二\n答案：A\n");
+    decorated.underlineDecorations[1].append({QStringLiteral("1.甲乙 丙"), {{2, 1}}, {}, {{4, 1}}});
+    const auto decoratedResult = RuleBasedBankGenerator{}.generate({decorated});
+    const auto decoratedQuestion = decoratedResult.questions.first().toObject();
+    if (decoratedQuestion.value("stem").toString() != QStringLiteral("甲乙〔填空〕丙") ||
+        decoratedQuestion.value("stemUnderlines").toArray() != QJsonArray{QJsonObject{{"start", 0}, {"length", 1}}} ||
+        !quizpane::validateBankDetailed(bankFor(decoratedResult)).isEmpty()) return 154;
+    decorated.plainText = QStringLiteral("1. 。句首填空\nA.一\nB.二\n答案：A\n");
+    decorated.underlineDecorations[1] = {{QStringLiteral("1. 。句首填空"), {}, {}, {{2, 1}}}};
+    if (RuleBasedBankGenerator{}.generate({decorated}).questions.first().toObject()
+            .value("stem").toString() != QStringLiteral("〔填空〕。句首填空")) return 156;
+    materialSentence.plainText = QStringLiteral(
+        "1.前题\nA.甲\nB.乙\n无题号的后一题\n说明波的性质。\nA.丙\nB.丁\n答案：A\n");
+    const auto ambiguous = RuleBasedBankGenerator{}.generate({materialSentence});
+    if (!ambiguous.questions.isEmpty() || ambiguous.needsReviewQuestions.size() != 1 ||
+        ambiguous.needsReviewQuestions.first().toObject().value("options").toArray().size() != 4) return 155;
+
     ExtractedDocument structured;
     structured.sourcePath = QStringLiteral("reading.txt");
     structured.plainText = QStringLiteral("材料一：阅读下面文字\n"

@@ -1600,13 +1600,17 @@ void MainWindow::exportAttemptResults() {
             painter.setBrush(QColor(QStringLiteral("#1b232d")));
             painter.drawRoundedRect(card, 12, 12);
             const int sourceNumber = question.value("sourceQuestionNumber").toInt(index + 1);
+            const QString sectionTitle = question.value("sourceSectionTitle").toString();
             QFont numberFont = painter.font();
-            numberFont.setPixelSize(22);
+            numberFont.setPixelSize(sectionTitle.isEmpty() ? 22 : 15);
             numberFont.setBold(true);
             painter.setFont(numberFont);
             painter.setPen(QColor(QStringLiteral("#e7edf4")));
             painter.drawText(card.adjusted(16, 8, -16, -8), Qt::AlignLeft | Qt::AlignTop,
-                             QStringLiteral("%1").arg(sourceNumber));
+                             painter.fontMetrics().elidedText(sectionTitle.isEmpty()
+                                 ? QString::number(sourceNumber)
+                                 : QStringLiteral("%1 · %2").arg(sectionTitle).arg(sourceNumber),
+                                 Qt::ElideRight, qMax(30, int(card.width()) - 100)));
             QFont choiceFont = painter.font();
             choiceFont.setPixelSize(24);
             choiceFont.setBold(true);

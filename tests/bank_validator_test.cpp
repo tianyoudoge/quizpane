@@ -41,6 +41,12 @@ int main(int argc, char** argv) {
     if (!quizpane::validateBankDetailed(validBank).isEmpty()) return 2;
     QString error;
     if (!quizpane::validateBank(validBank, &error) || !error.isEmpty()) return 3;
+    if (!quizpane::validateBankDetailed(mutateFirstQuestion(validBank, "stemUnderlines",
+            QJsonArray{QJsonObject{{"start", 0}, {"length", 1}}})).isEmpty()) return 105;
+    if (quizpane::validateBankDetailed(mutateFirstQuestion(validBank, "stemUnderlines",
+            QJsonArray{QJsonObject{{"start", 20000}, {"length", 1}}})).isEmpty()) return 106;
+    if (quizpane::validateBankDetailed(mutateFirstQuestion(validBank, "stemUnderlines",
+            QJsonArray{QJsonObject{{"start", 0.5}, {"length", 1}}})).isEmpty()) return 107;
 
     // v1 不兼容、不迁移。
     {
@@ -77,6 +83,14 @@ int main(int argc, char** argv) {
         questions[1] = outOfOrder;
         bank.insert("questions", questions);
         if (quizpane::validateBankDetailed(bank).isEmpty()) return 103;
+        // 同文件不同套题可以重启题号；同套重号仍不允许。
+        auto source = outOfOrder.value("source").toObject();
+        source.insert("sectionId", "set-2");
+        source.insert("sectionTitle", QStringLiteral("专项刷题二"));
+        outOfOrder.insert("source", source);
+        questions[1] = outOfOrder;
+        bank.insert("questions", questions);
+        if (!quizpane::validateBankDetailed(bank).isEmpty()) return 104;
         questions = normalizedQuestions;
         QJsonObject invalidQuestion = questions.first().toObject();
         invalidQuestion.insert("answer", QJsonObject{{"optionIds", QJsonArray{"a"}}});

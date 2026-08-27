@@ -1339,6 +1339,7 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
         {QStringLiteral("answer-distribution-skew"), QStringLiteral("答案分布异常")},
         {QStringLiteral("material-layout:underline-or-blank"),
          QStringLiteral("材料含划线或填空版式")},
+        {QStringLiteral("stem-layout:underline-or-blank"), QStringLiteral("题干含划线或填空，请核对位置")},
     };
 
     int missingAnswers = 0;
@@ -1387,10 +1388,13 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
             }
             const int sourceNumber = question.value("source").toObject()
                 .value("questionNumber").toInt();
-            const QString questionLabel = sourceNumber > 0
+            QString questionLabel = sourceNumber > 0
                 ? QStringLiteral("第 %1 题").arg(sourceNumber)
                 : question.value("id").toString();
+            const QString sectionTitle = question.value("source").toObject().value("sectionTitle").toString();
+            if (!sectionTitle.isEmpty()) questionLabel.prepend(sectionTitle + QStringLiteral(" · "));
             auto* item = new QTreeWidgetItem(parent, {questionLabel, statusText});
+            item->setToolTip(0, questionLabel);
             item->setTextAlignment(0, Qt::AlignLeft | Qt::AlignVCenter);
             item->setTextAlignment(1, Qt::AlignLeft | Qt::AlignVCenter);
             item->setData(0, Qt::UserRole, question);
@@ -1837,6 +1841,7 @@ QJsonArray StudioWindow::reviewOptions() const {
 }
 
 void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
+    reviewStemEditor_->setExtraSelections({});
     const QJsonObject entry = item ? item->data(0, Qt::UserRole).toJsonObject() : QJsonObject{};
     const bool isMaterial = entry.contains(QStringLiteral("body"));
     currentReviewItem_ = entry.isEmpty() || isMaterial ? nullptr : item;
@@ -1884,7 +1889,7 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
         return;
     }
 
-    manualMaterialUnderlineButton_->setVisible(false);
+    manualMaterialUnderlineButton_->setVisible(true);
     reviewStemEditor_->setReadOnly(false);
     reviewStemLabel_->setText(QStringLiteral("题干"));
     reviewQuestionEditorPanel_->setVisible(true);
@@ -1898,7 +1903,9 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
     const int sourceNumber = question.value("source").toObject()
         .value("questionNumber").toInt();
     reviewDetailTitle_->setText(sourceNumber > 0
-        ? QStringLiteral("第 %1 题").arg(sourceNumber)
+        ? (question.value("source").toObject().value("sectionTitle").toString().isEmpty()
+            ? QStringLiteral("第 %1 题").arg(sourceNumber)
+            : QStringLiteral("%1 · 第 %2 题").arg(question.value("source").toObject().value("sectionTitle").toString()).arg(sourceNumber))
         : QStringLiteral("题目 %1").arg(question.value("id").toString()));
     const QJsonObject review = question.value("review").toObject();
     QString status = item->text(1);
@@ -1906,6 +1913,17 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
         status += QStringLiteral("\n%1").arg(review.value("reason").toString());
     reviewDetailStatus_->setText(status);
     reviewStemEditor_->setPlainText(question.value("stem").toString());
+    QList<QTextEdit::ExtraSelection> underlineSelections;
+    for (const auto& value : question.value("stemUnderlines").toArray()) {
+        const auto range = value.toObject();
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = reviewStemEditor_->textCursor();
+        selection.cursor.setPosition(range.value("start").toInt());
+        selection.cursor.setPosition(range.value("start").toInt() + range.value("length").toInt(), QTextCursor::KeepAnchor);
+        selection.format.setFontUnderline(true);
+        underlineSelections.append(selection);
+    }
+    reviewStemEditor_->setExtraSelections(underlineSelections);
     updateReviewStemHeight();
     setReviewOptions(question.value("options").toArray());
     if (generatedHasAnswerKey_) {
@@ -1931,10 +1949,17 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
 }
 
 void StudioWindow::addManualMaterialUnderline() {
-    if (!currentMaterialItem_)
+    QTreeWidgetItem* target = currentMaterialItem_ ? currentMaterialItem_ : currentReviewItem_;
+    if (!target) return;
+    if (currentReviewItem_ && reviewQuestionIsDirty()) {
+        QMessageBox::information(this, QStringLiteral("请先保存修改"),
+            QStringLiteral("请先保存题干和选项的修改，再标记下划线，以免位置发生偏移。"));
         return;
-    QJsonObject material = currentMaterialItem_->data(0, Qt::UserRole).toJsonObject();
-    const QString body = material.value(QStringLiteral("body")).toString();
+    }
+    const bool isMaterial = currentMaterialItem_ != nullptr;
+    const QString underlineKey = isMaterial ? QStringLiteral("underlines") : QStringLiteral("stemUnderlines");
+    QJsonObject material = target->data(0, Qt::UserRole).toJsonObject();
+    const QString body = material.value(isMaterial ? QStringLiteral("body") : QStringLiteral("stem")).toString();
     if (body.isEmpty())
         return;
 
@@ -1944,7 +1969,7 @@ void StudioWindow::addManualMaterialUnderline() {
     auto* layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(20, 18, 20, 16);
     layout->addWidget(mutedLabel(QStringLiteral(
-        "在原始材料文本中选中需要带下划线的词句，再点击“添加所选下划线”。"
+        "在文本中选中需要带下划线的词句，再点击“添加所选下划线”。"
         "这只修改题库内的文字样式，不会改动原 PDF。")));
     auto* editor = new QPlainTextEdit;
     editor->setPlainText(body);
@@ -1955,6 +1980,21 @@ void StudioWindow::addManualMaterialUnderline() {
     auto* add = buttons->addButton(QStringLiteral("添加所选下划线"), QDialogButtonBox::AcceptRole);
     add->setObjectName(QStringLiteral("primaryButton"));
     auto* cancel = buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
+    auto* clear = buttons->addButton(QStringLiteral("清除全部下划线"), QDialogButtonBox::ResetRole);
+    const auto saveRanges = [&](const QJsonArray& ranges) {
+        material.insert(underlineKey, ranges);
+        target->setData(0, Qt::UserRole, material);
+        if (isMaterial) {
+            const QString id = material.value(QStringLiteral("id")).toString();
+            for (int index = 0; index < generatedMaterials_.size(); ++index)
+                if (generatedMaterials_.at(index).toObject().value(QStringLiteral("id")).toString() == id) {
+                    generatedMaterials_[index] = material;
+                    break;
+                }
+        }
+        dialog.accept();
+    };
+    connect(clear, &QPushButton::clicked, &dialog, [&] { saveRanges({}); });
     connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
     connect(add, &QPushButton::clicked, &dialog, [&] {
         const QTextCursor cursor = editor->textCursor();
@@ -1962,11 +2002,11 @@ void StudioWindow::addManualMaterialUnderline() {
         const int length = cursor.selectionEnd() - start;
         if (length <= 0) {
             QMessageBox::information(&dialog, QStringLiteral("请先选择文字"),
-                QStringLiteral("请在材料中选中一个词或一句话。"));
+                QStringLiteral("请在文本中选中一个词或一句话。"));
             return;
         }
         QList<QPair<int, int>> ranges;
-        for (const QJsonValue& value : material.value(QStringLiteral("underlines")).toArray()) {
+        for (const QJsonValue& value : material.value(underlineKey).toArray()) {
             const QJsonObject range = value.toObject();
             const int rangeStart = range.value(QStringLiteral("start")).toInt(-1);
             const int rangeLength = range.value(QStringLiteral("length")).toInt();
@@ -1997,20 +2037,11 @@ void StudioWindow::addManualMaterialUnderline() {
                                           {QStringLiteral("length"), range.second}});
             }
         }
-        material.insert(QStringLiteral("underlines"), merged);
-        currentMaterialItem_->setData(0, Qt::UserRole, material);
-        const QString id = material.value(QStringLiteral("id")).toString();
-        for (int index = 0; index < generatedMaterials_.size(); ++index) {
-            if (generatedMaterials_.at(index).toObject().value(QStringLiteral("id")).toString() == id) {
-                generatedMaterials_[index] = material;
-                break;
-            }
-        }
-        dialog.accept();
+        saveRanges(merged);
     });
     layout->addWidget(buttons);
     if (dialog.exec() == QDialog::Accepted)
-        showReviewQuestion(currentMaterialItem_);
+        showReviewQuestion(target);
 }
 
 bool StudioWindow::saveCurrentReviewQuestion() {
@@ -2027,6 +2058,17 @@ bool StudioWindow::saveCurrentReviewQuestion() {
     if (options.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("无法保存草稿"), QStringLiteral("至少需要一个选项。"));
         return false;
+    }
+    if (stem != question.value(QStringLiteral("stem")).toString()) {
+        if (!question.value(QStringLiteral("stemUnderlines")).toArray().isEmpty() &&
+            QMessageBox::question(this, QStringLiteral("请重新核对下划线"),
+                QStringLiteral("题干已修改，原下划线位置可能失效。保存后将清除旧标记，"
+                               "可用“手动标记下划线”重新设置。继续保存吗？"),
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+            return false;
+        // 编辑题干后旧偏移不再可信，不能把下划线静默移到另一个词上。
+        question.remove(QStringLiteral("stemUnderlines"));
+        reviewStemEditor_->setExtraSelections({});
     }
     question.insert(QStringLiteral("stem"), stem);
     question.insert(QStringLiteral("options"), options);
