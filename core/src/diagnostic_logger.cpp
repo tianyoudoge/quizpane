@@ -462,7 +462,6 @@ void event(const QString& area, const QString& name, const QVariantMap& fields) 
 #if QUIZPANE_DIAGNOSTIC_PROD_MODE
     // 生产包里 event() 是我们自己的低频结构化面包屑，不走 messageHandler
     // 的 warning+ 过滤（否则全被丢掉），直接落盘；同样先脱敏。
-    enabledFlag = isDiagnosticsEnabled();
     if (!enabledFlag.load(std::memory_order_relaxed))
         return;
     QMutexLocker locker(&log.mutex);
