@@ -358,7 +358,6 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
 
     QSet<QString> questionIds;
     QSet<QString> referencedMaterialIds;
-    QHash<QString, QHash<QString, int>> lastQuestionNumberByDocument;
     for (qsizetype index = 0; index < questions.size(); ++index) {
         if (!questions.at(index).isObject()) {
             errors.append({int(index), {}, QStringLiteral("第 %1 题必须是 JSON 对象").arg(index + 1), {}});
@@ -419,22 +418,8 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
         if (invalid) continue;
         questionIds.insert(id);
 
-        const QJsonObject source = question.value("source").toObject();
-        const QString document = source.value("document").toString();
-        const int sourceNumber = source.value("questionNumber").toInt();
-        if (!document.isEmpty() && sourceNumber > 0) {
-            auto& numbers = lastQuestionNumberByDocument[document];
-            const QString section = source.value("sectionId").toString();
-            const auto last = numbers.constFind(section);
-            if (last != numbers.cend() && sourceNumber <= last.value()) {
-                errors.append({int(index), id,
-                    QStringLiteral("第 %1 题的原始小题号 %2 未严格大于同一文档、同一套题上一题 %3；"
-                                   "禁止重号、倒序或静默重编号")
-                        .arg(index + 1).arg(sourceNumber).arg(last.value()), {}});
-            } else {
-                numbers.insert(section, sourceNumber);
-            }
-        }
+        // source.questionNumber 仅用于对照原卷，可以重号或倒序。
+        // 题目身份由上面严格校验的 id 保证；答案歧义在导入阶段处理。
 
         if (question.contains("materialId")) {
             const QString materialId = question.value("materialId").toString();

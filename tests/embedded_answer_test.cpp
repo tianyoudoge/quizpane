@@ -85,11 +85,11 @@ int main(int argc, char** argv) {
         !incomplete.needsReviewQuestions.first().toObject().value("stem").toString().contains("A")) return 11;
     annotation.plainText = QStringLiteral("1.甲（A）\nA.甲\nB.乙\n1.乙（B）\nA.甲\nB.乙\n");
     const auto duplicates = RuleBasedBankGenerator{}.generate({annotation});
-    if (!duplicates.questions.isEmpty() || duplicates.needsReviewQuestions.size() != 2) return 12;
-    for (const auto& value : duplicates.needsReviewQuestions) {
+    if (duplicates.questions.size() != 2 || !duplicates.needsReviewQuestions.isEmpty()) return 12;
+    for (const auto& value : duplicates.questions) {
         const auto q = value.toObject();
         if (q.value("source").toObject().value("questionNumber").toInt() != 1 ||
-            !q.value("review").toObject().value("reason").toString().contains(QStringLiteral("重复"))) return 13;
+            !q.value("source").toObject().value("questionLabel").toString().contains(QStringLiteral("同号第"))) return 13;
     }
     // 原卷空题号不能倒吞上一题的续行和分行选项。
     annotation.plainText = QStringLiteral("138.这是（B）的\n完整题干。\nA.甲\nB.乙\n139.\n140.另题（A）\nA.甲\nB.乙\n");

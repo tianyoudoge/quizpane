@@ -116,6 +116,24 @@ public:
         window.findChild<QPushButton*>(QStringLiteral("reviewCategoryChip"))->click();
         auto* material = window.reviewTree_->topLevelItem(0);
         if (material->isHidden() || material->child(0)->isHidden()) return 13;
+        candidate.materials = {};
+        candidate.questions = {};
+        for (int i = 1; i <= 2; ++i) {
+            auto q = question(QStringLiteral("q%1").arg(i));
+            q.insert("source", QJsonObject{{"questionNumber", 152}, {"questionLabel",
+                QStringLiteral("原第 152 题 · 同号第 %1 处").arg(i)}});
+            candidate.questions.append(q);
+        }
+        window.populateReview(candidate);
+        auto* first = window.reviewTree_->topLevelItem(0)->child(0);
+        auto* second = window.reviewTree_->topLevelItem(0)->child(1);
+        if (first->text(0) == second->text(0) || !second->text(0).contains(QStringLiteral("同号第 2 处"))) return 15;
+        window.showReviewQuestion(second);
+        if (window.reviewDetailTitle_->text() != second->text(0)) return 16;
+        if (!previewDir.isEmpty()) {
+            app.processEvents();
+            if (!window.grab().save(QDir(previewDir).filePath("repeated-numbers.png"))) return 17;
+        }
         return 0;
     }
 };

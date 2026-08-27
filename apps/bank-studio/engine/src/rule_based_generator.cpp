@@ -235,10 +235,12 @@ QJsonObject visualAssetDescriptor(const ExtractedDocument& document, int page,
 
 QRectF questionBoundsFor(const ExtractedDocument& document, int page, int number) {
     const auto& anchors = document.questionAnchors.value(page);
+    QRectF result;
+    int matches = 0;
     for (const PdfTextAnchor& anchor : anchors)
-        if (anchor.text.toInt() == number)
-            return anchor.bounds;
-    return {};
+        if (anchor.text.toInt() == number) { result = anchor.bounds; ++matches; }
+    // 同页重号不能任取第一个坐标，否则两题会共用错误的裁图。
+    return matches == 1 ? result : QRectF{};
 }
 
 QRectF lineBoundsFor(const ExtractedDocument& document, int page, const QString& text) {
@@ -1087,8 +1089,21 @@ int answerSectionEnd(const QList<SourceLine>& lines, int sectionStart,
     return end;
 }
 
-QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionStart, int sectionEnd) {
+QString sortedAnswer(QString answer) {
+    std::sort(answer.begin(), answer.end());
+    return answer;
+}
+
+QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionStart, int sectionEnd,
+                                  QSet<int>* ambiguousNumbers) {
     QHash<int, QString> answers;
+    const auto recordAnswer = [&](int number, const QString& answer) {
+        if (number <= 0 || answer.isEmpty() || ambiguousNumbers->contains(number)) return;
+        if (answers.contains(number) && sortedAnswer(answers.value(number)) != sortedAnswer(answer)) {
+            ambiguousNumbers->insert(number);
+            answers.remove(number);
+        } else answers.insert(number, answer);
+    };
     if (sectionStart < 0)
         return answers;
     const int limit = sectionEnd >= 0 ? sectionEnd : lines.size();
@@ -1136,8 +1151,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             if (!ok || number <= 0)
                 continue;
             const QString answer = normalizeAnswer(ansCells.at(col));
-            if (!answer.isEmpty() && !answers.contains(number))
-                answers.insert(number, answer);
+            recordAnswer(number, answer);
         }
         index = answerLine; // 跳过已消费的答案行
     }
@@ -1179,8 +1193,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             }
             if (last >= first && last - first + 1 == values.size()) {
                 for (int number = first; number <= last; ++number)
-                    if (!answers.contains(number))
-                        answers.insert(number, QString(values.at(number - first)));
+                    recordAnswer(number, QString(values.at(number - first)));
             }
         }
         auto matches = pair.globalMatch(line);
@@ -1192,8 +1205,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             if (trailing.startsWith(QStringLiteral("项")) ||
                 trailing.startsWith(QStringLiteral("选项")))
                 continue;
-            if (number > 0 && !answer.isEmpty() && !answers.contains(number))
-                answers.insert(number, answer);
+            recordAnswer(number, answer);
         }
         // 判断题答案行：形如 “1.√”“2.×”“1.对”“2.错误”。对/错/√/× 不在选择题答案
         // token 内，单独匹配并归一化到合成选项 a(正确)/b(不正确)。一行可含多道，
@@ -1205,15 +1217,14 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             const auto match = booleanMatches.next();
             const int number = match.captured(1).toInt();
             const QString label = booleanAnswerLabel(match.captured(2));
-            if (number > 0 && !label.isEmpty() && !answers.contains(number))
-                answers.insert(number, label);
+            recordAnswer(number, label);
         }
         // 很多真题解析不是“1. A”式答案汇总，而是在题目解析末尾写“故正确
         // 答案为 C”。用最近一个题号归属这条结论，兼容题目文件与答案文件分离。
         const auto narrative = narrativeAnswer.match(line);
-        if (currentNumber > 0 && narrative.hasMatch() && !answers.contains(currentNumber)) {
+        if (currentNumber > 0 && narrative.hasMatch()) {
             const QString answer = normalizeAnswer(narrative.captured(1));
-            if (!answer.isEmpty()) answers.insert(currentNumber, answer);
+            recordAnswer(currentNumber, answer);
         }
     }
     return answers;
@@ -1359,11 +1370,6 @@ const QRegularExpression& trailingExplicitAnswerPattern() {
     static const QRegularExpression pattern(QStringLiteral(
         R"((?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*([A-Fa-f]{1,6})\s*$)"));
     return pattern;
-}
-
-QString sortedAnswer(QString answer) {
-    std::sort(answer.begin(), answer.end());
-    return answer;
 }
 
 // 在完成题干合并和版式恢复后清理答案，同时映射 UTF-16 下划线坐标。
@@ -1650,6 +1656,11 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
 
     QStringList reasons;
     if (!bracketReviewReason.isEmpty()) reasons.append(bracketReviewReason);
+    int samePageAnchors = 0;
+    for (const auto& sourceAnchor : document.questionAnchors.value(sourcePage))
+        if (sourceAnchor.text.toInt() == anchor.number) ++samePageAnchors;
+    if (attachStemImage && samePageAnchors > 1)
+        reasons.append(QStringLiteral("同页原题号重复，无法唯一定位题图；请对照原卷手动裁切并确认，不能共用第一题的截图"));
     if (repeatedOptions)
         reasons.append(QStringLiteral("重复选项标签，可能缺失题号或跨题合并；请对照原卷拆分，不能直接采用"));
     if (stemLines.join(QChar('\n')).trimmed().isEmpty())
@@ -2148,25 +2159,31 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         // 这样阶段二的题目不会被阶段一的答案区吞掉。
         QHash<int, QString> answers;
         QHash<int, QString> solutions;
+        QSet<int> ambiguousAnswerNumbers;
         for (int sectionIndex = 0; sectionIndex < answerSections.size(); ++sectionIndex) {
             const int sectionStart = answerSections.at(sectionIndex);
             const int sectionEnd =
                 answerSectionEnd(lines, sectionStart, anchors, materialMarkers);
-            const auto segmentAnswers = globalAnswers(lines, sectionStart, sectionEnd);
+            const auto segmentAnswers = globalAnswers(lines, sectionStart, sectionEnd, &ambiguousAnswerNumbers);
             for (auto it = segmentAnswers.cbegin(); it != segmentAnswers.cend(); ++it)
-                if (!answers.contains(it.key()))
-                    answers.insert(it.key(), it.value());
+                if (answers.contains(it.key()) && sortedAnswer(answers.value(it.key())) != sortedAnswer(it.value()))
+                    ambiguousAnswerNumbers.insert(it.key());
+                else answers.insert(it.key(), it.value());
             const auto segmentSolutions = globalSolutions(lines, sectionStart, sectionEnd);
             for (auto it = segmentSolutions.cbegin(); it != segmentSolutions.cend(); ++it)
                 if (!solutions.contains(it.key()))
                     solutions.insert(it.key(), it.value());
         }
+        for (int number : ambiguousAnswerNumbers) {
+            answers.remove(number);
+            solutions.remove(number);
+        }
 
         // 同一类网页导出还会把“正确答案：C”集中排在题干之前，且每行没有题号。
         // 只有答案数量恰好等于识别题数时才按顺序配对，避免把普通解析中的答案词
         // 错绑到题目；已有显式题号答案始终优先。
+        QStringList leadingAnswers;
         if (hasAnswerKey && !anchors.isEmpty()) {
-            QStringList leadingAnswers;
             for (int line = 0; line < anchors.first().line; ++line) {
                 const auto match = inlineAnswerPattern().match(lines.at(line).text);
                 if (!match.hasMatch())
@@ -2175,11 +2192,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                 if (!answer.isEmpty())
                     leadingAnswers.append(answer);
             }
-            if (leadingAnswers.size() == anchors.size()) {
-                for (int index = 0; index < anchors.size(); ++index)
-                    if (!answers.contains(anchors.at(index).number))
-                        answers.insert(anchors.at(index).number, leadingAnswers.at(index));
-            }
+            if (leadingAnswers.size() != anchors.size()) leadingAnswers.clear();
         }
 
         if (anchors.isEmpty()) {
@@ -2201,6 +2214,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
 
         QHash<int, int> numberCounts;
         for (const auto& anchor : anchors) ++numberCounts[anchor.number];
+        QHash<int, int> numberOccurrences;
         int questionOrdinal = 0;
         for (int index = 0; index < anchors.size(); ++index) {
             const QuestionAnchor& anchor = anchors.at(index);
@@ -2226,22 +2240,47 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                                    .arg(++questionOrdinal);
             const QString materialId =
                 materialIdForQuestion(materialMarkers, anchor.line, anchor.number);
+            auto questionAnswers = answers;
+            auto questionSolutions = solutions;
+            const bool repeatedNumber = numberCounts.value(anchor.number) > 1;
+            if (repeatedNumber) {
+                // 同号表项不能同时绑定到多道题（解析也不例外）。题内答案仍可用。
+                questionAnswers.remove(anchor.number);
+                questionSolutions.remove(anchor.number);
+            }
+            // 数量严格吻合的前置答案按锚点序号绑定，不写入按题号去重的 map。
+            if (!leadingAnswers.isEmpty() && !questionAnswers.contains(anchor.number) &&
+                !ambiguousAnswerNumbers.contains(anchor.number))
+                questionAnswers.insert(anchor.number, leadingAnswers.at(index));
             QString reviewReason;
             QJsonObject question = parseQuestion(document, lines, anchor, blockEnd, id, materialId,
-                                                 answers, solutions, &result.assets, &reviewReason,
+                                                 questionAnswers, questionSolutions, &result.assets, &reviewReason,
                                                  allowMultipleAnswers,
                                                  isInsideGraphicalReasoningPart(lines, anchor.line),
                                                  hasAnswerKey);
-            // 不同分套已在外层隔离。同一套的印刷重号不能自动采纳到打包时才报错，
-            // 也不能静默改号；所有同号候选均保留，交给用户核对、选择。
-            if (numberCounts.value(anchor.number) > 1) {
-                const QString reason = QStringLiteral("同一套题目中原始题号 %1 重复，已保留原题号；请核对并选择采用的题目")
-                    .arg(anchor.number);
+            if (repeatedNumber) {
+                auto source = question.value("source").toObject();
+                source.insert("questionLabel", QStringLiteral("原第 %1 题 · 同号第 %2 处")
+                    .arg(anchor.number).arg(++numberOccurrences[anchor.number]));
+                question.insert("source", source);
+                if (hasAnswerKey && question.value("answer").toObject().value("optionIds").toArray().isEmpty()) {
+                    const QString reason = QStringLiteral("原题号 %1 重复，不能仅按题号确定答案与解析的归属；请对照原卷确认本题答案")
+                        .arg(anchor.number);
+                    reviewReason = reviewReason.isEmpty() ? reason : reviewReason + QStringLiteral("；") + reason;
+                    auto review = question.value("review").toObject();
+                    review.insert("needsReview", true);
+                    review.insert("riskLevel", "hard");
+                    review.insert("reason", reviewReason);
+                    question.insert("review", review);
+                }
+            }
+            if (hasAnswerKey && ambiguousAnswerNumbers.contains(anchor.number) &&
+                question.value("answer").toObject().value("optionIds").toArray().isEmpty()) {
+                const QString reason = QStringLiteral("答案表中同一题号存在冲突答案，未自动选择；请确认本题答案");
                 reviewReason = reviewReason.isEmpty() ? reason : reviewReason + QStringLiteral("；") + reason;
                 auto review = question.value("review").toObject();
                 review.insert("needsReview", true);
                 review.insert("riskLevel", "hard");
-                review.insert("confidence", 0.25);
                 review.insert("reason", reviewReason);
                 question.insert("review", review);
             }

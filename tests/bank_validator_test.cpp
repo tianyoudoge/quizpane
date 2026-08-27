@@ -82,8 +82,8 @@ int main(int argc, char** argv) {
                                                   {"questionLabel", "1"}});
         questions[1] = outOfOrder;
         bank.insert("questions", questions);
-        if (quizpane::validateBankDetailed(bank).isEmpty()) return 103;
-        // 同文件不同套题可以重启题号；同套重号仍不允许。
+        if (!quizpane::validateBankDetailed(bank).isEmpty()) return 103;
+        // 原题号仅供展示，同套重号、倒序以及跨套重号都允许；id 仍必须唯一。
         auto source = outOfOrder.value("source").toObject();
         source.insert("sectionId", "set-2");
         source.insert("sectionTitle", QStringLiteral("专项刷题二"));

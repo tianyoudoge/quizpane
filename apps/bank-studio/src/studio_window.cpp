@@ -98,6 +98,17 @@ QLabel* mutedLabel(const QString& text) {
     return label;
 }
 
+QString reviewQuestionTitle(const QJsonObject& question) {
+    const auto source = question.value("source").toObject();
+    const int number = source.value("questionNumber").toInt();
+    QString label = source.value("questionLabel").toString();
+    if (label.isEmpty() || label == QString::number(number))
+        label = number > 0 ? QStringLiteral("第 %1 题").arg(number) : question.value("id").toString();
+    const QString section = source.value("sectionTitle").toString();
+    if (!section.isEmpty()) label.prepend(section + QStringLiteral(" · "));
+    return label;
+}
+
 QString studioColorTheme() {
     QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
     const QString value = settings.value(QStringLiteral("ui/colorTheme"),
@@ -1385,13 +1396,7 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
             } else {
                 statusText.clear();
             }
-            const int sourceNumber = question.value("source").toObject()
-                .value("questionNumber").toInt();
-            QString questionLabel = sourceNumber > 0
-                ? QStringLiteral("第 %1 题").arg(sourceNumber)
-                : question.value("id").toString();
-            const QString sectionTitle = question.value("source").toObject().value("sectionTitle").toString();
-            if (!sectionTitle.isEmpty()) questionLabel.prepend(sectionTitle + QStringLiteral(" · "));
+            const QString questionLabel = reviewQuestionTitle(question);
             auto* item = new QTreeWidgetItem(parent, {questionLabel, statusText});
             item->setToolTip(0, questionLabel);
             item->setTextAlignment(0, Qt::AlignLeft | Qt::AlignVCenter);
@@ -1909,13 +1914,7 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
     reviewAnswerEditor_->setReadOnly(false);
     reviewSolutionEditor_->setReadOnly(false);
     const QJsonObject question = entry;
-    const int sourceNumber = question.value("source").toObject()
-        .value("questionNumber").toInt();
-    reviewDetailTitle_->setText(sourceNumber > 0
-        ? (question.value("source").toObject().value("sectionTitle").toString().isEmpty()
-            ? QStringLiteral("第 %1 题").arg(sourceNumber)
-            : QStringLiteral("%1 · 第 %2 题").arg(question.value("source").toObject().value("sectionTitle").toString()).arg(sourceNumber))
-        : QStringLiteral("题目 %1").arg(question.value("id").toString()));
+    reviewDetailTitle_->setText(reviewQuestionTitle(question));
     const QJsonObject review = question.value("review").toObject();
     QString status = item->text(1);
     if (!review.value("reason").toString().isEmpty())

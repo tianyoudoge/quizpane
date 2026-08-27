@@ -190,19 +190,23 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
         }
         QString content = paragraph(source.value("stem").toString(), source.value("stemUnderlines").toArray());
         const QString sectionTitle = source.value("source").toObject().value("sectionTitle").toString();
-        if (!sectionTitle.isEmpty())
-            content.prepend(QStringLiteral("<p><small>%1 · 第 %2 题</small></p>")
-                .arg(sectionTitle.toHtmlEscaped())
-                .arg(source.value("source").toObject().value("questionNumber").toInt()));
+        const int sourceQuestionNumber = source.value("source").toObject().value("questionNumber").toInt();
+        const QString sourceLabel = source.value("source").toObject().value("questionLabel")
+            .toString(QString::number(sourceQuestionNumber));
+        const bool distinctLabel = !sourceLabel.isEmpty() && sourceLabel != QString::number(sourceQuestionNumber);
+        if (!sectionTitle.isEmpty() || distinctLabel) {
+            QString title = distinctLabel ? sourceLabel : QStringLiteral("第 %1 题").arg(sourceQuestionNumber);
+            if (!sectionTitle.isEmpty()) title.prepend(sectionTitle + QStringLiteral(" · "));
+            content.prepend(QStringLiteral("<p><small>%1</small></p>").arg(title.toHtmlEscaped()));
+        }
         const QString stemImageUrl = assetUrl(source.value("stemImage").toObject());
         if (!stemImageUrl.isEmpty())
             content += QStringLiteral("<p><img src=\"%1\" width=\"340\"></p>").arg(stemImageUrl);
         QJsonObject question{{"id", source.value("id")}, {"type", source.value("type")},
             {"contentHtml", content}, {"options", options}};
-        const int sourceQuestionNumber = source.value("source").toObject()
-            .value("questionNumber").toInt();
         if (sourceQuestionNumber > 0)
             question.insert("sourceQuestionNumber", sourceQuestionNumber);
+        if (distinctLabel) question.insert("sourceQuestionLabel", sourceLabel);
         if (!sectionTitle.isEmpty()) question.insert("sourceSectionTitle", sectionTitle);
         if (source.contains("materialId")) question.insert("materialId", source.value("materialId"));
         if (withSolutions && hasAnswerKey_) {
