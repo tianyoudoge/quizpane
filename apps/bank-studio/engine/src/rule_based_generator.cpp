@@ -5,6 +5,7 @@
 #include <QBuffer>
 #include <QCryptographicHash>
 #include <QHash>
+#include <QMap>
 #include <QImage>
 #include <QJsonObject>
 #include <QPainter>
@@ -44,7 +45,7 @@ struct MaterialMarker {
 
 const QRegularExpression& questionPattern() {
     static const QRegularExpression value(QStringLiteral(
-        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?(\d{1,4})\s*(?:题|[．、:：\)）]|\.(?!\d))\s*(.*)$)"));
+        R"(^\s*(?:(?:问题|题目)\s*)?(?:第\s*)?(\d{1,4})\s*(?:题|[．、:：\)）]|\.(?=\d{4}\s*年|\d{1,2}\s*世纪)|\.(?!\d))\s*(.*)$)"));
     return value;
 }
 
@@ -60,6 +61,8 @@ void normalizeTrailingQuestionNumberLayout(QList<SourceLine>* lines) {
         QStringLiteral(R"(^\s*(?:正确答案|你的答案)\s*[:：])"));
     static const QRegularExpression optionRow(
         QStringLiteral(R"((?:^|\s)A\s*[\.．、:：\)）].*(?:\s)B\s*[\.．、:：\)）])"));
+    static const QRegularExpression optionLine(
+        QStringLiteral(R"(^\s*(?:[A-Fa-f]\s*[.．、:：)）]|[①②③④⑤⑥⑦⑧⑨⑩]))"));
     for (int index = 0; index < lines->size(); ++index) {
         const auto marker = questionPattern().match(lines->at(index).text);
         if (!marker.hasMatch() || !marker.captured(2).trimmed().isEmpty())
@@ -69,7 +72,8 @@ void normalizeTrailingQuestionNumberLayout(QList<SourceLine>* lines) {
             const QString previous = lines->at(start - 1).text;
             const auto previousMarker = questionPattern().match(previous);
             if (previous.trimmed().isEmpty() || resultBoundary.match(previous).hasMatch() ||
-                optionRow.match(previous).hasMatch() || previousMarker.hasMatch())
+                optionRow.match(previous).hasMatch() || optionLine.match(previous).hasMatch() ||
+                previousMarker.hasMatch())
                 break;
             --start;
         }
@@ -92,7 +96,7 @@ const QRegularExpression& inlineAnswerPattern() {
 
 const QRegularExpression& solutionPattern() {
     static const QRegularExpression value(
-        QStringLiteral(R"(^\s*(?:【?\s*(?:答案)?解析\s*】?|解答|说明)\s*[:：]?\s*(.*)$)"));
+        QStringLiteral(R"(^\s*(?:【\s*(?:(?:答案)?解析|解答|说明)\s*】\s*[:：]?\s*|(?:(?:答案)?解析|解答|说明)(?:\s*[:：]\s*|\s+|$))(.*)$)"));
     return value;
 }
 
@@ -104,7 +108,7 @@ bool isAnswerSectionHeader(const QString& text) {
 
 bool isMaterialHeader(const QString& text) {
     static const QRegularExpression pattern(QStringLiteral(
-        R"(^\s*(?:[（(][一二三四五六七八九十\d]+[）)]\s*)?(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*\s*[:：]?|阅读(?:下列|以下)(?:材料|文字)|根据(?:下列|以下)(?:统计)?(?:资料|材料)|原文\s*[:：])\s*.*$)"));
+        R"(^\s*(?:[（(][一二三四五六七八九十\d]+[）)]\s*)?(?:(?:材料|资料|阅读材料)\s*[一二三四五六七八九十\d]*(?:\s*[:：].*|\s*)|阅读(?:下列|以下)(?:材料|文字).*|根据(?:下列|以下)(?:统计)?(?:资料|材料).*|原文\s*[:：].*)$)"));
     return pattern.match(text).hasMatch();
 }
 
@@ -231,10 +235,12 @@ QJsonObject visualAssetDescriptor(const ExtractedDocument& document, int page,
 
 QRectF questionBoundsFor(const ExtractedDocument& document, int page, int number) {
     const auto& anchors = document.questionAnchors.value(page);
+    QRectF result;
+    int matches = 0;
     for (const PdfTextAnchor& anchor : anchors)
-        if (anchor.text.toInt() == number)
-            return anchor.bounds;
-    return {};
+        if (anchor.text.toInt() == number) { result = anchor.bounds; ++matches; }
+    // 同页重号不能任取第一个坐标，否则两题会共用错误的裁图。
+    return matches == 1 ? result : QRectF{};
 }
 
 QRectF lineBoundsFor(const ExtractedDocument& document, int page, const QString& text) {
@@ -367,6 +373,48 @@ QJsonArray extractMaterialLayoutImages(const ExtractedDocument& document, int fi
             : QStringLiteral("原卷材料版式（含下划线和填空）")));
     }
     return images;
+}
+
+QJsonObject captureSourceBlock(ExtractedDocument* document, const QList<SourceLine>& lines,
+                               int start, int end, const QString& id,
+                               QHash<QString, QByteArray>* assets) {
+    QMap<int, QRectF> regions;
+    for (int i = start; i < end; ++i) {
+        const auto& line = lines.at(i);
+        const QRectF bounds = lineBoundsFor(*document, line.page, line.text);
+        if (line.page > 0 && !bounds.isEmpty()) regions[line.page] = regions.value(line.page).united(bounds);
+    }
+    if (regions.isEmpty() || regions.size() > 4) return {};
+    ensurePdfPageImages(document, regions.keys());
+    QList<QImage> pieces;
+    int width = 0, height = 0;
+    QRectF firstCrop;
+    for (auto it = regions.cbegin(); it != regions.cend(); ++it) {
+        const QImage page = QImage::fromData(document->pageImages.value(it.key()), "PNG");
+        if (page.isNull()) return {}; // 不把缺页的截图当成完整原文。
+        const qreal top = qMax<qreal>(0, it.value().top() - 0.004);
+        const qreal bottom = qMin<qreal>(1, it.value().bottom() + 0.004);
+        const QRectF crop(0.04, top, 0.92, bottom - top);
+        if (firstCrop.isEmpty()) firstCrop = crop;
+        const QImage piece = page.copy(QRect(qFloor(crop.x() * page.width()), qFloor(crop.y() * page.height()),
+            qCeil(crop.width() * page.width()), qCeil(crop.height() * page.height())).intersected(page.rect()));
+        if (piece.isNull()) return {};
+        pieces.append(piece);
+        width = qMax(width, piece.width());
+        height += piece.height();
+    }
+    QImage combined(width, height, QImage::Format_RGB32);
+    combined.fill(Qt::white);
+    QPainter painter(&combined);
+    int y = 0;
+    for (const auto& piece : pieces) { painter.drawImage(0, y, piece); y += piece.height(); }
+    painter.end();
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    if (!buffer.open(QIODevice::WriteOnly) || !combined.save(&buffer, "PNG")) return {};
+    const QString path = QStringLiteral("assets/%1-%2-reference.png").arg(assetBaseName(document->sourcePath), id);
+    assets->insert(path, bytes);
+    return visualAssetDescriptor(*document, regions.firstKey(), firstCrop, path, QStringLiteral("原卷题目（请核对版式或题目边界）"));
 }
 
 QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, int page,
@@ -738,7 +786,7 @@ QString answerFromOptionText(const QString& rawAnswer,
 
 QList<SourceLine> sourceLines(const ExtractedDocument& document) {
     QList<SourceLine> result;
-    int page = document.hasPageBoundaries ? 1 : 0;
+    int page = document.hasPageBoundaries ? document.firstPageNumber : 0;
     QString current;
     bool paragraphBreakBefore = false;
     bool previousWasCarriageReturn = false;
@@ -783,6 +831,82 @@ QList<SourceLine> sourceLines(const ExtractedDocument& document) {
     return result;
 }
 
+// 只有明确标题后跟第一题才分套；目录标题和没有依据的重号不生成新作用域。
+QList<ExtractedDocument> splitBookletSections(const ExtractedDocument& document) {
+    if (!document.sectionId.isEmpty()) return {document};
+    static const QRegularExpression title(QStringLiteral(
+        R"((?:^|(?<=\f))[ \t]*(专项刷题[一二三四五六七八九十百\d]+|第[一二三四五六七八九十百\d]+套(?:试题|试卷|练习题)?|(?:试卷|套题)[一二三四五六七八九十百\d]+)[ \t]*\r?$)"),
+        QRegularExpression::MultilineOption);
+    QList<QRegularExpressionMatch> headings;
+    auto matches = title.globalMatch(document.plainText);
+    while (matches.hasNext()) headings.append(matches.next());
+    QList<QRegularExpressionMatch> boundaries;
+    for (int i = 0; i < headings.size(); ++i) {
+        const int start = headings.at(i).capturedEnd();
+        const int end = i + 1 < headings.size() ? headings.at(i + 1).capturedStart()
+                                               : document.plainText.size();
+        const QStringList lines = document.plainText.mid(start, end - start)
+            .split(QRegularExpression(QStringLiteral("[\\r\\n\\f]+")));
+        for (const auto& line : lines) {
+            const auto question = questionPattern().match(line);
+            if (!question.hasMatch()) continue;
+            if (question.captured(1).toInt() == 1) boundaries.append(headings.at(i));
+            break;
+        }
+    }
+    if (boundaries.isEmpty()) return {document};
+    QList<ExtractedDocument> result;
+    // 第一份明确标题之前可能还有未命名的试题，不能当成封面/目录丢弃。
+    const QString prefix = document.plainText.left(boundaries.first().capturedStart());
+    bool prefixQuestion = false, prefixOptions = false;
+    for (const auto& line : prefix.split(QRegularExpression(QStringLiteral("[\\r\\n\\f]+")))) {
+        prefixQuestion |= questionPattern().match(line).hasMatch();
+        prefixOptions |= QRegularExpression(QStringLiteral(R"(^\s*[A-Fa-f]\s*[.．、:：)）])")).match(line).hasMatch();
+    }
+    if (prefixQuestion && prefixOptions) {
+        ExtractedDocument ungrouped = document;
+        ungrouped.sectionId = QStringLiteral("set-prefix");
+        ungrouped.sectionTitle = QStringLiteral("未分套题目");
+        ungrouped.plainText = prefix;
+        result.append(ungrouped);
+    }
+    for (int i = 0; i < boundaries.size(); ++i) {
+        const auto& heading = boundaries.at(i);
+        const int start = heading.capturedEnd();
+        const int end = i + 1 < boundaries.size() ? boundaries.at(i + 1).capturedStart()
+                                                : document.plainText.size();
+        ExtractedDocument section = document;
+        section.sectionId = QStringLiteral("set-%1").arg(i + 1);
+        section.sectionTitle = heading.captured(1);
+        section.firstPageNumber += document.plainText.left(start).count(QChar('\f'));
+        section.plainText = document.plainText.mid(start, end - start);
+        result.append(section);
+    }
+    return result;
+}
+
+void removeRepeatedPageFurniture(const ExtractedDocument& document, QList<SourceLine>* lines) {
+    if (!document.hasPageBoundaries || document.lineAnchors.size() < 3) return;
+    const auto keyFor = [](QString text) {
+        return text.simplified().replace(QRegularExpression(QStringLiteral("\\d+")), QStringLiteral("#"));
+    };
+    QHash<QString, QSet<int>> occurrences;
+    QHash<int, QSet<QString>> marginLines;
+    for (auto page = document.lineAnchors.cbegin(); page != document.lineAnchors.cend(); ++page)
+        for (const auto& line : page.value()) {
+            if (line.bounds.bottom() >= 0.075 && line.bounds.top() <= 0.93) continue;
+            const QString key = keyFor(line.text);
+            occurrences[key].insert(page.key());
+            marginLines[page.key()].insert(line.text.simplified());
+        }
+    for (int i = lines->size() - 1; i >= 0; --i) {
+        const auto& line = lines->at(i);
+        if (marginLines.value(line.page).contains(line.text.simplified()) &&
+            occurrences.value(keyFor(line.text)).size() >= qMax(3, document.lineAnchors.size() / 4))
+            lines->removeAt(i);
+    }
+}
+
 QHash<int, QRectF> lineBoundsBySourceIndex(const ExtractedDocument& document,
                                             const QList<SourceLine>& lines) {
     QHash<int, QRectF> result;
@@ -798,27 +922,6 @@ QHash<int, QRectF> lineBoundsBySourceIndex(const ExtractedDocument& document,
                 continue;
             result.insert(index, anchors.at(anchorIndex).bounds);
             cursor = anchorIndex + 1;
-            break;
-        }
-    }
-    return result;
-}
-
-QHash<int, QList<QPair<int, int>>> underlineRangesBySourceIndex(
-    const ExtractedDocument& document, const QList<SourceLine>& lines) {
-    QHash<int, QList<QPair<int, int>>> result;
-    QHash<int, int> decorationCursors;
-    for (int index = 0; index < lines.size(); ++index) {
-        const SourceLine& source = lines.at(index);
-        const QList<PdfUnderlineDecoration>& decorations =
-            document.underlineDecorations.value(source.page);
-        int& cursor = decorationCursors[source.page];
-        for (int decorationIndex = cursor; decorationIndex < decorations.size(); ++decorationIndex) {
-            const PdfUnderlineDecoration& decoration = decorations.at(decorationIndex);
-            if (decoration.text.simplified() != source.text.simplified())
-                continue;
-            result.insert(index, decoration.ranges);
-            cursor = decorationIndex + 1;
             break;
         }
     }
@@ -882,19 +985,6 @@ QStringList reflowVisualLines(const ExtractedDocument& document,
 constexpr QChar kUnderlineStartMarker(0xe000);
 constexpr QChar kUnderlineEndMarker(0xe001);
 
-QString markDetectedUnderlines(QString text, const QList<QPair<int, int>>& ranges) {
-    // 反向插入，避免较早位置的 marker 改变后续 range 的字符索引。
-    for (int index = ranges.size() - 1; index >= 0; --index) {
-        const int start = ranges.at(index).first;
-        const int length = ranges.at(index).second;
-        if (start < 0 || length <= 0 || start + length > text.size())
-            continue;
-        text.insert(start + length, kUnderlineEndMarker);
-        text.insert(start, kUnderlineStartMarker);
-    }
-    return text;
-}
-
 struct MaterialTextWithDecorations {
     QString body;
     QJsonArray underlines;
@@ -903,17 +993,49 @@ struct MaterialTextWithDecorations {
 MaterialTextWithDecorations buildMaterialText(const ExtractedDocument& document,
                                               const QList<SourceLine>& lines,
                                               const QList<int>& sourceIndices,
-                                              const QStringList& bodyLines) {
-    const QHash<int, QList<QPair<int, int>>> rangesBySource =
-        underlineRangesBySourceIndex(document, lines);
+                                              const QStringList& bodyLines,
+                                              bool material = true) {
     QStringList markedLines;
     markedLines.reserve(bodyLines.size());
-    for (int index = 0; index < bodyLines.size(); ++index)
-        markedLines.append(markDetectedUnderlines(bodyLines.at(index),
-            rangesBySource.value(sourceIndices.value(index))));
-    const QString marked = restoreDroppedBlankLines(
-        reflowVisualLines(document, lines, sourceIndices, markedLines)
-            .join(QStringLiteral("\n\n")).trimmed());
+    for (int index = 0; index < bodyLines.size(); ++index) {
+        const QString text = bodyLines.at(index);
+        const SourceLine& source = lines.at(sourceIndices.at(index));
+        const int offset = source.text.indexOf(text);
+        QString marked;
+        bool found = false;
+        for (const auto& decoration : document.underlineDecorations.value(source.page)) {
+            if (offset < 0 || decoration.text != source.text) continue;
+            bool active = false;
+            for (int i = 0; i <= text.size(); ++i) {
+                bool underlined = false;
+                for (const auto& range : decoration.ranges)
+                    if (i < text.size() && i + offset >= range.first &&
+                        i + offset < range.first + range.second) underlined = true;
+                if (active != underlined) marked += underlined ? kUnderlineStartMarker : kUnderlineEndMarker;
+                active = underlined;
+                bool blank = false;
+                for (const auto& range : decoration.blanks) {
+                    // 题号后的空格会被 firstStemLine.trimmed() 去掉，但该空格可能
+                    // 承载真实的句首填空，必须保留几何证据对应的零宽插入位置。
+                    const int begin = qMax(0, range.first - offset);
+                    const int end = range.first + range.second - offset;
+                    if (end >= 0 && i == begin && end <= text.size()) {
+                        marked += QStringLiteral("〔填空〕");
+                        if (end > i) { i = end - 1; blank = true; }
+                        break;
+                    }
+                }
+                if (!blank && i < text.size()) marked += text.at(i);
+            }
+            found = true;
+            break;
+        }
+        markedLines.append(found ? marked : text);
+    }
+    QString marked = reflowVisualLines(document, lines, sourceIndices, markedLines)
+        .join(material ? QStringLiteral("\n\n") : QStringLiteral("\n")).trimmed();
+    if (material) marked = restoreDroppedBlankLines(marked);
+    else marked.replace(QRegularExpression(QStringLiteral("(?:_{2,}|＿{2,})")), QStringLiteral("〔填空〕"));
     MaterialTextWithDecorations result;
     int underlineStart = -1;
     for (const QChar character : marked) {
@@ -967,8 +1089,21 @@ int answerSectionEnd(const QList<SourceLine>& lines, int sectionStart,
     return end;
 }
 
-QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionStart, int sectionEnd) {
+QString sortedAnswer(QString answer) {
+    std::sort(answer.begin(), answer.end());
+    return answer;
+}
+
+QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionStart, int sectionEnd,
+                                  QSet<int>* ambiguousNumbers) {
     QHash<int, QString> answers;
+    const auto recordAnswer = [&](int number, const QString& answer) {
+        if (number <= 0 || answer.isEmpty() || ambiguousNumbers->contains(number)) return;
+        if (answers.contains(number) && sortedAnswer(answers.value(number)) != sortedAnswer(answer)) {
+            ambiguousNumbers->insert(number);
+            answers.remove(number);
+        } else answers.insert(number, answer);
+    };
     if (sectionStart < 0)
         return answers;
     const int limit = sectionEnd >= 0 ? sectionEnd : lines.size();
@@ -1016,8 +1151,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             if (!ok || number <= 0)
                 continue;
             const QString answer = normalizeAnswer(ansCells.at(col));
-            if (!answer.isEmpty() && !answers.contains(number))
-                answers.insert(number, answer);
+            recordAnswer(number, answer);
         }
         index = answerLine; // 跳过已消费的答案行
     }
@@ -1059,8 +1193,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             }
             if (last >= first && last - first + 1 == values.size()) {
                 for (int number = first; number <= last; ++number)
-                    if (!answers.contains(number))
-                        answers.insert(number, QString(values.at(number - first)));
+                    recordAnswer(number, QString(values.at(number - first)));
             }
         }
         auto matches = pair.globalMatch(line);
@@ -1072,8 +1205,7 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             if (trailing.startsWith(QStringLiteral("项")) ||
                 trailing.startsWith(QStringLiteral("选项")))
                 continue;
-            if (number > 0 && !answer.isEmpty() && !answers.contains(number))
-                answers.insert(number, answer);
+            recordAnswer(number, answer);
         }
         // 判断题答案行：形如 “1.√”“2.×”“1.对”“2.错误”。对/错/√/× 不在选择题答案
         // token 内，单独匹配并归一化到合成选项 a(正确)/b(不正确)。一行可含多道，
@@ -1085,15 +1217,14 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
             const auto match = booleanMatches.next();
             const int number = match.captured(1).toInt();
             const QString label = booleanAnswerLabel(match.captured(2));
-            if (number > 0 && !label.isEmpty() && !answers.contains(number))
-                answers.insert(number, label);
+            recordAnswer(number, label);
         }
         // 很多真题解析不是“1. A”式答案汇总，而是在题目解析末尾写“故正确
         // 答案为 C”。用最近一个题号归属这条结论，兼容题目文件与答案文件分离。
         const auto narrative = narrativeAnswer.match(line);
-        if (currentNumber > 0 && narrative.hasMatch() && !answers.contains(currentNumber)) {
+        if (currentNumber > 0 && narrative.hasMatch()) {
             const QString answer = normalizeAnswer(narrative.captured(1));
-            if (!answer.isEmpty()) answers.insert(currentNumber, answer);
+            recordAnswer(currentNumber, answer);
         }
     }
     return answers;
@@ -1151,6 +1282,23 @@ QHash<int, QString> globalSolutions(const QList<SourceLine>& lines, int sectionS
     return solutions;
 }
 
+// 只匹配成对括号内的纯选项字母；中文解释、数字、公式等不在候选范围内。
+// 捕获组 2 包含括号内部的全部空白，便于清理时保留原括号而不残留答案。
+QList<QRegularExpressionMatch> bracketAnswerCandidates(const QString& text) {
+    static const QRegularExpression pattern(QStringLiteral(
+        R"(([（(\[{「『])(\s*[A-Fa-fＡ-Ｆａ-ｆ](?:[\s,，、;；/|+]*[A-Fa-fＡ-Ｆａ-ｆ]){0,5}\s*)([）)\]}」』]))"));
+    const QString opens = QStringLiteral("（([{「『");
+    const QString closes = QStringLiteral("）)]}」』");
+    QList<QRegularExpressionMatch> result;
+    auto matches = pattern.globalMatch(text);
+    while (matches.hasNext()) {
+        const auto match = matches.next();
+        if (opens.indexOf(match.captured(1)) == closes.indexOf(match.captured(3)))
+            result.append(match);
+    }
+    return result;
+}
+
 // 切分一行内的选项。返回选项列表（label 已归一化为 a/b/c…）与首个选项 marker
 // 之前的题干前缀。支持的 marker 形式：字母 `A.`、圈码 `①`、带点数字 `⒈`、
 // 括号数字 `(1)` 与尾括号数字 `1)`。
@@ -1171,11 +1319,17 @@ QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefi
         R"(|[（(\[{「『]\s*([1-9])\s*[)）\]}」』]\s*)"                  // (1) 形式（各种括号）
         R"(|(?<![A-Za-z0-9])([1-9])\s*[)）\]」』]\s*)"));               // 1) 形式
     QList<QRegularExpressionMatch> markers;
+    const auto brackets = bracketAnswerCandidates(line);
     auto iterator = marker.globalMatch(line);
     while (iterator.hasNext()) {
         const auto match = iterator.next();
-        if (!allowNumericLabels && match.captured(1).isEmpty() &&
-            match.captured(2).isEmpty() && match.captured(3).isEmpty())
+        bool inBracket = false;
+        for (const auto& bracket : brackets)
+            if (match.capturedStart() >= bracket.capturedStart() &&
+                match.capturedStart() < bracket.capturedEnd()) { inBracket = true; break; }
+        if (inBracket) continue; // “（ A ）”不是选项“A）”，即使后面紧跟真正的 A./B.。
+        // 题内已有明确 A./B. 选项时，①②等是题干中的编号陈述，不再切成选项。
+        if (!allowNumericLabels && match.captured(1).isEmpty())
             continue;
         markers.append(match);
     }
@@ -1212,29 +1366,34 @@ QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefi
     return result;
 }
 
-// 题干/选项行末尾带的答案抽取。返回归一化后的答案字母串，空表示未识别。
-// 支持两种尾随形式：
-//   1) “答案：A” / “【答案】AB” 这类带答案词的；
-//   2) “（A）” / “(A)” / “（AB）” 这类题干末尾直接括号写答案的（选择题写法）。
-// 优先级低于以答案词开头的整行答案。
-QString trailingAnswer(const QString& line) {
-    static const QRegularExpression wordAnswer(QStringLiteral(
+const QRegularExpression& trailingExplicitAnswerPattern() {
+    static const QRegularExpression pattern(QStringLiteral(
         R"((?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*([A-Fa-f]{1,6})\s*$)"));
-    auto match = wordAnswer.match(line);
-    if (match.hasMatch())
-        return normalizeAnswer(match.captured(1));
-    // 题干末尾括号答案：（A） 「AB」 [A] {A}，括号兼容各种书写习惯。要求括号前
-    // 有题干文字（start!=0），避免把整行选项“(A) ...”误判为答案。
-    static const QRegularExpression bracketAnswer(QStringLiteral(
-        R"([（(\[{「『]\s*([A-Fa-f]{1,6})\s*[)）\]}」』]\s*$)"));
-    match = bracketAnswer.match(line);
-    if (match.hasMatch()) {
-        const int start = match.capturedStart();
-        if (start == 0)
-            return {};
-        return normalizeAnswer(match.captured(1));
+    return pattern;
+}
+
+// 在完成题干合并和版式恢复后清理答案，同时映射 UTF-16 下划线坐标。
+void blankBracketAnswer(MaterialTextWithDecorations* stem, const QRegularExpressionMatch& match) {
+    const int start = match.capturedStart(2), end = match.capturedEnd(2);
+    const auto remap = [start, end](int position) {
+        if (position <= start) return position;
+        if (position >= end) return position - (end - start) + 1;
+        return start;
+    };
+    QJsonArray ranges;
+    for (const auto& value : stem->underlines) {
+        auto range = value.toObject();
+        const int oldStart = range.value("start").toInt();
+        const int newStart = remap(oldStart);
+        const int newEnd = remap(oldStart + range.value("length").toInt());
+        if (newEnd > newStart) {
+            range.insert("start", newStart);
+            range.insert("length", newEnd - newStart);
+            ranges.append(range);
+        }
     }
-    return {};
+    stem->body.replace(start, end - start, QStringLiteral("　"));
+    stem->underlines = ranges;
 }
 
 QString materialIdForQuestion(const QList<MaterialMarker>& materials, int questionLine,
@@ -1277,40 +1436,57 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
     };
     QList<QPair<QString, QString>> options;
     QString rawAnswer;
+    QStringList explicitAnswers;
+    const auto recordAnswer = [&](const QString& value) {
+        rawAnswer = value.trimmed();
+        explicitAnswers.append(rawAnswer);
+    };
     QStringList solutionLines;
     bool inSolution = false;
     bool afterOptions = false;
     static const QRegularExpression explicitLetterOption(QStringLiteral(
         R"((?:^|\s)[A-Fa-f]\s*[\.．、:：\)）])"));
-    bool hasExplicitLetterOptions =
-        explicitLetterOption.match(anchor.firstStemLine).hasMatch();
+    const auto hasLetterOption = [&](const QString& text) {
+        const auto brackets = bracketAnswerCandidates(text);
+        auto matches = explicitLetterOption.globalMatch(text);
+        while (matches.hasNext()) {
+            const auto match = matches.next();
+            bool inBracket = false;
+            for (const auto& bracket : brackets)
+                if (match.capturedStart() >= bracket.capturedStart() &&
+                    match.capturedStart() < bracket.capturedEnd()) { inBracket = true; break; }
+            if (!inBracket) return true;
+        }
+        return false;
+    };
+    bool hasExplicitLetterOptions = hasLetterOption(anchor.firstStemLine);
     for (int index = anchor.line + 1; index < blockEnd && !hasExplicitLetterOptions; ++index)
-        hasExplicitLetterOptions = explicitLetterOption.match(lines.at(index).text).hasMatch();
+        hasExplicitLetterOptions = hasLetterOption(lines.at(index).text);
     const bool allowNumericOptionLabels = !hasExplicitLetterOptions;
     QString firstPrefix;
     if (!anchor.firstStemLine.isEmpty()) {
+        QString firstLine = anchor.firstStemLine;
+        const auto tail = trailingExplicitAnswerPattern().match(firstLine);
+        if (tail.hasMatch()) {
+            recordAnswer(tail.captured(1));
+            firstLine = firstLine.left(tail.capturedStart()).trimmed();
+        }
         // 题号行可能同行带选项：1. 题干 A.甲 B.乙…。先抽选项，剩余文本作为题干。
         const auto firstOptions =
-            optionsOnLine(anchor.firstStemLine, &firstPrefix, allowNumericOptionLabels);
-        if (!firstOptions.isEmpty())
+            optionsOnLine(firstLine, &firstPrefix, allowNumericOptionLabels);
+        if (!firstOptions.isEmpty()) {
             options += firstOptions;
-        const QString tailAnswer = trailingAnswer(anchor.firstStemLine);
-        if (!tailAnswer.isEmpty())
-            rawAnswer = tailAnswer;
+            afterOptions = true;
+        }
         // 题干前缀：优先用切选项后剩的前缀，否则用整行（移除尾随答案）。
         if (!firstPrefix.isEmpty())
             appendStem(firstPrefix, anchor.line);
         else {
-            const auto answerMatch = inlineAnswerPattern().match(anchor.firstStemLine);
+            const auto answerMatch = inlineAnswerPattern().match(firstLine);
             if (answerMatch.hasMatch()) {
-                rawAnswer = answerMatch.captured(1).trimmed();
-            } else {
-                QString stem = anchor.firstStemLine;
-                static const QRegularExpression stripTrailing(QStringLiteral(
-                    R"((?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*[A-Fa-f]{1,6}\s*$)"));
-                stem.remove(stripTrailing);
-                appendStem(stem, anchor.line);
-            }
+                recordAnswer(answerMatch.captured(1));
+            } else if (firstOptions.isEmpty())
+                appendStem(firstLine, anchor.line);
         }
     }
 
@@ -1320,7 +1496,7 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
             continue;
         const auto answerMatch = inlineAnswerPattern().match(line);
         if (answerMatch.hasMatch()) {
-            rawAnswer = answerMatch.captured(1).trimmed();
+            recordAnswer(answerMatch.captured(1));
             inSolution = false;
             continue;
         }
@@ -1336,32 +1512,62 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
             solutionLines.append(line);
             continue;
         }
-        // 行尾可能带尾随答案（“答案：A”或题干末尾“（A）”括号答案）。先剥掉再
-        // 切选项，避免把答案文本粘到最后一个选项文本末尾。
-        static const QRegularExpression trailingAnswerCut(QStringLiteral(
-            R"(\s*(?:【?\s*(?:参考|标准)?答案\s*】?|正确答案)\s*[:：]\s*[A-Fa-f]{1,6}\s*$"
-            R"(|[（(]\s*[A-Fa-f]{1,6}\s*[)）]\s*$))"));
+        // 只提前剥离显式“答案：A”。括号必须留到题干/选项分离之后再判断，
+        // 否则会误删选项里的注释，或在冲突时提前丢失原文。
         QString lineForOptions = line;
-        const auto cutMatch = trailingAnswerCut.match(lineForOptions);
+        const auto cutMatch = trailingExplicitAnswerPattern().match(lineForOptions);
         if (cutMatch.hasMatch()) {
             lineForOptions = lineForOptions.left(cutMatch.capturedStart()).trimmed();
-            const QString tailAnswer = trailingAnswer(line);
-            if (rawAnswer.isEmpty() && !tailAnswer.isEmpty())
-                rawAnswer = tailAnswer;
+            recordAnswer(cutMatch.captured(1));
         }
+        QString prefix;
         const auto parsedOptions =
-            optionsOnLine(lineForOptions, nullptr, allowNumericOptionLabels);
+            optionsOnLine(lineForOptions, &prefix, allowNumericOptionLabels);
         if (!parsedOptions.isEmpty()) {
+            if (!afterOptions && !prefix.isEmpty()) appendStem(prefix, index);
             options += parsedOptions;
             afterOptions = true;
         } else if (afterOptions && !options.isEmpty()) {
             // 选项已出现后的续行：仍可能含尾随答案，已剥过；归入最后选项文本。
             options.last().second += QStringLiteral("\n") + lineForOptions;
         } else {
-            appendStem(lineForOptions.isEmpty() ? line : lineForOptions, index);
+            appendStem(lineForOptions, index);
         }
     }
-    stemLines = reflowVisualLines(document, lines, stemSourceIndices, stemLines);
+    auto decoratedStem = buildMaterialText(document, lines, stemSourceIndices, stemLines, false);
+    QString bracketReviewReason;
+    const auto bracketCandidates = bracketAnswerCandidates(decoratedStem.body);
+    if (bracketCandidates.size() > 1) {
+        bracketReviewReason = QStringLiteral("题干中有多处疑似括号答案，已保留原文；请确认答案及应清理的位置");
+    } else if (bracketCandidates.size() == 1) {
+        const auto& bracket = bracketCandidates.first();
+        const QString candidate = normalizeAnswer(bracket.captured(2));
+        QSet<QString> available;
+        for (const auto& option : options) available.insert(option.first);
+        bool validOptions = available.size() >= 2 && available.size() == options.size();
+        for (const QChar letter : candidate)
+            validOptions &= available.contains(QString(letter.toLower()));
+        const bool multiple = allowMultipleAnswers || decoratedStem.body.contains(
+            QRegularExpression(QStringLiteral("多选|多项选|不定项")));
+        if (!validOptions) {
+            bracketReviewReason = QStringLiteral("括号中的疑似答案无法对应完整且唯一的选项，已保留原文；请核对");
+        } else if (candidate.size() > 1 && !multiple) {
+            bracketReviewReason = QStringLiteral("括号包含多个答案字母，但题目未标注多选，已保留原文；请核对");
+        } else {
+            bool conflict = false;
+            for (const QString& explicitAnswer : explicitAnswers)
+                conflict |= sortedAnswer(answerFromOptionText(explicitAnswer, options)) != sortedAnswer(candidate);
+            if (answerKey.contains(anchor.number))
+                conflict |= sortedAnswer(answerKey.value(anchor.number)) != sortedAnswer(candidate);
+            if (conflict) {
+                bracketReviewReason = QStringLiteral("括号答案与显式答案或答案表不一致，已保留原文；请确认正确答案");
+            } else {
+                rawAnswer = candidate;
+                blankBracketAnswer(&decoratedStem, bracket);
+            }
+        }
+    }
+    stemLines = decoratedStem.body.split(QChar('\n'));
     QString answer = answerFromOptionText(rawAnswer, options);
     if (answer.isEmpty())
         answer = answerKey.value(anchor.number);
@@ -1369,6 +1575,7 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
         solutionLines.append(solutionKey.value(anchor.number));
 
     const QString visualText = stemLines.join(QChar('\n'));
+    const bool hasLayoutCue = visualText.contains(QRegularExpression(QStringLiteral("划线|画线|横线|下划线|空白处")));
     // 判断题：题干以空括号“（ ）”结尾且没有列 A/B 选项。合成“正确/不正确”两个
     // 选项走现有 true_false 通道（schema、校验器、前端 RadioButton 全兼容），答案
     // 由 对/错/√/× 归一化到合成选项。rawAnswer 优先，其次全局答案区。
@@ -1431,9 +1638,9 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
 
     QJsonArray jsonOptions;
     QSet<QString> optionIds;
+    bool repeatedOptions = false;
     for (const auto& option : options) {
-        if (optionIds.contains(option.first))
-            continue;
+        if (optionIds.contains(option.first)) repeatedOptions = true;
         optionIds.insert(option.first);
         QJsonObject jsonOption{{"id", option.first}, {"text", option.second}};
         if (optionImages.contains(option.first))
@@ -1448,6 +1655,14 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
     }
 
     QStringList reasons;
+    if (!bracketReviewReason.isEmpty()) reasons.append(bracketReviewReason);
+    int samePageAnchors = 0;
+    for (const auto& sourceAnchor : document.questionAnchors.value(sourcePage))
+        if (sourceAnchor.text.toInt() == anchor.number) ++samePageAnchors;
+    if (attachStemImage && samePageAnchors > 1)
+        reasons.append(QStringLiteral("同页原题号重复，无法唯一定位题图；请对照原卷手动裁切并确认，不能共用第一题的截图"));
+    if (repeatedOptions)
+        reasons.append(QStringLiteral("重复选项标签，可能缺失题号或跨题合并；请对照原卷拆分，不能直接采用"));
     if (stemLines.join(QChar('\n')).trimmed().isEmpty())
         reasons.append(QStringLiteral("缺少题干"));
     if (jsonOptions.size() < 2)
@@ -1494,12 +1709,18 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
         source.insert("page", lines.at(anchor.line).page);
     source.insert("questionNumber", anchor.number);
     source.insert("questionLabel", QString::number(anchor.number));
+    if (!document.sectionId.isEmpty()) {
+        source.insert("sectionId", document.sectionId);
+        source.insert("sectionTitle", document.sectionTitle);
+    }
     QJsonObject question{{"id", stableId},
                          {"catalogId", "generated"},
                          {"type", type},
                          {"stem", stemLines.join(QChar('\n')).trimmed()},
                          {"options", jsonOptions},
                          {"source", source}};
+    if (!decoratedStem.underlines.isEmpty() && question.value("stem").toString() == decoratedStem.body)
+        question.insert("stemUnderlines", decoratedStem.underlines);
     if (hasAnswerKey) {
         question.insert("answer", QJsonObject{{"optionIds", answerIds}});
         question.insert("solution", solutionLines.join(QChar('\n')).trimmed());
@@ -1531,6 +1752,11 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
                 QRectF(0.0, 0.0, 1.0, 1.0), path, QStringLiteral("原卷图表")));
         }
     }
+    if (!question.contains("stemImage") && (repeatedOptions ||
+        (hasLayoutCue && decoratedStem.underlines.isEmpty() && !decoratedStem.body.contains(QStringLiteral("〔填空〕"))))) {
+        const auto reference = captureSourceBlock(&document, lines, anchor.line, blockEnd, stableId, generatedAssets);
+        if (!reference.isEmpty()) question.insert("stemImage", reference);
+    }
     // 高危名单：结构可能完全合法，但内容正确性规则原理上验证不了，命中即强制
     // 复核（riskLevel=soft），不因为规则没报错就免检放行。跨页题的信号计算依赖
     // 相邻题的版面位置，留待后续批量审计阶段（RuleBasedGenerationAudit）补充。
@@ -1543,6 +1769,9 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
     if (!materialId.isEmpty() && stemJoined.contains(QRegularExpression(
             QStringLiteral("划线|填入.*(?:空白|横线|下划线)|空白处"))))
         softSignals.append(QStringLiteral("material-layout:underline-or-blank"));
+    if (materialId.isEmpty() && stemJoined.contains(QRegularExpression(
+            QStringLiteral("划线|画线|横线|下划线|空白处"))))
+        softSignals.append(QStringLiteral("stem-layout:underline-or-blank"));
     bool hasImageOption = false;
     for (const auto& optionValue : jsonOptions)
         if (optionValue.toObject().contains("image")) { hasImageOption = true; break; }
@@ -1562,7 +1791,9 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
         // 而不是像 hard 失败那样打回 needsReviewQuestions 数组。
         question.insert("review", QJsonObject{{"needsReview", true},
                                               {"confidence", document.usedOcr ? 0.6 : 0.7},
-                                              {"reason", QStringLiteral("规则无法验证图表/图形内容的正确性，请核对原图")},
+                                              {"reason", hasLayoutCue
+                                                  ? QStringLiteral("请对照原卷核对划线词句、填空数量和位置；必要时可手动标记下划线")
+                                                  : QStringLiteral("规则无法验证图表/图形内容的正确性，请核对原图")},
                                               {"riskLevel", "soft"},
                                               {"signals", QJsonArray::fromStringList(softSignals)}});
     } else {
@@ -1612,7 +1843,8 @@ void applyRuleBasedGenerationAudit(RuleBasedGenerationResult* result, bool hasAn
     for (qsizetype index = 0; index < result->questions.size(); ++index) {
         const QJsonObject question = result->questions.at(index).toObject();
         const QString document = question.value("source").toObject().value("document").toString();
-        indicesByDocument[document].append(int(index));
+        const QString section = question.value("source").toObject().value("sectionId").toString();
+        indicesByDocument[document + QChar(0x1f) + section].append(int(index));
     }
 
     for (auto it = indicesByDocument.constBegin(); it != indicesByDocument.constEnd(); ++it) {
@@ -1629,13 +1861,20 @@ void applyRuleBasedGenerationAudit(RuleBasedGenerationResult* result, bool hasAn
             if (number > 0) numbers.append(number);
         }
         if (numbers.size() == indices.size()) {
+            // 待复核的题仍然已识别，不能再次报为漏题。
+            for (const auto& value : result->needsReviewQuestions) {
+                const auto source = value.toObject().value("source").toObject();
+                if (source.value("document").toString() + QChar(0x1f) +
+                    source.value("sectionId").toString() == it.key())
+                    numbers.append(source.value("questionNumber").toInt());
+            }
             std::sort(numbers.begin(), numbers.end());
             QStringList missing;
             for (int expected = numbers.first(); expected <= numbers.last(); ++expected)
                 if (!numbers.contains(expected)) missing.append(QString::number(expected));
             if (!missing.isEmpty())
                 result->warnings.append(QStringLiteral("%1：题号 %2—%3 之间缺少第 %4 题，"
-                    "请核对是否有题目未被识别").arg(it.key()).arg(numbers.first())
+                    "请核对是否有题目未被识别").arg(QString(it.key()).replace(QChar(0x1f), QStringLiteral(" · "))).arg(numbers.first())
                     .arg(numbers.last()).arg(missing.join(QStringLiteral("、"))));
         }
 
@@ -1695,11 +1934,14 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
     RuleBasedGenerationResult result;
     result.hasAnswerKey = hasAnswerKey;
     int documentOrdinal = 0;
-    for (const auto& sourceDocument : documents) {
+    QList<ExtractedDocument> scopedDocuments;
+    for (const auto& document : documents) scopedDocuments.append(splitBookletSections(document));
+    for (const auto& sourceDocument : scopedDocuments) {
         // 下划线装饰是按需补充的版面元数据，生成时只影响当前文档的副本。
         ExtractedDocument document = sourceDocument;
         ++documentOrdinal;
         QList<SourceLine> lines = sourceLines(document);
+        removeRepeatedPageFurniture(document, &lines);
         normalizeTrailingQuestionNumberLayout(&lines);
 
         // 收集所有答案区头行号。整体前后分开的文件只有一个，阶段分组的文件
@@ -1815,6 +2057,20 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         // 它所属共享材料的正文行。这样不会再整卷逐字符扫描，也不会把无关页面
         // 的装饰误收进材料文本。
         QHash<int, QStringList> underlineCandidateLinesByPage;
+        for (int i = 0; i < anchors.size(); ++i) {
+            const int start = anchors.at(i).line;
+            const int end = i + 1 < anchors.size() ? anchors.at(i + 1).line : contentEnd;
+            bool layoutCue = false;
+            for (int j = start; j < end; ++j)
+                if (lines.at(j).text.contains(QRegularExpression(
+                        QStringLiteral("划线|画线|横线|下划线|空白处")))) layoutCue = true;
+            if (!layoutCue) continue;
+            for (int j = start; j < end; ++j) {
+                const auto& source = lines.at(j);
+                if (j > start && !optionsOnLine(source.text, nullptr, false).isEmpty()) break;
+                if (source.page > 0) underlineCandidateLinesByPage[source.page].append(source.text);
+            }
+        }
         for (int markerIndex = 0; markerIndex < materialMarkers.size(); ++markerIndex) {
             const MaterialMarker& marker = materialMarkers.at(markerIndex);
             const int materialEndLine = markerIndex + 1 < materialMarkers.size()
@@ -1903,25 +2159,31 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         // 这样阶段二的题目不会被阶段一的答案区吞掉。
         QHash<int, QString> answers;
         QHash<int, QString> solutions;
+        QSet<int> ambiguousAnswerNumbers;
         for (int sectionIndex = 0; sectionIndex < answerSections.size(); ++sectionIndex) {
             const int sectionStart = answerSections.at(sectionIndex);
             const int sectionEnd =
                 answerSectionEnd(lines, sectionStart, anchors, materialMarkers);
-            const auto segmentAnswers = globalAnswers(lines, sectionStart, sectionEnd);
+            const auto segmentAnswers = globalAnswers(lines, sectionStart, sectionEnd, &ambiguousAnswerNumbers);
             for (auto it = segmentAnswers.cbegin(); it != segmentAnswers.cend(); ++it)
-                if (!answers.contains(it.key()))
-                    answers.insert(it.key(), it.value());
+                if (answers.contains(it.key()) && sortedAnswer(answers.value(it.key())) != sortedAnswer(it.value()))
+                    ambiguousAnswerNumbers.insert(it.key());
+                else answers.insert(it.key(), it.value());
             const auto segmentSolutions = globalSolutions(lines, sectionStart, sectionEnd);
             for (auto it = segmentSolutions.cbegin(); it != segmentSolutions.cend(); ++it)
                 if (!solutions.contains(it.key()))
                     solutions.insert(it.key(), it.value());
         }
+        for (int number : ambiguousAnswerNumbers) {
+            answers.remove(number);
+            solutions.remove(number);
+        }
 
         // 同一类网页导出还会把“正确答案：C”集中排在题干之前，且每行没有题号。
         // 只有答案数量恰好等于识别题数时才按顺序配对，避免把普通解析中的答案词
         // 错绑到题目；已有显式题号答案始终优先。
+        QStringList leadingAnswers;
         if (hasAnswerKey && !anchors.isEmpty()) {
-            QStringList leadingAnswers;
             for (int line = 0; line < anchors.first().line; ++line) {
                 const auto match = inlineAnswerPattern().match(lines.at(line).text);
                 if (!match.hasMatch())
@@ -1930,11 +2192,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                 if (!answer.isEmpty())
                     leadingAnswers.append(answer);
             }
-            if (leadingAnswers.size() == anchors.size()) {
-                for (int index = 0; index < anchors.size(); ++index)
-                    if (!answers.contains(anchors.at(index).number))
-                        answers.insert(anchors.at(index).number, leadingAnswers.at(index));
-            }
+            if (leadingAnswers.size() != anchors.size()) leadingAnswers.clear();
         }
 
         if (anchors.isEmpty()) {
@@ -1954,6 +2212,9 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                 sectionHeadings.append({index, isMultiAnswerSectionHeading(text)});
         }
 
+        QHash<int, int> numberCounts;
+        for (const auto& anchor : anchors) ++numberCounts[anchor.number];
+        QHash<int, int> numberOccurrences;
         int questionOrdinal = 0;
         for (int index = 0; index < anchors.size(); ++index) {
             const QuestionAnchor& anchor = anchors.at(index);
@@ -1979,12 +2240,50 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                                    .arg(++questionOrdinal);
             const QString materialId =
                 materialIdForQuestion(materialMarkers, anchor.line, anchor.number);
+            auto questionAnswers = answers;
+            auto questionSolutions = solutions;
+            const bool repeatedNumber = numberCounts.value(anchor.number) > 1;
+            if (repeatedNumber) {
+                // 同号表项不能同时绑定到多道题（解析也不例外）。题内答案仍可用。
+                questionAnswers.remove(anchor.number);
+                questionSolutions.remove(anchor.number);
+            }
+            // 数量严格吻合的前置答案按锚点序号绑定，不写入按题号去重的 map。
+            if (!leadingAnswers.isEmpty() && !questionAnswers.contains(anchor.number) &&
+                !ambiguousAnswerNumbers.contains(anchor.number))
+                questionAnswers.insert(anchor.number, leadingAnswers.at(index));
             QString reviewReason;
             QJsonObject question = parseQuestion(document, lines, anchor, blockEnd, id, materialId,
-                                                 answers, solutions, &result.assets, &reviewReason,
+                                                 questionAnswers, questionSolutions, &result.assets, &reviewReason,
                                                  allowMultipleAnswers,
                                                  isInsideGraphicalReasoningPart(lines, anchor.line),
                                                  hasAnswerKey);
+            if (repeatedNumber) {
+                auto source = question.value("source").toObject();
+                source.insert("questionLabel", QStringLiteral("原第 %1 题 · 同号第 %2 处")
+                    .arg(anchor.number).arg(++numberOccurrences[anchor.number]));
+                question.insert("source", source);
+                if (hasAnswerKey && question.value("answer").toObject().value("optionIds").toArray().isEmpty()) {
+                    const QString reason = QStringLiteral("原题号 %1 重复，不能仅按题号确定答案与解析的归属；请对照原卷确认本题答案")
+                        .arg(anchor.number);
+                    reviewReason = reviewReason.isEmpty() ? reason : reviewReason + QStringLiteral("；") + reason;
+                    auto review = question.value("review").toObject();
+                    review.insert("needsReview", true);
+                    review.insert("riskLevel", "hard");
+                    review.insert("reason", reviewReason);
+                    question.insert("review", review);
+                }
+            }
+            if (hasAnswerKey && ambiguousAnswerNumbers.contains(anchor.number) &&
+                question.value("answer").toObject().value("optionIds").toArray().isEmpty()) {
+                const QString reason = QStringLiteral("答案表中同一题号存在冲突答案，未自动选择；请确认本题答案");
+                reviewReason = reviewReason.isEmpty() ? reason : reviewReason + QStringLiteral("；") + reason;
+                auto review = question.value("review").toObject();
+                review.insert("needsReview", true);
+                review.insert("riskLevel", "hard");
+                review.insert("reason", reviewReason);
+                question.insert("review", review);
+            }
             const QJsonObject stemImage = question.value("stemImage").toObject();
             const QString assetPath = stemImage.value("path").toString();
             if (!assetPath.isEmpty() && !result.assets.contains(assetPath)) {

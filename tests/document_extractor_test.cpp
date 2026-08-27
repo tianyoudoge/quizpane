@@ -3,6 +3,8 @@
 
 #include <QFile>
 #include <QGuiApplication>
+#include <QImage>
+#include <QPainter>
 #include <QTemporaryDir>
 
 #include <cstdio>
@@ -10,6 +12,23 @@
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
     QGuiApplication app(argc, argv);
+    // 透明 PDF 背景、字底笔画、单字下划线、无文字的空白横线必须区分。
+    {
+        QImage image(240, 100, QImage::Format_ARGB32);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        painter.fillRect(QRect(20, 33, 18, 2), Qt::black);
+        painter.fillRect(QRect(42, 48, 18, 2), Qt::black);
+        painter.fillRect(QRect(100, 35, 18, 2), Qt::black);
+        painter.fillRect(QRect(18, 51, 23, 1), Qt::black);
+        painter.fillRect(QRect(63, 51, 34, 1), Qt::black);
+        painter.end();
+        const QList<QRectF> boxes{{20.0 / 240, .3, 18.0 / 240, .2},
+            {42.0 / 240, .3, 18.0 / 240, .2}, {}, {100.0 / 240, .3, 18.0 / 240, .2}};
+        const auto result = quizpane::studio::detectRenderedLineDecorations(image, QStringLiteral("甲乙 丙"), boxes);
+        if (result.ranges != QList<QPair<int, int>>{{0, 1}} ||
+            result.blanks != QList<QPair<int, int>>{{2, 1}}) return 20;
+    }
     QTemporaryDir directory;
     if (!directory.isValid())
         return 1;

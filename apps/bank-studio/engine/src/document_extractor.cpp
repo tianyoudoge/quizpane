@@ -14,6 +14,7 @@
 #include <QColor>
 #include <QImage>
 #include <QImageWriter>
+#include <QPainter>
 #ifdef QUIZPANE_HAS_QT_PDF
 #include <QPdfDocument>
 #include <QPdfSelection>
@@ -39,9 +40,20 @@
 
 #include <cmath>
 #include <limits>
+#include <algorithm>
 
 namespace quizpane::studio {
 namespace {
+
+QImage whiteBackground(const QImage& source) {
+    if (source.isNull()) return {};
+    QImage flat(source.size(), QImage::Format_RGB32);
+    flat.fill(Qt::white);
+    QPainter painter(&flat);
+    painter.drawImage(0, 0, source);
+    painter.end();
+    return flat;
+}
 
 bool hasSuffix(const QString& path, const QStringList& suffixes) {
     const QString suffix = QFileInfo(path).suffix().toLower();
@@ -183,7 +195,7 @@ QString docxPlainText(const QByteArray& xmlBytes, QString* error) {
 bool hasVisibleInk(const QImage& source) {
     if (source.isNull())
         return false;
-    const QImage image = source.convertToFormat(QImage::Format_Grayscale8);
+    const QImage image = whiteBackground(source).convertToFormat(QImage::Format_Grayscale8);
     const int stepX = qMax(1, image.width() / 300);
     const int stepY = qMax(1, image.height() / 300);
     qsizetype samples = 0;
@@ -234,36 +246,6 @@ QRectF normalizedSelectionBounds(QPdfDocument* document, int page, int start, in
         return {};
     return {bounds.x() / pageSize.width(), bounds.y() / pageSize.height(),
             bounds.width() / pageSize.width(), bounds.height() / pageSize.height()};
-}
-
-bool hasRenderedUnderline(const QImage& image, const QRectF& normalizedBounds) {
-    if (image.isNull() || normalizedBounds.isEmpty())
-        return false;
-    const int left = qBound(0, qFloor(normalizedBounds.left() * image.width()), image.width() - 1);
-    const int right = qBound(left + 1, qCeil(normalizedBounds.right() * image.width()), image.width());
-    const int top = qBound(0, qFloor(normalizedBounds.top() * image.height()), image.height() - 1);
-    const int bottom = qBound(top + 1, qCeil(normalizedBounds.bottom() * image.height()), image.height());
-    const int width = right - left;
-    const int height = bottom - top;
-    if (width < 5 || height < 5)
-        return false;
-    // 下划线位于文字选择框的下 1/4。该位置的像素应在几乎整个字符宽度内连续
-    // 为深色，且是很薄的横向笔画；这同时适用于 PDF 中的 vector rectangle 和
-    // 栅格化的原始下划线，不依赖 OCR 或题目选项文本。
-    const int scanLeft = left + qMax(1, width / 10);
-    const int scanRight = right - qMax(1, width / 10);
-    const int requiredDark = qMax(2, qCeil((scanRight - scanLeft) * 0.80));
-    const int firstRow = top + qFloor(height * 0.72);
-    const int lastRow = qMin(image.height() - 1, bottom + qMax(1, height / 12));
-    for (int y = firstRow; y <= lastRow; ++y) {
-        const uchar* row = image.constScanLine(y);
-        int dark = 0;
-        for (int x = scanLeft; x < scanRight; ++x)
-            if (row[x] < 100) ++dark;
-        if (dark >= requiredDark)
-            return true;
-    }
-    return false;
 }
 
 void collectPdfTextAnchors(QPdfDocument* document, int page, const QString& text,
@@ -337,7 +319,7 @@ QString bundledTessdataPath() {
 }
 
 QString recognizePage(const QImage& source, QString* error) {
-    QImage image = source.convertToFormat(QImage::Format_RGB888);
+    QImage image = whiteBackground(source).convertToFormat(QImage::Format_RGB888);
     tesseract::TessBaseAPI api;
     const QByteArray tessdataPath = QFile::encodeName(bundledTessdataPath());
     const char* dataPath = tessdataPath.isEmpty() ? nullptr : tessdataPath.constData();
@@ -367,6 +349,107 @@ QString recognizePage(const QImage& source, QString* error) {
 #endif
 
 } // namespace
+
+PdfUnderlineDecoration detectRenderedLineDecorations(
+    const QImage& source, const QString& text, const QList<QRectF>& characterBounds) {
+    PdfUnderlineDecoration result;
+    result.text = text;
+    if (source.isNull() || characterBounds.size() != text.size()) return result;
+    const QImage gray = source.format() == QImage::Format_Grayscale8 ? source
+        : whiteBackground(source).convertToFormat(QImage::Format_Grayscale8);
+    QList<QRectF> boxes;
+    QList<qreal> heights, bottoms;
+    qreal maxHeight = 0;
+    for (int i = 0; i < text.size(); ++i) {
+        const auto b = characterBounds.at(i);
+        boxes.append(QRectF(b.x() * gray.width(), b.y() * gray.height(),
+                           b.width() * gray.width(), b.height() * gray.height()));
+        if (!b.isEmpty()) result.bounds = result.bounds.united(b);
+        if (!text.at(i).isSpace()) maxHeight = qMax(maxHeight, boxes.last().height());
+    }
+    if (maxHeight < 5) return result;
+    for (int i = 0; i < text.size(); ++i)
+        if (!text.at(i).isSpace() && boxes.at(i).height() >= maxHeight * 0.6) {
+            heights.append(boxes.at(i).height());
+            bottoms.append(boxes.at(i).bottom());
+        }
+    if (heights.isEmpty()) return result;
+    std::sort(heights.begin(), heights.end());
+    std::sort(bottoms.begin(), bottoms.end());
+    const qreal height = heights.at(heights.size() / 2);
+    const qreal baseline = bottoms.at(bottoms.size() / 2);
+    const int firstRow = qMax(0, qCeil(baseline - height * 0.07));
+    const int lastRow = qMin(gray.height() - 1, qCeil(baseline + height * 0.3));
+    const int left = qMax(0, qFloor(result.bounds.left() * gray.width() - height * 8));
+    const int right = qMin(gray.width(), qCeil(result.bounds.right() * gray.width() + height * 8));
+    const int minimumRun = qMax(6, qCeil(height * 1.03));
+    QList<QRectF> segments;
+    for (int y = firstRow; y <= lastRow; ++y) {
+        const uchar* row = gray.constScanLine(y);
+        int start = -1;
+        for (int x = left; x <= right; ++x) {
+            const bool dark = x < right && row[x] < 180;
+            if (dark && start < 0) start = x;
+            if ((dark && x + 1 < right) || start < 0) continue;
+            const int end = dark ? x + 1 : x;
+            if (end - start >= minimumRun && end - start < gray.width() * 0.85) {
+                QRectF run(start, y, end - start, 1);
+                bool merged = false;
+                for (auto& segment : segments) {
+                    const qreal overlap = qMin(segment.right(), run.right()) - qMax(segment.left(), run.left());
+                    if (run.top() <= segment.bottom() + 1 &&
+                        overlap >= qMin(segment.width(), run.width()) * 0.85) {
+                        segment = segment.united(run);
+                        merged = true;
+                        break;
+                    }
+                }
+                if (!merged) segments.append(run);
+            }
+            start = -1;
+        }
+    }
+    QList<bool> marked;
+    for (int i = 0; i < text.size(); ++i) marked.append(false);
+    for (const auto& segment : segments) {
+        if (segment.height() > qMax<qreal>(2, height * 0.22)) continue;
+        QList<int> covered;
+        for (int i = 0; i < text.size(); ++i) {
+            const auto& box = boxes.at(i);
+            if (box.isEmpty() || text.at(i).isSpace()) continue;
+            const qreal overlap = qMin(box.right(), segment.right()) - qMax(box.left(), segment.left());
+            if (box.center().x() >= segment.left() && box.center().x() <= segment.right() &&
+                overlap >= box.width() * 0.65) covered.append(i);
+        }
+        bool hasText = false;
+        for (int i : covered)
+            if (text.at(i) != u'_' && text.at(i) != QChar(0xff3f)) hasText = true;
+        if (hasText) {
+            for (int i : covered) marked[i] = true;
+        } else {
+            int previous = -1, next = text.size();
+            for (int i = 0; i < text.size(); ++i) {
+                if (boxes.at(i).isEmpty() || text.at(i).isSpace() ||
+                    text.at(i) == u'_' || text.at(i) == QChar(0xff3f)) continue;
+                if (boxes.at(i).center().x() < segment.left()) previous = i;
+                if (boxes.at(i).center().x() > segment.right()) { next = i; break; }
+            }
+            const int start = previous + 1;
+            const QString gap = text.mid(start, next - start);
+            if (next >= start && gap.trimmed().remove(u'_').remove(QChar(0xff3f)).isEmpty()) {
+                const QPair<int, int> blank(start, next - start);
+                if (!result.blanks.contains(blank)) result.blanks.append(blank);
+            }
+        }
+    }
+    int start = -1;
+    for (int i = 0; i <= marked.size(); ++i) {
+        if (i < marked.size() && marked.at(i)) { if (start < 0) start = i; }
+        else if (start >= 0) { result.ranges.append({start, i - start}); start = -1; }
+    }
+    std::sort(result.blanks.begin(), result.blanks.end());
+    return result;
+}
 
 bool TxtMarkdownExtractor::supports(const QString& path) const {
     return hasSuffix(path, {"txt", "md", "markdown"});
@@ -443,10 +526,11 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
     QStringList pages;
     qint64 previewBytes = 0;
     for (int page = 0; page < document.pageCount(); ++page) {
-        QString text = document.getAllText(page).text().trimmed();
+        const QString rawText = document.getAllText(page).text();
+        QString text = rawText.trimmed();
         QImage pageImage;
         if (!text.isEmpty()) {
-            collectPdfTextAnchors(&document, page, text, &result);
+            collectPdfTextAnchors(&document, page, rawText, &result);
         }
         if (text.isEmpty()) {
             pageImage = renderPdfPage(&document, page);
@@ -527,7 +611,7 @@ void detectPdfUnderlinesForCandidateLines(
         if (candidates.isEmpty())
             continue;
 
-        const QString text = document.getAllText(page).text().trimmed();
+        const QString text = document.getAllText(page).text();
         QImage pageImage;
         if (extracted->pageImages.contains(pageNumber))
             pageImage.loadFromData(extracted->pageImages.value(pageNumber), "PNG");
@@ -537,7 +621,7 @@ void detectPdfUnderlinesForCandidateLines(
             if (writePreviewPng(pageImage, &png))
                 extracted->pageImages.insert(pageNumber, png);
         }
-        const QImage grayPage = pageImage.convertToFormat(QImage::Format_Grayscale8);
+        const QImage grayPage = whiteBackground(pageImage).convertToFormat(QImage::Format_Grayscale8);
         if (grayPage.isNull())
             continue;
 
@@ -553,24 +637,14 @@ void detectPdfUnderlinesForCandidateLines(
                 const QRectF bounds = normalizedSelectionBounds(
                     &document, page, textStart, line.size());
                 if (!bounds.isEmpty()) {
-                    QList<QPair<int, int>> ranges;
-                    int rangeStart = -1;
+                    QList<QRectF> characters;
                     for (int offset = 0; offset < line.size(); ++offset) {
-                        const QRectF characterBounds = normalizedSelectionBounds(
-                            &document, page, textStart + offset, 1);
-                        const bool underlined = !line.at(offset).isSpace() &&
-                            hasRenderedUnderline(grayPage, characterBounds);
-                        if (underlined && rangeStart < 0)
-                            rangeStart = offset;
-                        if ((!underlined || offset + 1 == line.size()) && rangeStart >= 0) {
-                            const int rangeEnd = underlined && offset + 1 == line.size()
-                                ? offset + 1 : offset;
-                            ranges.append({rangeStart, rangeEnd - rangeStart});
-                            rangeStart = -1;
-                        }
+                        characters.append(normalizedSelectionBounds(
+                            &document, page, textStart + offset, 1));
                     }
-                    if (!ranges.isEmpty())
-                        extracted->underlineDecorations[pageNumber].append({line, ranges, bounds});
+                    const auto decoration = detectRenderedLineDecorations(grayPage, line, characters);
+                    if (!decoration.ranges.isEmpty() || !decoration.blanks.isEmpty())
+                        extracted->underlineDecorations[pageNumber].append(decoration);
                 }
             }
             if (lineEnd < 0)

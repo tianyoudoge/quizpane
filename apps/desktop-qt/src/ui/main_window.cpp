@@ -1600,13 +1600,22 @@ void MainWindow::exportAttemptResults() {
             painter.setBrush(QColor(QStringLiteral("#1b232d")));
             painter.drawRoundedRect(card, 12, 12);
             const int sourceNumber = question.value("sourceQuestionNumber").toInt(index + 1);
+            const QString sectionTitle = question.value("sourceSectionTitle").toString();
+            const QString sourceLabel = question.value("sourceQuestionLabel").toString(QString::number(sourceNumber));
+            // 四列答案卡很窄，长标签若省略尾部会丢掉“第几处”。重号使用本次
+            // 练习的独立序号 + 原题号，两者都保留，不按原题号覆盖或合并。
+            const bool repeatedLabel = sourceLabel != QString::number(sourceNumber);
+            const QString exportLabel = repeatedLabel
+                ? QStringLiteral("%1 · 原%2").arg(index + 1).arg(sourceNumber)
+                : (sectionTitle.isEmpty() ? sourceLabel : QStringLiteral("%1 · %2").arg(sectionTitle, sourceLabel));
             QFont numberFont = painter.font();
-            numberFont.setPixelSize(22);
+            numberFont.setPixelSize(sectionTitle.isEmpty() && sourceLabel == QString::number(sourceNumber) ? 22 : 15);
             numberFont.setBold(true);
             painter.setFont(numberFont);
             painter.setPen(QColor(QStringLiteral("#e7edf4")));
             painter.drawText(card.adjusted(16, 8, -16, -8), Qt::AlignLeft | Qt::AlignTop,
-                             QStringLiteral("%1").arg(sourceNumber));
+                             painter.fontMetrics().elidedText(exportLabel,
+                                 Qt::ElideRight, qMax(30, int(card.width()) - 100)));
             QFont choiceFont = painter.font();
             choiceFont.setPixelSize(24);
             choiceFont.setBold(true);

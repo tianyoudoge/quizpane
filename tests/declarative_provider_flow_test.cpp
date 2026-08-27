@@ -61,11 +61,13 @@ int main(int argc, char** argv) {
         {"catalogs", QJsonArray{QJsonObject{{"id", "generated"}, {"title", "No answer"},
             {"practice", QJsonObject{{"mode", "all"}}}}}},
         {"questions", QJsonArray{QJsonObject{{"id", "q76"}, {"catalogId", "generated"},
-            {"type", "single_choice"}, {"stem", "第 76 题"},
+            {"type", "single_choice"}, {"stem", QStringLiteral("甲乙〔填空〕丙")},
+            {"stemUnderlines", QJsonArray{QJsonObject{{"start", 0}, {"length", 1}}}},
             {"options", QJsonArray{QJsonObject{{"id", "a"}, {"text", "甲"}},
                                     QJsonObject{{"id", "b"}, {"text", "乙"}}}},
             {"source", QJsonObject{{"document", "original.pdf"}, {"questionNumber", 76},
-                                    {"questionLabel", "76"}}}}}}};
+                                    {"questionLabel", "76"}, {"sectionId", "set-2"},
+                                    {"sectionTitle", QStringLiteral("专项刷题二")}}}}}}};
     const QJsonObject manifest{{"manifestVersion", 2}, {"id", "org.quizpane.no-answer-test"},
         {"name", "No answer"}, {"version", "1.0.0"}, {"kind", "declarative"},
         {"runtime", QJsonObject{{"format", "quizpane.bank+json"}, {"schemaVersion", 3},
@@ -85,6 +87,10 @@ int main(int argc, char** argv) {
     const auto answerlessQuestions = call(answerlessLoader, "no-answer-questions", "attempt.questions",
         {{"attemptId", answerlessAttempt.value("attemptId")}}).value("result").toObject().value("questions").toArray();
     if (answerlessQuestions.size() != 1 || answerlessQuestions.first().toObject().contains("correctChoice")) return 13;
+    const auto rendered = answerlessQuestions.first().toObject();
+    const auto html = rendered.value("contentHtml").toString();
+    if (!html.contains(QStringLiteral("专项刷题二")) || !html.contains(QStringLiteral("text-decoration:underline")) ||
+        !html.contains(QStringLiteral("&nbsp;&nbsp;")) || html.contains(QStringLiteral("〔填空〕"))) return 16;
     if (call(answerlessLoader, "no-answer-save", "attempt.saveAnswers", QJsonObject{{"answers", QJsonArray{
         QJsonObject{{"questionIndex", 0}, {"answer", QJsonObject{{"choice", "0"}}}}}}}).contains("error")) return 14;
     const auto answerlessReport = call(answerlessLoader, "no-answer-report", "attempt.report")

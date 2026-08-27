@@ -21,6 +21,7 @@
 #include <QCloseEvent>
 #include <QActionGroup>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QBuffer>
@@ -94,6 +95,17 @@ QLabel* mutedLabel(const QString& text) {
     auto* label = new QLabel(text);
     label->setObjectName(QStringLiteral("muted"));
     label->setWordWrap(true);
+    return label;
+}
+
+QString reviewQuestionTitle(const QJsonObject& question) {
+    const auto source = question.value("source").toObject();
+    const int number = source.value("questionNumber").toInt();
+    QString label = source.value("questionLabel").toString();
+    if (label.isEmpty() || label == QString::number(number))
+        label = number > 0 ? QStringLiteral("第 %1 题").arg(number) : question.value("id").toString();
+    const QString section = source.value("sectionTitle").toString();
+    if (!section.isEmpty()) label.prepend(section + QStringLiteral(" · "));
     return label;
 }
 
@@ -891,42 +903,37 @@ QWidget* StudioWindow::buildReviewPage() {
     layout->setSpacing(16);
     layout->addWidget(pageHeader(
         QStringLiteral("第三步"), QStringLiteral("只检查需要你决定的问题"),
-        QStringLiteral("正常题目会自动收起。这里集中展示缺答案、疑似重复和选项错位。")));
-    auto* filters = new QHBoxLayout;
+        QStringLiteral("先按分类检查异常；也可切换到“全部题目”查看完整题本。")));
+    auto* filterBar = new QFrame;
+    filterBar->setObjectName(QStringLiteral("reviewFilterBar"));
+    auto* filters = new QHBoxLayout(filterBar);
+    filters->setContentsMargins(0, 0, 0, 0);
+    filters->setSpacing(0);
+    reviewFilterGroup_ = new QButtonGroup(this);
+    reviewFilterGroup_->setExclusive(true);
+    allQuestionsButton_ = new QPushButton(QStringLiteral("全部题目  0"));
     allReviewButton_ = new QPushButton(QStringLiteral("全部异常  0"));
     missingAnswerButton_ = new QPushButton(QStringLiteral("缺少答案  0"));
     duplicateButton_ = new QPushButton(QStringLiteral("疑似重复  0"));
-    allReviewButton_->setCheckable(true);
-    missingAnswerButton_->setCheckable(true);
-    duplicateButton_->setCheckable(true);
-    filters->addWidget(allReviewButton_);
-    filters->addWidget(missingAnswerButton_);
-    filters->addWidget(duplicateButton_);
+    allQuestionsButton_->setProperty("reviewFilter", QString());
+    allReviewButton_->setProperty("reviewFilter", QStringLiteral("__any_review__"));
+    missingAnswerButton_->setProperty("reviewFilter", QStringLiteral("__missing_answer__"));
+    duplicateButton_->setProperty("reviewFilter", QStringLiteral("__duplicate__"));
+    for (auto* button : {allQuestionsButton_, allReviewButton_, missingAnswerButton_, duplicateButton_}) {
+        button->setObjectName(QStringLiteral("reviewFilterTab"));
+        button->setCheckable(true);
+        button->setCursor(Qt::PointingHandCursor);
+        reviewFilterGroup_->addButton(button);
+        filters->addWidget(button);
+        connect(button, &QPushButton::clicked, this, [this, button] {
+            activeReviewFilter_ = button->property("reviewFilter").toString();
+            applyReviewFilter();
+        });
+    }
     filters->addStretch();
-    layout->addLayout(filters);
-    connect(allReviewButton_, &QPushButton::clicked, this, [this] {
-        activeReviewFilter_ = allReviewButton_->isChecked() ? QStringLiteral("__any_review__") : QString();
-        missingAnswerButton_->setChecked(false);
-        duplicateButton_->setChecked(false);
-        applyReviewFilter();
-    });
-    connect(missingAnswerButton_, &QPushButton::clicked, this, [this] {
-        activeReviewFilter_ = missingAnswerButton_->isChecked() ? QStringLiteral("__missing_answer__") : QString();
-        allReviewButton_->setChecked(false);
-        duplicateButton_->setChecked(false);
-        applyReviewFilter();
-    });
-    connect(duplicateButton_, &QPushButton::clicked, this, [this] {
-        activeReviewFilter_ = duplicateButton_->isChecked() ? QStringLiteral("__duplicate__") : QString();
-        allReviewButton_->setChecked(false);
-        missingAnswerButton_->setChecked(false);
-        applyReviewFilter();
-    });
+    layout->addWidget(filterBar);
 
-    // 高危名单批量确认区：resultLevel=soft 的题目（资料分析、图形推理等规则
-    // 无法验证正确性的类型）按 signals 分类展示，用户扫一眼这一类下面的样例
-    // 就可以一次性放行整类，而不必逐题点开确认——批量按钮本身不是自动豁免，
-    // 只是把"确认过看过这一类"的动作从 N 次点击降到 1 次。
+    // 视觉/语义风险按信号分类，筛选与批量采纳是两个明确区分的操作。
     riskCategoryPanel_ = new QFrame;
     riskCategoryPanel_->setObjectName(QStringLiteral("panel"));
     riskCategoryLayout_ = new QVBoxLayout(riskCategoryPanel_);
@@ -943,10 +950,13 @@ QWidget* StudioWindow::buildReviewPage() {
     navigatorLayout->setContentsMargins(0, 0, 0, 0);
     navigatorLayout->setSpacing(8);
     navigatorLayout->addWidget(mutedLabel(
-        QStringLiteral("先查看左侧待确认题目；修改后点“确认本题”，再一次性生成题库。")));
+        QStringLiteral("先选左侧题目，核对后点“确认本题”；不采用的题保持未勾选。")));
     reviewTree_ = new QTreeWidget;
+    reviewTree_->header()->setObjectName(QStringLiteral("reviewTreeHeader"));
     reviewTree_->setColumnCount(2);
     reviewTree_->setHeaderLabels({QStringLiteral("材料 / 题目"), QStringLiteral("问题")});
+    // 窄列表仍保留末尾的分套/同号序次，避免两个重号题被省略成相同文字。
+    reviewTree_->setTextElideMode(Qt::ElideMiddle);
     reviewTree_->header()->setStretchLastSection(true);
     reviewTree_->header()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     reviewTree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -1288,15 +1298,14 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     outputTokens_->setText(QString::number(generatedQuestions_.size()));
     totalTokens_->setText(QString::number(reviewQuestions_.size()));
     activeReviewFilter_.clear();
-    allReviewButton_->setChecked(false);
-    missingAnswerButton_->setChecked(false);
-    duplicateButton_->setChecked(false);
+    allQuestionsButton_->setChecked(true);
     // 重建树前先把指向旧节点的指针置空，clear() 会销毁旧节点，
     // 切题钩子还会解引用 currentReviewItem_，留着就是悬垂指针。
     currentReviewItem_ = nullptr;
     currentMaterialItem_ = nullptr;
     reviewTree_->clear();
     QHash<QString, int> softCategoryCounts;
+    int reviewCount = 0;
     QHash<QString, QTreeWidgetItem*> groups;
     for (const auto& value : generatedMaterials_) {
         const QJsonObject material = value.toObject();
@@ -1308,9 +1317,11 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
         QStringList signalList;
         for (const QJsonValue& signal : review.value("signals").toArray())
             signalList.append(signal.toString());
-        if (isSoftRisk)
+        if (isSoftRisk) {
+            ++reviewCount;
             for (const QString& signal : signalList)
                 ++softCategoryCounts[signal];
+        }
         auto* item = new QTreeWidgetItem(reviewTree_, {title,
             isSoftRisk ? QStringLiteral("资料待复核") : QStringLiteral("共享材料")});
         item->setData(0, Qt::UserRole, material);
@@ -1338,7 +1349,8 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
         {QStringLiteral("option-count-outlier"), QStringLiteral("选项数异常")},
         {QStringLiteral("answer-distribution-skew"), QStringLiteral("答案分布异常")},
         {QStringLiteral("material-layout:underline-or-blank"),
-         QStringLiteral("材料含划线或填空版式")},
+         QStringLiteral("材料划线 / 填空")},
+        {QStringLiteral("stem-layout:underline-or-blank"), QStringLiteral("题干划线 / 填空")},
     };
 
     int missingAnswers = 0;
@@ -1351,6 +1363,7 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
             const QString riskLevel = review.value("riskLevel").toString();
             const bool isHardRisk = needsReview && riskLevel != QStringLiteral("soft");
             const bool isSoftRisk = needsReview && riskLevel == QStringLiteral("soft");
+            if (needsReview) ++reviewCount;
             const QString reason = review.value("reason").toString();
             if (isHardRisk && reason.contains(QStringLiteral("答案"))) ++missingAnswers;
             if (isHardRisk && reason.contains(QStringLiteral("重复"))) ++duplicates;
@@ -1385,12 +1398,9 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
             } else {
                 statusText.clear();
             }
-            const int sourceNumber = question.value("source").toObject()
-                .value("questionNumber").toInt();
-            const QString questionLabel = sourceNumber > 0
-                ? QStringLiteral("第 %1 题").arg(sourceNumber)
-                : question.value("id").toString();
+            const QString questionLabel = reviewQuestionTitle(question);
             auto* item = new QTreeWidgetItem(parent, {questionLabel, statusText});
+            item->setToolTip(0, questionLabel);
             item->setTextAlignment(0, Qt::AlignLeft | Qt::AlignVCenter);
             item->setTextAlignment(1, Qt::AlignLeft | Qt::AlignVCenter);
             item->setData(0, Qt::UserRole, question);
@@ -1408,49 +1418,59 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     appendQuestions(reviewQuestions_);
     if (independent->childCount() == 0) delete independent;
     reviewTree_->expandToDepth(0);
-    allReviewButton_->setText(QStringLiteral("全部异常  %1").arg(reviewQuestions_.size()));
+    allQuestionsButton_->setText(QStringLiteral("全部题目  %1")
+        .arg(generatedQuestions_.size() + reviewQuestions_.size()));
+    allReviewButton_->setText(QStringLiteral("全部异常  %1").arg(reviewCount));
+    allReviewButton_->setToolTip(QStringLiteral("需要核对的题目与材料；同一项有多个风险时只计一次。"));
     missingAnswerButton_->setText(QStringLiteral("缺少答案  %1").arg(missingAnswers));
     missingAnswerButton_->setVisible(generatedHasAnswerKey_);
     duplicateButton_->setText(QStringLiteral("疑似重复  %1").arg(duplicates));
 
     // 批量确认区：按 soft 信号分类展示，用户可以一次性把整类标记为已复核，
     // 不必逐题点开。类别为空（没有任何 soft 风险题）时整个面板隐藏。
-    QLayoutItem* child;
-    while ((child = riskCategoryLayout_->takeAt(0)) != nullptr) {
-        delete child->widget();
-        delete child;
-    }
+    clearLayout(riskCategoryLayout_);
     if (softCategoryCounts.isEmpty()) {
         riskCategoryPanel_->setVisible(false);
     } else {
-        riskCategoryLayout_->addWidget(new QLabel(QStringLiteral(
-            "以下内容结构完整，但规则无法验证其视觉或语义细节。点击类别可只显示该类问题：")));
+        auto* categoryHint = new QLabel(QStringLiteral(
+            "以下内容需人工核对，点击类别筛选查看："));
+        categoryHint->setWordWrap(true);
+        riskCategoryLayout_->addWidget(categoryHint);
         QStringList sortedSignals = softCategoryCounts.keys();
         std::sort(sortedSignals.begin(), sortedSignals.end());
         for (const QString& signal : sortedSignals) {
             auto* row = new QHBoxLayout;
             const QString label = signalLabels.value(signal, signal);
-            auto* categoryButton = new QPushButton(QStringLiteral("%1  %2 项")
+            auto* categoryButton = new QPushButton(QStringLiteral("%1 · %2 项  ›")
                 .arg(label).arg(softCategoryCounts.value(signal)));
-            categoryButton->setObjectName(QStringLiteral("secondaryButton"));
+            categoryButton->setObjectName(QStringLiteral("reviewCategoryChip"));
+            categoryButton->setCheckable(true);
+            categoryButton->setCursor(Qt::PointingHandCursor);
+            categoryButton->setProperty("reviewFilter", QStringLiteral("__signal:") + signal);
+            categoryButton->setToolTip(QStringLiteral("只显示“%1”，不会改变题目的采纳状态。").arg(label));
+            reviewFilterGroup_->addButton(categoryButton);
             connect(categoryButton, &QPushButton::clicked, this, [this, signal] {
                 activeReviewFilter_ = QStringLiteral("__signal:") + signal;
-                allReviewButton_->setChecked(false);
-                missingAnswerButton_->setChecked(false);
-                duplicateButton_->setChecked(false);
                 applyReviewFilter();
             });
             row->addWidget(categoryButton);
             row->addStretch();
-            auto* confirmButton = new QPushButton(QStringLiteral("全部标记已复核"));
+            auto* confirmButton = new QPushButton(QStringLiteral("本类全部标记已复核"));
             confirmButton->setObjectName(QStringLiteral("reviewActionButton"));
+            confirmButton->setCursor(Qt::PointingHandCursor);
+            confirmButton->setToolTip(QStringLiteral("请先核对本类全部内容；点击将勾选采纳本类题目。"));
             connect(confirmButton, &QPushButton::clicked, this,
                     [this, signal] { confirmRiskCategory(signal); });
             row->addWidget(confirmButton);
             riskCategoryLayout_->addLayout(row);
         }
+        riskCategoryLayout_->addWidget(mutedLabel(QStringLiteral(
+            "批量标记会勾选采纳本类题目，请先核对全部内容。\n"
+            "确认要采用的题目后再生成；未勾选的题目不会纳入题库。")));
         riskCategoryPanel_->setVisible(true);
     }
+    activeReviewFilter_ = reviewCount > 0 ? QStringLiteral("__any_review__") : QString();
+    applyReviewFilter();
 }
 
 void StudioWindow::confirmRiskCategory(const QString& signal) {
@@ -1837,6 +1857,7 @@ QJsonArray StudioWindow::reviewOptions() const {
 }
 
 void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
+    reviewStemEditor_->setExtraSelections({});
     const QJsonObject entry = item ? item->data(0, Qt::UserRole).toJsonObject() : QJsonObject{};
     const bool isMaterial = entry.contains(QStringLiteral("body"));
     currentReviewItem_ = entry.isEmpty() || isMaterial ? nullptr : item;
@@ -1884,7 +1905,7 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
         return;
     }
 
-    manualMaterialUnderlineButton_->setVisible(false);
+    manualMaterialUnderlineButton_->setVisible(true);
     reviewStemEditor_->setReadOnly(false);
     reviewStemLabel_->setText(QStringLiteral("题干"));
     reviewQuestionEditorPanel_->setVisible(true);
@@ -1895,17 +1916,24 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
     reviewAnswerEditor_->setReadOnly(false);
     reviewSolutionEditor_->setReadOnly(false);
     const QJsonObject question = entry;
-    const int sourceNumber = question.value("source").toObject()
-        .value("questionNumber").toInt();
-    reviewDetailTitle_->setText(sourceNumber > 0
-        ? QStringLiteral("第 %1 题").arg(sourceNumber)
-        : QStringLiteral("题目 %1").arg(question.value("id").toString()));
+    reviewDetailTitle_->setText(reviewQuestionTitle(question));
     const QJsonObject review = question.value("review").toObject();
     QString status = item->text(1);
     if (!review.value("reason").toString().isEmpty())
         status += QStringLiteral("\n%1").arg(review.value("reason").toString());
     reviewDetailStatus_->setText(status);
     reviewStemEditor_->setPlainText(question.value("stem").toString());
+    QList<QTextEdit::ExtraSelection> underlineSelections;
+    for (const auto& value : question.value("stemUnderlines").toArray()) {
+        const auto range = value.toObject();
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = reviewStemEditor_->textCursor();
+        selection.cursor.setPosition(range.value("start").toInt());
+        selection.cursor.setPosition(range.value("start").toInt() + range.value("length").toInt(), QTextCursor::KeepAnchor);
+        selection.format.setFontUnderline(true);
+        underlineSelections.append(selection);
+    }
+    reviewStemEditor_->setExtraSelections(underlineSelections);
     updateReviewStemHeight();
     setReviewOptions(question.value("options").toArray());
     if (generatedHasAnswerKey_) {
@@ -1931,10 +1959,17 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
 }
 
 void StudioWindow::addManualMaterialUnderline() {
-    if (!currentMaterialItem_)
+    QTreeWidgetItem* target = currentMaterialItem_ ? currentMaterialItem_ : currentReviewItem_;
+    if (!target) return;
+    if (currentReviewItem_ && reviewQuestionIsDirty()) {
+        QMessageBox::information(this, QStringLiteral("请先保存修改"),
+            QStringLiteral("请先保存题干和选项的修改，再标记下划线，以免位置发生偏移。"));
         return;
-    QJsonObject material = currentMaterialItem_->data(0, Qt::UserRole).toJsonObject();
-    const QString body = material.value(QStringLiteral("body")).toString();
+    }
+    const bool isMaterial = currentMaterialItem_ != nullptr;
+    const QString underlineKey = isMaterial ? QStringLiteral("underlines") : QStringLiteral("stemUnderlines");
+    QJsonObject material = target->data(0, Qt::UserRole).toJsonObject();
+    const QString body = material.value(isMaterial ? QStringLiteral("body") : QStringLiteral("stem")).toString();
     if (body.isEmpty())
         return;
 
@@ -1944,7 +1979,7 @@ void StudioWindow::addManualMaterialUnderline() {
     auto* layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(20, 18, 20, 16);
     layout->addWidget(mutedLabel(QStringLiteral(
-        "在原始材料文本中选中需要带下划线的词句，再点击“添加所选下划线”。"
+        "在文本中选中需要带下划线的词句，再点击“添加所选下划线”。"
         "这只修改题库内的文字样式，不会改动原 PDF。")));
     auto* editor = new QPlainTextEdit;
     editor->setPlainText(body);
@@ -1955,6 +1990,21 @@ void StudioWindow::addManualMaterialUnderline() {
     auto* add = buttons->addButton(QStringLiteral("添加所选下划线"), QDialogButtonBox::AcceptRole);
     add->setObjectName(QStringLiteral("primaryButton"));
     auto* cancel = buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
+    auto* clear = buttons->addButton(QStringLiteral("清除全部下划线"), QDialogButtonBox::ResetRole);
+    const auto saveRanges = [&](const QJsonArray& ranges) {
+        material.insert(underlineKey, ranges);
+        target->setData(0, Qt::UserRole, material);
+        if (isMaterial) {
+            const QString id = material.value(QStringLiteral("id")).toString();
+            for (int index = 0; index < generatedMaterials_.size(); ++index)
+                if (generatedMaterials_.at(index).toObject().value(QStringLiteral("id")).toString() == id) {
+                    generatedMaterials_[index] = material;
+                    break;
+                }
+        }
+        dialog.accept();
+    };
+    connect(clear, &QPushButton::clicked, &dialog, [&] { saveRanges({}); });
     connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
     connect(add, &QPushButton::clicked, &dialog, [&] {
         const QTextCursor cursor = editor->textCursor();
@@ -1962,11 +2012,11 @@ void StudioWindow::addManualMaterialUnderline() {
         const int length = cursor.selectionEnd() - start;
         if (length <= 0) {
             QMessageBox::information(&dialog, QStringLiteral("请先选择文字"),
-                QStringLiteral("请在材料中选中一个词或一句话。"));
+                QStringLiteral("请在文本中选中一个词或一句话。"));
             return;
         }
         QList<QPair<int, int>> ranges;
-        for (const QJsonValue& value : material.value(QStringLiteral("underlines")).toArray()) {
+        for (const QJsonValue& value : material.value(underlineKey).toArray()) {
             const QJsonObject range = value.toObject();
             const int rangeStart = range.value(QStringLiteral("start")).toInt(-1);
             const int rangeLength = range.value(QStringLiteral("length")).toInt();
@@ -1997,20 +2047,11 @@ void StudioWindow::addManualMaterialUnderline() {
                                           {QStringLiteral("length"), range.second}});
             }
         }
-        material.insert(QStringLiteral("underlines"), merged);
-        currentMaterialItem_->setData(0, Qt::UserRole, material);
-        const QString id = material.value(QStringLiteral("id")).toString();
-        for (int index = 0; index < generatedMaterials_.size(); ++index) {
-            if (generatedMaterials_.at(index).toObject().value(QStringLiteral("id")).toString() == id) {
-                generatedMaterials_[index] = material;
-                break;
-            }
-        }
-        dialog.accept();
+        saveRanges(merged);
     });
     layout->addWidget(buttons);
     if (dialog.exec() == QDialog::Accepted)
-        showReviewQuestion(currentMaterialItem_);
+        showReviewQuestion(target);
 }
 
 bool StudioWindow::saveCurrentReviewQuestion() {
@@ -2027,6 +2068,17 @@ bool StudioWindow::saveCurrentReviewQuestion() {
     if (options.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("无法保存草稿"), QStringLiteral("至少需要一个选项。"));
         return false;
+    }
+    if (stem != question.value(QStringLiteral("stem")).toString()) {
+        if (!question.value(QStringLiteral("stemUnderlines")).toArray().isEmpty() &&
+            QMessageBox::question(this, QStringLiteral("请重新核对下划线"),
+                QStringLiteral("题干已修改，原下划线位置可能失效。保存后将清除旧标记，"
+                               "可用“手动标记下划线”重新设置。继续保存吗？"),
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+            return false;
+        // 编辑题干后旧偏移不再可信，不能把下划线静默移到另一个词上。
+        question.remove(QStringLiteral("stemUnderlines"));
+        reviewStemEditor_->setExtraSelections({});
     }
     question.insert(QStringLiteral("stem"), stem);
     question.insert(QStringLiteral("options"), options);
@@ -2303,6 +2355,10 @@ void StudioWindow::updateReviewStemHeight() {
 }
 
 void StudioWindow::applyReviewFilter() {
+    for (auto* button : reviewFilterGroup_->buttons()) {
+        if (button->property("reviewFilter").toString() == activeReviewFilter_)
+            button->setChecked(true);
+    }
     std::function<bool(QTreeWidgetItem*)> visit = [&](QTreeWidgetItem* item) -> bool {
         const auto matches = [this](QTreeWidgetItem* candidate) {
             if (activeReviewFilter_.isEmpty()) return true;
@@ -2329,10 +2385,6 @@ void StudioWindow::applyReviewFilter() {
         // 命中的是材料本身时，只显示材料行；命中子题时保留其父级路径。
         const bool visible = selfMatches || anyChildVisible;
         item->setHidden(!visible);
-        if (selfMatches && !activeReviewFilter_.isEmpty() && item->childCount() > 0) {
-            for (int index = 0; index < item->childCount(); ++index)
-                item->child(index)->setHidden(true);
-        }
         return visible;
     };
     for (int index = 0; index < reviewTree_->topLevelItemCount(); ++index)

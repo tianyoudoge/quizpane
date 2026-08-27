@@ -7,6 +7,8 @@
 #include <QPair>
 #include <QRectF>
 
+class QImage;
+
 namespace quizpane::studio {
 
 // PDF 文字层中的题号/选项标签坐标。坐标已经归一化到 0..1，因而规则生成器可
@@ -23,7 +25,13 @@ struct PdfUnderlineDecoration {
     QString text;
     QList<QPair<int, int>> ranges;
     QRectF bounds;
+    // 原始行中空白横线的位置；length=0 表示文字层完全丢掉了空白。
+    QList<QPair<int, int>> blanks;
 };
+
+// 纯几何检测；可用合成图验证，Qt5/Qt6 与无 QtPdf 构建共用。
+PdfUnderlineDecoration detectRenderedLineDecorations(
+    const QImage& image, const QString& text, const QList<QRectF>& characterBounds);
 
 // 单个文件的提取结果。error 非空表示提取失败或该格式尚不支持，
 // plainText 此时应为空，调用方据此把该文件标记为跳过，而不是把
@@ -52,6 +60,9 @@ struct ExtractedDocument {
     // 文字层表达不了的下划线、填空横线和嵌入式图片横线。
     QHash<int, QList<PdfTextAnchor>> lineAnchors;
     QHash<int, QList<PdfUnderlineDecoration>> underlineDecorations;
+    QString sectionId;
+    QString sectionTitle;
+    int firstPageNumber = 1;
 };
 
 // 单一文档格式的提取器。supports() 只看扩展名，不打开文件，方便
