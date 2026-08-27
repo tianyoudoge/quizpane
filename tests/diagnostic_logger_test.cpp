@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QStandardPaths>
 
+#include <cstdio>
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("diagnostic-logger-test"));
@@ -44,8 +46,10 @@ int main(int argc, char** argv) {
         !contents.contains("apiKey=<redacted>") ||
         contents.contains("must-not-appear") ||
         quizpane::diagnostic::crashArtifactPath().isEmpty() ||
-        !contents.contains("[session] end exit=clean"))
+        !contents.contains("[session] end exit=clean")) {
+        std::fprintf(stderr, "diagnostic_logger_test failed: core log assertions\\n");
         return 3;
+    }
 #ifdef QUIZPANE_VERBOSE_DIAGNOSTICS
     if (!contents.contains("captured=4 truncated=true") ||
         !contents.contains("abcd") || contents.contains("abcdef"))
@@ -60,8 +64,10 @@ int main(int argc, char** argv) {
         !contents.contains("warning-path .../private/visible") ||
         !contents.contains("warning-windows ...\\private\\visible") ||
         contents.contains("/Users/alice/") || contents.contains("C:\\Users\\alice") ||
-        contents.contains("after-disabled"))
+        contents.contains("after-disabled")) {
+        std::fprintf(stderr, "diagnostic_logger_test failed: prod filtering/path masking\\n");
         return 6;
+    }
 #endif
     return 0;
 }

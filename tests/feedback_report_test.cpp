@@ -93,7 +93,11 @@ int main(int argc, char** argv) {
     const auto refused = quizpane::feedback::sendReport(
         QStringLiteral("refused"), false, false,
         QStringLiteral("http://127.0.0.1:%1/feedback").arg(closedPort), 1000);
-    if (refused.success || !refused.message.contains(QStringLiteral("无法连接反馈服务")))
-        return fail(10, "connection-refused message assertion failed");
+    // Windows 上关闭的 loopback 端口可能等待 SYN 超时，而不是立即报告
+    // ConnectionRefused；两种结果均是用户可读的预期失败路径。
+    if (refused.success ||
+        (!refused.message.contains(QStringLiteral("无法连接反馈服务")) &&
+         !refused.message.contains(QStringLiteral("超时"))))
+        return fail(10, "closed-port error message assertion failed");
     return 0;
 }
