@@ -323,8 +323,10 @@ QString recognizePage(const QImage& source, QString* error) {
     tesseract::TessBaseAPI api;
     const QByteArray tessdataPath = bundledTessdataPath().toUtf8();
     const char* dataPath = tessdataPath.isEmpty() ? nullptr : tessdataPath.constData();
+#if defined(TESSERACT_VERSION) && TESSERACT_VERSION >= 0x050000
     // Tesseract's narrow file APIs cannot reliably open Chinese Windows paths.
-    // Load model bytes through Qt; no short-path names or system codepage needed.
+    // Tesseract 5 exposes std::vector-based callbacks, so load model bytes through
+    // Qt; no short-path names or system codepage is needed by the Win7 package.
     const auto reader = [](const char* path, std::vector<char>* bytes) {
         QFile file(QString::fromUtf8(path));
         if (!file.open(QIODevice::ReadOnly) || file.size() <= 0 ||
@@ -338,9 +340,23 @@ QString recognizePage(const QImage& source, QString* error) {
                                     nullptr, 0, nullptr, nullptr, false, reader);
     std::vector<std::string> languages;
     if (initialized == 0) api.GetLoadedLanguagesAsVector(&languages);
-    if (initialized != 0 ||
-        std::find(languages.begin(), languages.end(), "chi_sim") == languages.end() ||
-        std::find(languages.begin(), languages.end(), "eng") == languages.end()) {
+    const bool hasChinese =
+        std::find(languages.begin(), languages.end(), "chi_sim") != languages.end();
+    const bool hasEnglish =
+        std::find(languages.begin(), languages.end(), "eng") != languages.end();
+#else
+    // Ubuntu 22.04 ships Tesseract 4.1, whose public API still uses the legacy
+    // GenericVector types. The simple Init overload is common to 3.x/4.x/5.x and
+    // avoids leaking those private container types into this translation unit.
+    const int initialized = api.Init(dataPath, "chi_sim+eng", tesseract::OEM_DEFAULT);
+    const char* initializedLanguages =
+        initialized == 0 ? api.GetInitLanguagesAsString() : nullptr;
+    const QList<QByteArray> languages =
+        initializedLanguages ? QByteArray(initializedLanguages).split('+') : QList<QByteArray>{};
+    const bool hasChinese = languages.contains(QByteArrayLiteral("chi_sim"));
+    const bool hasEnglish = languages.contains(QByteArrayLiteral("eng"));
+#endif
+    if (initialized != 0 || !hasChinese || !hasEnglish) {
         *error = QStringLiteral("文字识别无法启动：中英文识别模型缺失或损坏。请重新完整解压安装包，保留 tessdata 文件夹");
         return {};
     }
