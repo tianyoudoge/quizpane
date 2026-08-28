@@ -47,7 +47,14 @@ int ocrSmoke(const QString& path) {
 }
 
 int main(int argc, char** argv) {
+#ifdef Q_OS_WIN
+    // The portable package intentionally ships the production qwindows
+    // plugin, not the test-only qoffscreen plugin. Exercise the same platform
+    // initialization path users get after extracting the ZIP.
+    qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("windows"));
+#else
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+#endif
     QGuiApplication app(argc, argv);
     // Run from the unpacked ZIP, with no build-machine model paths. Also useful
     // for manual Windows 7 VM acceptance; fail if OCR was accidentally disabled.
