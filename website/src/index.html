@@ -47,7 +47,11 @@
   <section id="top" class="hero">
     <div class="hero-inner">
       <div class="hero-copy">
-        <div class="product-chip"><img src="assets/icons/quizpane-app-icon.png" alt="" width="42" height="42" /><span>小窗刷题</span></div>
+        <div class="product-chip">
+          <img src="assets/icons/quizpane-app-icon.png" alt="" width="42" height="42" />
+          <span>小窗刷题</span>
+          <a class="hero-notice" href="#download"><span class="hero-notice-badge">NEW</span><span data-bind="hero.notice"></span><span aria-hidden="true">→</span></a>
+        </div>
         <h1 data-bind="hero.headline"></h1>
         <p class="hero-sub" data-bind="hero.subhead"></p>
         <div class="hero-actions">
@@ -138,11 +142,11 @@
   </div>
 </dialog>
 
-<dialog id="macos-download-dialog" class="macos-download-dialog" aria-labelledby="macos-download-title">
-  <button class="support-close" id="macos-download-close" type="button" aria-label="关闭">×</button>
-  <h2 id="macos-download-title">选择你的 Mac 芯片</h2>
-  <p>点左上角  →“关于本机”即可查看芯片型号。</p>
-  <div id="macos-choice-list" class="macos-choice-list"></div>
+<dialog id="platform-download-dialog" class="platform-download-dialog" aria-labelledby="platform-download-title">
+  <button class="support-close" id="platform-download-close" type="button" aria-label="关闭">×</button>
+  <h2 id="platform-download-title"></h2>
+  <p id="platform-download-hint"></p>
+  <div id="platform-choice-list" class="platform-choice-list"></div>
 </dialog>
 
 <script src="main.js" defer></script>

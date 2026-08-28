@@ -764,6 +764,8 @@ void MainWindow::initializeDesktopShell() {
                          &MainWindow::chooseProviderPackage);
     trayMenu_->addAction(QStringLiteral("老板键设置…"), this,
                          &MainWindow::configureBossKey);
+    trayMenu_->addAction(QStringLiteral("问题反馈…"), this,
+                         [this] { ui::showFeedback(this); });
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
     QAction* debugLogAction = trayMenu_->addAction(QStringLiteral("查看调试日志…"));
     connect(debugLogAction, &QAction::triggered, this, [] {
@@ -841,6 +843,8 @@ void MainWindow::initializeDesktopShell() {
                        &MainWindow::chooseProviderPackage);
     appMenu->addAction(QStringLiteral("老板键设置…"), this,
                        &MainWindow::configureBossKey);
+    appMenu->addAction(QStringLiteral("问题反馈…"), this,
+                       [this] { ui::showFeedback(this); });
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
     appMenu->addAction(debugLogAction);
 #endif
@@ -1461,11 +1465,16 @@ void MainWindow::requestResults() {
     pages_->setCurrentWidget(solutionPage_);
     applyUiSize(uiSize_);
     QString error;
-    provider_.request({{"id", "attempt-report"}, {"method", "attempt.report"},
-                       {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error);
-    if (attemptHasAnswerKey_)
-        provider_.request({{"id", "attempt-solutions"}, {"method", "attempt.solutions"},
-                           {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error);
+    if (!provider_.request({{"id", "attempt-report"}, {"method", "attempt.report"},
+                            {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error)) {
+        QMessageBox::warning(this, QStringLiteral("无法生成答题结果"), error);
+        return;
+    }
+    if (attemptHasAnswerKey_ &&
+        !provider_.request({{"id", "attempt-solutions"}, {"method", "attempt.solutions"},
+                            {"params", QJsonObject{{"attemptId", attemptId_}}}}, &error)) {
+        QMessageBox::warning(this, QStringLiteral("无法加载题目解析"), error);
+    }
 }
 
 void MainWindow::showSolution(int index) {
@@ -1591,13 +1600,22 @@ void MainWindow::exportAttemptResults() {
             painter.setBrush(QColor(QStringLiteral("#1b232d")));
             painter.drawRoundedRect(card, 12, 12);
             const int sourceNumber = question.value("sourceQuestionNumber").toInt(index + 1);
+            const QString sectionTitle = question.value("sourceSectionTitle").toString();
+            const QString sourceLabel = question.value("sourceQuestionLabel").toString(QString::number(sourceNumber));
+            // 四列答案卡很窄，长标签若省略尾部会丢掉“第几处”。重号使用本次
+            // 练习的独立序号 + 原题号，两者都保留，不按原题号覆盖或合并。
+            const bool repeatedLabel = sourceLabel != QString::number(sourceNumber);
+            const QString exportLabel = repeatedLabel
+                ? QStringLiteral("%1 · 原%2").arg(index + 1).arg(sourceNumber)
+                : (sectionTitle.isEmpty() ? sourceLabel : QStringLiteral("%1 · %2").arg(sectionTitle, sourceLabel));
             QFont numberFont = painter.font();
-            numberFont.setPixelSize(22);
+            numberFont.setPixelSize(sectionTitle.isEmpty() && sourceLabel == QString::number(sourceNumber) ? 22 : 15);
             numberFont.setBold(true);
             painter.setFont(numberFont);
             painter.setPen(QColor(QStringLiteral("#e7edf4")));
             painter.drawText(card.adjusted(16, 8, -16, -8), Qt::AlignLeft | Qt::AlignTop,
-                             QStringLiteral("%1").arg(sourceNumber));
+                             painter.fontMetrics().elidedText(exportLabel,
+                                 Qt::ElideRight, qMax(30, int(card.width()) - 100)));
             QFont choiceFont = painter.font();
             choiceFont.setPixelSize(24);
             choiceFont.setBold(true);
@@ -2176,6 +2194,15 @@ void MainWindow::showMainMenu() {
                    &MainWindow::showBackgroundVisibilityDialog);
     menu.addAction(QStringLiteral("老板键设置…"), this,
                    &MainWindow::configureBossKey);
+    menu.addAction(QStringLiteral("问题反馈…"), this,
+                   [this] { ui::showFeedback(this); });
+    {
+        auto* diagnosticsAction = menu.addAction(QStringLiteral("记录诊断日志"));
+        diagnosticsAction->setCheckable(true);
+        diagnosticsAction->setChecked(diagnostic::isDiagnosticsEnabled());
+        connect(diagnosticsAction, &QAction::toggled, this,
+                [](bool enabled) { diagnostic::setDiagnosticsEnabled(enabled); });
+    }
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
     menu.addAction(QStringLiteral("查看调试日志…"), this, [] {
         diagnostic::openLogFile();
@@ -2208,7 +2235,15 @@ void MainWindow::openBankStudio() {
             QStringLiteral("../Helpers/题库制作器.app/Contents/MacOS/题库制作器"))
         << QStringLiteral("/Applications/题库制作器.app/Contents/MacOS/题库制作器");
 #elif defined(Q_OS_WIN)
-    candidates << QDir(appDir).filePath(QStringLiteral("题库制作器.exe"));
+    // Win7 绿色包使用 ASCII 文件名，避开系统 ZIP 解压器的 Unicode 文件名乱码；
+    // 中文名回退继续兼容常规 Windows 包和旧安装。
+#if defined(QUIZPANE_WINDOWS7_COMPAT)
+    candidates << QDir(appDir).filePath(QStringLiteral("QuizPaneStudio.exe"))
+               << QDir(appDir).filePath(QStringLiteral("题库制作器.exe"));
+#else
+    candidates << QDir(appDir).filePath(QStringLiteral("题库制作器.exe"))
+               << QDir(appDir).filePath(QStringLiteral("QuizPaneStudio.exe"));
+#endif
 #else
     candidates << QDir(appDir).filePath(QStringLiteral("题库制作器"))
                << QStandardPaths::findExecutable(QStringLiteral("题库制作器"));
@@ -2449,11 +2484,18 @@ try {
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
   Expand-Archive -LiteralPath $Package -DestinationPath $work -Force
   $source = Join-Path $work 'QuizPane'
-  if (-not (Test-Path -LiteralPath (Join-Path $source '小窗刷题.exe'))) { throw '更新包结构不正确' }
+  $mainExecutable = if (Test-Path -LiteralPath (Join-Path $source 'QuizPane.exe')) {
+    'QuizPane.exe'
+  } elseif (Test-Path -LiteralPath (Join-Path $source '小窗刷题.exe')) {
+    '小窗刷题.exe'
+  } else {
+    throw '更新包结构不正确'
+  }
+  $restartTarget = Join-Path $Destination $mainExecutable
   Get-ChildItem -LiteralPath $source -Force | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
   }
-  Start-Process -FilePath $Restart
+  Start-Process -FilePath $restartTarget
 } catch {
   "[$(Get-Date -Format o)] $_" | Out-File -LiteralPath $Log -Append -Encoding utf8
   # 覆盖失败时恢复旧程序，避免用户更新后只看到程序消失。

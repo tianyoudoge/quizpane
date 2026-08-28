@@ -7,12 +7,14 @@ add_library(question_maker_engine STATIC
     engine/include/quizpane/studio/qt_pdf_compat.hpp
     engine/include/quizpane/studio/rule_based_generator.hpp
     engine/include/quizpane/studio/review_result.hpp
+    src/review_draft_bank.hpp
     engine/src/document_extractor.cpp
     engine/src/generation_workflow.cpp
     engine/src/mineru_client.cpp
     engine/src/mineru_output_adapter.cpp
     engine/src/option_label.cpp
     engine/src/rule_based_generator.cpp
+    src/review_draft_bank.cpp
 )
 target_include_directories(question_maker_engine PUBLIC
     engine/include
@@ -46,6 +48,7 @@ quizpane_add_executable(quizpane_bank_studio
     src/main.cpp
     src/mineru_settings_dialog.cpp
     src/mineru_settings_dialog.hpp
+    src/review_draft_bank.hpp
     src/source_row_widget.cpp
     src/source_row_widget.hpp
     src/source_validation.hpp

@@ -5,6 +5,7 @@ param(
     [string]$CMakeToolchainFile = "",
     [string]$VcpkgTargetTriplet = "",
     [string]$TessdataDir = $env:TESSDATA_DIR,
+    [string]$OcrPrefix = "",
     [ValidateSet("5", "6")]
     [string]$QtMajorVersion = "6",
     [ValidateSet("x64", "x86")]
@@ -50,17 +51,34 @@ $CMakeArgs = @(
 )
 if ($CMakeToolchainFile) { $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$CMakeToolchainFile" }
 if ($VcpkgTargetTriplet) { $CMakeArgs += "-DVCPKG_TARGET_TRIPLET=$VcpkgTargetTriplet" }
-cmake @CMakeArgs
-if ($LASTEXITCODE -ne 0) { throw "CMake 配置失败，退出码 $LASTEXITCODE" }
-cmake --build $Build --parallel
-if ($LASTEXITCODE -ne 0) { throw "项目编译失败，退出码 $LASTEXITCODE" }
-ctest --test-dir $Build --output-on-failure
-if ($LASTEXITCODE -ne 0) { throw "自动测试失败，退出码 $LASTEXITCODE" }
+if ($OcrPrefix) {
+  $CMakeArgs += "-DTesseract_DIR=$OcrPrefix/lib/cmake/tesseract"
+  $CMakeArgs += "-DLeptonica_DIR=$OcrPrefix/lib/cmake/leptonica"
+}
+# ctest runs before staging the app: pass the same verified models used in the ZIP.
+$PreviousTessdata = $env:TESSDATA_DIR
+if (-not $DisableOcr -and $TessdataDir) { $env:TESSDATA_DIR = $TessdataDir }
+try {
+  cmake @CMakeArgs
+  if ($LASTEXITCODE -ne 0) { throw "CMake 配置失败，退出码 $LASTEXITCODE" }
+  cmake --build $Build --parallel
+  if ($LASTEXITCODE -ne 0) { throw "项目编译失败，退出码 $LASTEXITCODE" }
+  ctest --test-dir $Build --output-on-failure
+  if ($LASTEXITCODE -ne 0) { throw "自动测试失败，退出码 $LASTEXITCODE" }
+} finally {
+  $env:TESSDATA_DIR = $PreviousTessdata
+}
 
 $Stage = Join-Path $Dist "QuizPane"
 if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
-$Executables = @("小窗刷题.exe", "题库制作器.exe")
+# Windows 7 自带的压缩文件夹组件不能可靠解压 ZIP 中的 UTF-8 文件名。
+# 仅 Win7 绿色包使用 ASCII 名称；常规 Windows 包继续保留现有产品名。
+$Executables = if ($Windows7Compat) {
+  @("QuizPane.exe", "QuizPaneStudio.exe")
+} else {
+  @("小窗刷题.exe", "题库制作器.exe")
+}
 $Sources = @(
   (Join-Path $Build "apps/desktop-qt/小窗刷题.exe"),
   (Join-Path $Build "apps/bank-studio/题库制作器.exe")
@@ -69,7 +87,8 @@ for ($Index = 0; $Index -lt $Executables.Count; $Index++) {
   Copy-Item $Sources[$Index] (Join-Path $Stage $Executables[$Index]) -Force
   if ($DebugBuild) {
     $Pdb = [System.IO.Path]::ChangeExtension($Sources[$Index], ".pdb")
-    if (Test-Path $Pdb) { Copy-Item $Pdb $Stage -Force }
+    $PackagedPdb = [System.IO.Path]::ChangeExtension($Executables[$Index], ".pdb")
+    if (Test-Path $Pdb) { Copy-Item $Pdb (Join-Path $Stage $PackagedPdb) -Force }
   }
   & (Join-Path $QtRoot "bin/windeployqt.exe") --release --no-translations `
     (Join-Path $Stage $Executables[$Index])
@@ -116,6 +135,9 @@ if (-not $DisableOcr) {
     $Source = Join-Path $TessdataDir "$Language.traineddata"
     if (-not (Test-Path $Source)) { throw "缺少 OCR 语言数据：$Source" }
     Copy-Item $Source $Tessdata -Force
+  }
+  if ($OcrPrefix) {
+    Copy-Item (Join-Path $OcrPrefix "licenses") $Stage -Recurse -Force
   }
 }
 $PlatformName = if ($Windows7Compat) { "windows7-$Architecture" } else { "windows-$Architecture" }

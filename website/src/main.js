@@ -201,10 +201,10 @@
 
       const link = document.createElement(platform.choices ? "button" : "a");
       link.className = "btn btn-primary";
-      link.textContent = platform.choices ? "选择机型" : "下载";
+      link.textContent = platform.choices ? platform.buttonLabel || "选择版本" : "下载";
       if (platform.choices) {
         link.type = "button";
-        link.addEventListener("click", () => openMacosDownloadDialog(platform, release, downloads.releaseUrlFallback));
+        link.addEventListener("click", () => openPlatformDownloadDialog(platform, release, downloads.releaseUrlFallback));
       } else if (tag) {
         link.href = siteUrl(`download/${encodeURIComponent(tag)}/${encodeURIComponent(platform.asset)}`);
       } else {
@@ -218,14 +218,19 @@
     });
   }
 
-  function openMacosDownloadDialog(platform, release, fallbackUrl) {
-    const dialog = $("#macos-download-dialog");
-    const list = $("#macos-choice-list");
+  function openPlatformDownloadDialog(platform, release, fallbackUrl) {
+    const dialog = $("#platform-download-dialog");
+    const title = $("#platform-download-title");
+    const hint = $("#platform-download-hint");
+    const list = $("#platform-choice-list");
     const tag = release?.tag;
+    title.textContent = platform.pickerTitle || `选择 ${platform.label} 版本`;
+    hint.textContent = platform.pickerHint || "";
+    hint.hidden = !platform.pickerHint;
     list.innerHTML = "";
     platform.choices.forEach((choice) => {
       const link = document.createElement("a");
-      link.className = "macos-choice";
+      link.className = "platform-choice";
       link.href = tag
         ? siteUrl(`download/${encodeURIComponent(tag)}/${encodeURIComponent(choice.asset)}`)
         : fallbackUrl;
@@ -243,9 +248,9 @@
     if (!dialog.open) dialog.showModal();
   }
 
-  function setupMacosDownloadDialog() {
-    const dialog = $("#macos-download-dialog");
-    $("#macos-download-close").addEventListener("click", () => dialog.close());
+  function setupPlatformDownloadDialog() {
+    const dialog = $("#platform-download-dialog");
+    $("#platform-download-close").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) dialog.close();
     });
@@ -403,7 +408,7 @@
     renderFooter(content.footer);
     setupMobileNav();
     setupSupportDialog();
-    setupMacosDownloadDialog();
+    setupPlatformDownloadDialog();
     setupCarousel();
 
     content.downloads.releaseUrlFallback = content.site.latestReleaseUrl;

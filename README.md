@@ -203,7 +203,7 @@ cmake --build --preset dev
 ctest --preset dev
 ```
 
-默认构建和官方发行包均启用 Tesseract C++ OCR；发行包同时携带 `chi_sim`、
+默认主线构建启用 Tesseract C++ OCR（Win7 正式包目前例外，试验包见下文）；OCR 包同时携带 `chi_sim`、
 `eng` 语言数据，不依赖 Python、外部脚本或用户另行安装运行库。自行构建时需先
 安装 Tesseract 开发库和这两份语言数据；只有明确需要精简体积时才配置
 `-DQUIZPANE_ENABLE_TESSERACT_OCR=OFF`。
@@ -300,8 +300,24 @@ Visual Studio 2019 Developer Prompt 中执行。x64 使用 Qt 5.15.2 `msvc2019_6
 产物分别为 `dist/windows7/QuizPane-windows7-x64-portable.zip` 和
 `dist/windows7/QuizPane-windows7-x86-portable.zip`。兼容包会将 v142 VC++ 与 UCRT
 运行库一并放入应用目录，无需另外安装 Visual C++ 运行库。制作器支持 TXT、Markdown、
-DOCX 和 PDF；PDF 功能使用随包的 Qt5Pdf。OCR 在 Win7 兼容包中保持关闭，因此扫描型
-PDF 需要先具备可提取的文字层或改在受支持的新系统中处理。
+DOCX 和 PDF；PDF 功能使用随包的 Qt5Pdf。Win7 正式构建默认仍关闭 OCR，扫描或转曲
+PDF 需要文字层；现在可通过 `-EnableOcr` 构建独立的**实验性离线 OCR 包**：
+
+```powershell
+.\scripts\build-windows7.ps1 -EnableOcr -Architecture x64 -QtRoot C:\Qt\5.15.2\msvc2019_64
+# 32 位改用 -Architecture x86 和相应的 Qt msvc2019 目录
+```
+
+首次构建联网下载并校验固定的 Tesseract 5.5.2、Leptonica 1.85.0 和中英文模型；
+运行识别不联网。依赖使用同一 v142 工具链按目标架构单独编译为静态库，关闭
+x86 SIMD、OpenMP、网络、压缩包和外部图片解码依赖，避免混用 Win10/v143 库。
+测试包默认输出到 `dist/windows7-ocr-x64/` 或 `dist/windows7-ocr-x86/`，不覆盖正式包。
+当前上游不承诺 Win7 支持，因此固定源码构建和 CI 通过均不能代替 Win7 SP1 实机验收。
+
+手动触发 `Test Windows 7 desktop package` 时，`enable_ocr` 默认开启；PR 测试也覆盖 OCR。
+流水线在中文路径解压 ZIP，清空模型环境变量，验证实际扫描页 OCR、损坏模型错误和已知
+Win8+ API 导入；Artifact 名含 `ocr-test`。正式 Release 工作流暂不启用此试验开关。
+OCR 只补充正文提取能力，复杂题本的题号、答案表和共享材料仍需复核。
 
 这条构建线面向 Windows 7 SP1 x64/x86，并配套维护 Chrome/Edge 109 网课伴侣：
 课程标签页会被移入真实浏览器 popup，再由桌面端置顶、隐藏和恢复，不依赖 116

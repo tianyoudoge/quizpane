@@ -2,6 +2,12 @@ name: Test Windows 7 desktop package
 
 on:
   workflow_dispatch:
+    inputs:
+      enable_ocr:
+        description: "构建实验性离线 OCR 包（仍需 Win7 SP1 实机验收）"
+        type: boolean
+        required: false
+        default: true
   push:
     branches:
       - refeactor_win7_support
@@ -122,21 +128,33 @@ jobs:
             if (-not (Test-Path $Config)) { throw "Missing Qt module: $Config" }
           }
 
+      - name: Cache pinned OCR dependencies
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.enable_ocr }}
+        uses: actions/cache@v4
+        with:
+          path: build/windows7-ocr-${{ matrix.arch }}
+          key: win7-ocr-v142-${{ matrix.arch }}-${{ hashFiles('cmake/win7-ocr/**', 'scripts/build-windows7-ocr.ps1') }}
+
       - name: Build, test and package
         shell: pwsh
-        run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }}
+        env:
+          ENABLE_OCR: ${{ github.event_name != 'workflow_dispatch' || inputs.enable_ocr }}
+        run: |
+          $EnableOcr = $env:ENABLE_OCR -eq "true"
+          ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }} `
+            -EnableOcr:$EnableOcr -BuildDir build/windows7-desktop -DistDir dist/windows7
 
       - name: Inspect portable ZIP
         shell: pwsh
         run: |
           $Archive = "dist/windows7/QuizPane-windows7-${{ matrix.arch }}-portable.zip"
           if (-not (Test-Path $Archive)) { throw "Desktop archive was not created" }
-          $Inspect = Join-Path $env:RUNNER_TEMP "quizpane-windows7-inspect"
+          $Inspect = Join-Path $env:RUNNER_TEMP "quizpane-win7-中文路径"
           Expand-Archive -Path $Archive -DestinationPath $Inspect -Force
           $Root = Join-Path $Inspect "QuizPane"
           $Required = @(
-            "小窗刷题.exe",
-            "题库制作器.exe",
+            "QuizPane.exe",
+            "QuizPaneStudio.exe",
             "Qt5Core.dll",
             "Qt5Gui.dll",
             "Qt5Network.dll",
@@ -153,6 +171,16 @@ jobs:
             $File = Join-Path $Root $RelativePath
             if (-not (Test-Path $File)) { throw "Missing packaged runtime file: $RelativePath" }
           }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $Zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $Archive))
+          try {
+            $NonAsciiEntries = @($Zip.Entries | Where-Object { $_.FullName -match '[^\x00-\x7F]' } | ForEach-Object FullName)
+          } finally {
+            $Zip.Dispose()
+          }
+          if ($NonAsciiEntries.Count -gt 0) {
+            throw "Windows 7 package contains non-ASCII paths: $($NonAsciiEntries -join ', ')"
+          }
           if (Get-ChildItem $Root -Recurse -Filter "Qt6*.dll") {
             throw "Windows 7 package unexpectedly contains Qt 6 DLLs"
           }
@@ -160,14 +188,23 @@ jobs:
       - name: Verify packaged executable architecture
         shell: pwsh
         run: |
-          $Root = Join-Path $env:RUNNER_TEMP "quizpane-windows7-inspect/QuizPane"
+          $Root = Join-Path $env:RUNNER_TEMP "quizpane-win7-中文路径/QuizPane"
           $ExpectedMachine = "machine (${{ matrix.arch }})"
-          foreach ($Executable in @("小窗刷题.exe", "题库制作器.exe")) {
+          foreach ($Executable in @("QuizPane.exe", "QuizPaneStudio.exe")) {
             $Headers = & dumpbin /headers (Join-Path $Root $Executable)
             if (-not ($Headers | Select-String -SimpleMatch $ExpectedMachine)) {
               throw "$Executable is not a ${{ matrix.arch }} executable"
             }
           }
+
+      - name: Verify offline OCR in extracted ZIP
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.enable_ocr }}
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          ./scripts/test-windows7-ocr-package.ps1 `
+            -PackageRoot (Join-Path $env:RUNNER_TEMP "quizpane-win7-中文路径/QuizPane") `
+            -BuildDir build/windows7-desktop
 
       - name: Prepare desktop artifact
         shell: pwsh
@@ -182,7 +219,7 @@ jobs:
       - name: Upload desktop test package
         uses: actions/upload-artifact@v7
         with:
-          name: QuizPane-windows7-${{ matrix.arch }}-desktop-${{ github.sha }}
+          name: QuizPane-windows7-${{ matrix.arch }}-${{ (github.event_name != 'workflow_dispatch' || inputs.enable_ocr) && 'ocr-test' || 'desktop' }}-${{ github.sha }}
           path: release-assets/*
           if-no-files-found: error
           retention-days: 14

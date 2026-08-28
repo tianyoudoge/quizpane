@@ -81,7 +81,9 @@
         "document": { "type": "string", "maxLength": 300 },
         "page": { "type": "integer", "minimum": 1 },
         "questionNumber": { "type": "integer", "minimum": 1 },
-        "questionLabel": { "type": "string", "maxLength": 40 }
+        "questionLabel": { "type": "string", "maxLength": 40 },
+        "sectionId": { "$ref": "#/$defs/id" },
+        "sectionTitle": { "type": "string", "minLength": 1, "maxLength": 120 }
       }
     },
     "material": {
@@ -144,6 +146,7 @@
         "materialId": { "$ref": "#/$defs/id" },
         "type": { "enum": ["single_choice", "multiple_choice", "true_false"] },
         "stem": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "stemUnderlines": { "$ref": "#/$defs/material/properties/underlines" },
         "stemImage": { "$ref": "#/$defs/asset" },
         "options": { "type": "array", "minItems": 2, "maxItems": 20, "items": { "$ref": "#/$defs/option" } },
         "answer": {

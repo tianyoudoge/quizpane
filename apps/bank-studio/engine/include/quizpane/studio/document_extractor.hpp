@@ -7,6 +7,8 @@
 #include <QPair>
 #include <QRectF>
 
+class QImage;
+
 namespace quizpane::studio {
 
 // PDF 文字层中的题号/选项标签坐标。坐标已经归一化到 0..1，因而规则生成器可
@@ -23,7 +25,13 @@ struct PdfUnderlineDecoration {
     QString text;
     QList<QPair<int, int>> ranges;
     QRectF bounds;
+    // 原始行中空白横线的位置；length=0 表示文字层完全丢掉了空白。
+    QList<QPair<int, int>> blanks;
 };
+
+// 纯几何检测；可用合成图验证，Qt5/Qt6 与无 QtPdf 构建共用。
+PdfUnderlineDecoration detectRenderedLineDecorations(
+    const QImage& image, const QString& text, const QList<QRectF>& characterBounds);
 
 // 单个文件的提取结果。error 非空表示提取失败或该格式尚不支持，
 // plainText 此时应为空，调用方据此把该文件标记为跳过，而不是把
@@ -40,6 +48,10 @@ struct ExtractedDocument {
     bool hasPageBoundaries = false;
     // 扫描页经过本地 OCR 时置 true，仅用于提示识别来源，不改变后续解析路径。
     bool usedOcr = false;
+    // Keep OCR failures distinct from an ordinary document without question
+    // numbers (e.g. a readable cover followed by an unreadable outlined body).
+    int ocrSkippedPages = 0;
+    int ocrFailedPages = 0;
     // 文字 PDF 也可能把统计图、图形推理题嵌为位图。扫描 PDF 会在提取时保留
     // 渲染页；文字 PDF 的页面则由规则生成器只在确认需要原卷视觉上下文时按需
     // 载入，避免“全卷每页渲染 + PNG 压缩”拖慢普通纯文字题库。
@@ -52,6 +64,9 @@ struct ExtractedDocument {
     // 文字层表达不了的下划线、填空横线和嵌入式图片横线。
     QHash<int, QList<PdfTextAnchor>> lineAnchors;
     QHash<int, QList<PdfUnderlineDecoration>> underlineDecorations;
+    QString sectionId;
+    QString sectionTitle;
+    int firstPageNumber = 1;
 };
 
 // 单一文档格式的提取器。supports() 只看扩展名，不打开文件，方便

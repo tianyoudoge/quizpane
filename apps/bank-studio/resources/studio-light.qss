@@ -30,6 +30,15 @@ QPushButton:hover { background: #edf5fb; border-color: #83aed0; }
 QPushButton#primaryButton { background: #2f7fbc; color: #ffffff; border-color: #2f7fbc; font-weight: 600; }
 QPushButton#primaryButton:hover { background: #226da7; border-color: #226da7; }
 QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #526171; border-color: transparent; }
+QFrame#reviewFilterBar { border: none; border-bottom: 1px solid #cbd6df; }
+QPushButton#reviewFilterTab { background: transparent; color: #596979; border: none; border-bottom: 3px solid transparent; border-radius: 0; padding: 9px 12px; }
+QPushButton#reviewFilterTab:hover { background: #eaf2f8; color: #185d91; }
+QPushButton#reviewFilterTab:checked { background: #e5f0f9; color: #185d91; border-bottom-color: #2f7fbc; font-weight: 600; }
+QPushButton#reviewFilterTab:focus { border-bottom-color: #174f79; }
+QPushButton#reviewCategoryChip { background: #eff7fd; color: #185d91; border: 1px solid #83aed0; border-radius: 14px; padding: 6px 12px; }
+QPushButton#reviewCategoryChip:hover { background: #dfedfa; border-color: #2f7fbc; color: #12456c; }
+QPushButton#reviewCategoryChip:checked { background: #d4e9f9; color: #12456c; border: 2px solid #2f7fbc; padding: 5px 11px; }
+QPushButton#reviewCategoryChip:focus { border-color: #174f79; }
 QPushButton#reviewActionButton { background: #ffffff; color: #2e4d66; border: 1px solid #b8cddd; border-radius: 7px; padding: 7px 12px; font-weight: 600; }
 QPushButton#reviewActionButton:hover { background: #eaf4fb; border-color: #78a8ca; color: #185d91; }
 QPushButton#reviewActionButton:disabled { color: #94a0ab; background: #f5f7f8; border-color: #e0e5e9; }
@@ -52,6 +61,7 @@ QListWidget::item { padding: 10px; border-bottom: 1px solid #e1e7ec; }
 QListWidget::item:selected { color: #17324a; background: #d9ebf8; }
 QFrame#styledDropdownPopup { background: #ffffff; border: 1px solid #c4d1db; border-radius: 8px; }
 QHeaderView::section { background: #edf2f6; color: #405263; border: none; padding: 8px; }
+QHeaderView#reviewTreeHeader { background: transparent; border: none; border-radius: 0; padding: 0; }
 QProgressBar { background: #e3e9ee; border: none; border-radius: 3px; height: 7px; }
 QProgressBar::chunk { background: #4d91c5; border-radius: 3px; }
 QSplitter::handle { background: #f4f6f8; }

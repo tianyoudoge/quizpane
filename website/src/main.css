@@ -281,6 +281,44 @@ h3 {
   object-fit: contain;
 }
 
+.hero-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: 0.1rem;
+  padding: 0.12rem 0 0.12rem 0.75rem;
+  border-left: 1px solid rgba(77, 197, 181, 0.32);
+  color: #a7e6dc;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.hero-notice:hover {
+  color: #d2f4ef;
+  text-decoration: none;
+}
+
+.hero-notice-badge {
+  color: #76d8c9;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 520px) {
+  .product-chip {
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .hero-notice {
+    flex-basis: 100%;
+    margin-left: 49px;
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+
 .hero-sub {
   color: var(--text-muted);
   font-size: 1.05rem;
@@ -1214,8 +1252,8 @@ h3 {
 .payment-arrow { width: 2rem; height: 2rem; border: 1px solid var(--border); border-radius: 50%; background: transparent; color: var(--text); font-size: 1.2rem; cursor: pointer; }
 .payment-arrow:hover, .payment-tab:hover { border-color: var(--accent); }
 
-.macos-download-dialog {
-  width: min(660px, calc(100vw - 32px));
+.platform-download-dialog {
+  width: min(460px, calc(100vw - 32px));
   max-height: min(820px, calc(100vh - 32px));
   overflow: auto;
   padding: 28px;
@@ -1225,9 +1263,44 @@ h3 {
   color: var(--text);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.56);
 }
-.macos-download-dialog::backdrop { background: rgba(4, 6, 10, 0.7); }
-.macos-download-dialog h2 { margin: 0.1rem 0 1rem; }
-.macos-download-dialog { width: min(460px, calc(100vw - 32px)); }.macos-download-dialog > p { margin: 0 0 1rem; color: var(--text-muted); }.macos-choice-list { display: grid; gap: 0.65rem; }.macos-choice { display: grid; gap: 0.2rem; padding: 1rem; border: 1px solid var(--border); border-radius: 10px; color: var(--text); text-decoration: none; }.macos-choice:hover { border-color: var(--accent); background: rgba(111, 155, 216, 0.1); }.macos-choice span { color: var(--text-muted); font-size: 0.86rem; }
+
+.platform-download-dialog::backdrop {
+  background: rgba(4, 6, 10, 0.7);
+}
+
+.platform-download-dialog h2 {
+  margin: 0.1rem 0 1rem;
+}
+
+.platform-download-dialog > p {
+  margin: 0 0 1rem;
+  color: var(--text-muted);
+}
+
+.platform-choice-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.platform-choice {
+  display: grid;
+  gap: 0.2rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.platform-choice:hover {
+  border-color: var(--accent);
+  background: rgba(111, 155, 216, 0.1);
+}
+
+.platform-choice span {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
 
 .footer-links {
   display: flex;

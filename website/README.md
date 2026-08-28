@@ -62,7 +62,8 @@ node website/scripts/build-site.mjs
 - **文案与下载平台**：改 `src/content.json`。`downloads.platforms[].asset`
   必须与 GitHub Release 里实际的 asset 文件名一致（当前对应 README 里列出的
   `QuizPane-macos-arm64.dmg`、`QuizPane-macos-x86_64.dmg`、
-  `QuizPane-windows-x64-portable.zip`、`QuizPane-linux-x86_64.deb`）。
+  `QuizPane-windows-x64-portable.zip`、`QuizPane-windows7-x64-portable.zip`、
+  `QuizPane-windows7-x86-portable.zip`、`QuizPane-linux-x86_64.deb`）。
 - **浏览器扩展**：`downloads.browserExtension.asset` 对应 Release 中的
   `QuizPane-course-companion.zip`。它由 tag 发布工作流从
   `integrations/browser-extension/` 自动打包并作为 Release asset 上传；官网通过

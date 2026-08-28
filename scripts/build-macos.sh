@@ -4,7 +4,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build/release-macos}"
 DIST_DIR="${DIST_DIR:-$ROOT/dist/macos}"
-QT_PREFIX="${QT_PREFIX:-$(brew --prefix qt)}"
+# Homebrew 目前将 Qt 6 的基础模块拆到 qtbase，旧环境才可能仍有聚合 qt
+# formula。显式 QT_PREFIX 的优先级最高；未配置时兼容两种布局。
+if [[ -n "${QT_PREFIX:-}" ]]; then
+  QT_PREFIX="$QT_PREFIX"
+elif brew list --versions qt >/dev/null 2>&1; then
+  QT_PREFIX="$(brew --prefix qt)"
+else
+  QT_PREFIX="$(brew --prefix qtbase)"
+fi
 QT5COMPAT_PREFIX="${QT5COMPAT_PREFIX:-}"
 QTWEBSOCKETS_PREFIX="${QTWEBSOCKETS_PREFIX:-}"
 TESSDATA_DIR="${TESSDATA_DIR:-$(brew --prefix tesseract)/share/tessdata}"
@@ -96,6 +104,18 @@ QT_SVG_FRAMEWORK="$(resolve_qt_framework QtSvg qtsvg)"
 QT_PDF_FRAMEWORK="$(resolve_qt_framework QtPdf qtwebengine)"
 QT_WEBSOCKETS_FRAMEWORK="$(resolve_qt_framework QtWebSockets qtwebsockets)"
 
+# Qt6Config.cmake 会优先在 qtbase 自己的目录里解析组件；Homebrew 的拆分
+# formula 因此仅传 CMAKE_PREFIX_PATH 不够。显式给出各组件的 config 目录，
+# 同时仍保留 CMAKE_PREFIX_PATH 以支持官方 Qt 安装包。
+QT_PDF_PREFIX="$(cd "$(dirname "$QT_PDF_FRAMEWORK")/.." && pwd)"
+CMAKE_QT_COMPONENT_ARGS=(
+  "-DQt6WebSockets_DIR=$QTWEBSOCKETS_PREFIX/lib/cmake/Qt6WebSockets"
+  "-DQt6Pdf_DIR=$QT_PDF_PREFIX/lib/cmake/Qt6Pdf"
+)
+if [[ -n "$QT5COMPAT_PREFIX" ]]; then
+  CMAKE_QT_COMPONENT_ARGS+=("-DQt6Core5Compat_DIR=$QT5COMPAT_PREFIX/lib/cmake/Qt6Core5Compat")
+fi
+
 BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
 PACKAGE_SUFFIX=""
@@ -124,7 +144,8 @@ cmake --preset release -S "$ROOT" -B "$BUILD_DIR" \
   -DQUIZPANE_PORTABLE_CPU_BASELINE=ON \
   -DQUIZPANE_ENABLE_DIAGNOSTIC_LOGGING="$DIAGNOSTIC_LOGGING" \
   -DQUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS="$VERBOSE_DIAGNOSTICS" \
-  -DQUIZPANE_BUILD_TESTS=ON
+  -DQUIZPANE_BUILD_TESTS=ON \
+  "${CMAKE_QT_COMPONENT_ARGS[@]}"
 cmake --build "$BUILD_DIR" --parallel
 ctest --test-dir "$BUILD_DIR" --output-on-failure
 

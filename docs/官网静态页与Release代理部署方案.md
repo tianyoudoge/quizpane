@@ -114,6 +114,14 @@ release-proxy（只允许白名单仓库与白名单 asset，定时轮询，不�
 | `GET /api/releases/latest` | 返回本站缓存的最新版 metadata；从未成功轮询过时返回 503。 |
 | `GET`/`HEAD /download/:tag/:asset` | 仅允许 metadata 中存在的 asset；命中本地文件直接支持 Range 下载；未命中时回源 GitHub、流式写盘、SHA-256/字节数校验通过后才提供下载。 |
 | `POST /internal/refresh` | 仅本机（127.0.0.1/::1）可调用，用于手动触发立即轮询。 |
+| `POST /api/feedback` | 客户端「问题反馈」上报：校验 JSON 结构（描述 ≤8000 字符、日志 ≤2MiB、崩溃产物 ≤6MiB，整包 ≤8MiB），落盘到 `FEEDBACK_DIR`（默认 `/var/lib/quizpane/feedback`，0600），返回 200；超 8MiB 返回 413，结构非法返回 400。 |
+
+### 反馈上报的运维说明
+
+- 上报内容是**用户点击后主动提交**的脱敏数据（环境快照 + 最近日志尾部 + 可选崩溃栈/dump），客户端已做 Bearer/API Key 脱敏与用户路径截断；服务器侧无需也无法二次脱敏，按「用户提供的支持材料」对待。
+- 落盘文件不进 git、不进缓存目录，由 release-proxy 启动时按 `FEEDBACK_RETENTION_DAYS`（默认 30 天）清理；查看方式：`ls /var/lib/quizpane/feedback && cat <file>.json`。
+- 目录必须在 systemd 的 `ReadWritePaths` 内（`/var/lib/quizpane` 已包含），无需改 service 单元。
+- nginx 对 `/api/feedback`（含 `/quizpane/api/feedback` 子站路径）单列 `client_max_body_size 8m`，其余 `/api/` 仍为 1m。
 
 ### 安全和缓存规则
 

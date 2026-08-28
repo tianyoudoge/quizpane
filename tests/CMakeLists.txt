@@ -105,7 +105,36 @@ add_executable(browser_protocol_test
 target_link_libraries(browser_protocol_test PRIVATE ${QUIZPANE_QT_PACKAGE}::Core)
 add_test(NAME browser_protocol_test COMMAND browser_protocol_test)
 
+add_test(
+    NAME win7_ocr_patch_test
+    COMMAND ${CMAKE_COMMAND}
+        -DPATCH_SCRIPT=${PROJECT_SOURCE_DIR}/cmake/win7-ocr/portable-tesseract.cmake
+        -DTEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/win7-ocr-patch-test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/win7_ocr_patch_test.cmake)
+
 if(TARGET question_maker_engine)
+    add_executable(studio_review_ui_test
+        studio_review_ui_test.cpp
+        ../apps/bank-studio/src/studio_window.cpp
+        ../apps/bank-studio/src/studio_window.hpp
+        ../apps/bank-studio/src/mineru_settings_dialog.cpp
+        ../apps/bank-studio/src/source_row_widget.cpp
+        ../apps/bank-studio/src/styled_dropdown.cpp
+        ../apps/bank-studio/resources/resources.qrc
+    )
+    set_target_properties(studio_review_ui_test PROPERTIES AUTORCC TRUE)
+    target_link_libraries(studio_review_ui_test PRIVATE
+        question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Widgets)
+    add_test(NAME studio_review_ui_test COMMAND studio_review_ui_test)
+
+    add_executable(review_draft_bank_test review_draft_bank_test.cpp)
+    target_link_libraries(review_draft_bank_test PRIVATE
+        question_maker_engine quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
+    target_compile_definitions(review_draft_bank_test PRIVATE
+        DECLARATIVE_BANK_PATH="${PROJECT_SOURCE_DIR}/schemas/examples/declarative/content/bank.json"
+    )
+    add_test(NAME review_draft_bank_test COMMAND review_draft_bank_test)
+
     add_executable(document_extractor_test document_extractor_test.cpp)
     target_link_libraries(document_extractor_test PRIVATE
         question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Gui)
@@ -136,6 +165,16 @@ if(TARGET question_maker_engine)
         question_maker_engine ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Network)
     add_test(NAME mineru_client_test COMMAND mineru_client_test)
 
+    add_executable(embedded_answer_test embedded_answer_test.cpp)
+    target_link_libraries(embedded_answer_test PRIVATE
+        question_maker_engine quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
+    add_test(NAME embedded_answer_test COMMAND embedded_answer_test)
+
+    add_executable(duplicate_question_number_test duplicate_question_number_test.cpp)
+    target_link_libraries(duplicate_question_number_test PRIVATE
+        question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core)
+    add_test(NAME duplicate_question_number_test COMMAND duplicate_question_number_test)
+
     # Manual regression harness for real paired PDFs. Callers provide the PDFs and an
     # isolated output directory, so it is intentionally not registered with CTest.
     add_executable(pdf_regression_harness pdf_regression_harness.cpp)
@@ -154,12 +193,16 @@ if(TARGET question_maker_engine)
         question_maker_engine ${QUIZPANE_QT_PACKAGE}::Core)
     add_test(NAME generation_workflow_test COMMAND generation_workflow_test)
 
-if(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING)
+if(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING OR QUIZPANE_ENABLE_PROD_DIAGNOSTICS)
     add_executable(diagnostic_logger_test diagnostic_logger_test.cpp)
     target_link_libraries(diagnostic_logger_test PRIVATE quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
     add_test(NAME diagnostic_logger_test COMMAND diagnostic_logger_test)
     add_executable(diagnostic_crash_test diagnostic_crash_test.cpp)
     target_link_libraries(diagnostic_crash_test PRIVATE quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
     add_test(NAME diagnostic_crash_test COMMAND diagnostic_crash_test)
+    add_executable(feedback_report_test feedback_report_test.cpp)
+    target_link_libraries(feedback_report_test PRIVATE
+        quizpane_core ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Network)
+    add_test(NAME feedback_report_test COMMAND feedback_report_test)
 endif()
 endif()
