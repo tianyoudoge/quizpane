@@ -9,8 +9,25 @@
 #include <QTemporaryDir>
 
 #include <cstdio>
+#include <cstdlib>
 
 namespace {
+bool setTessdataDirectory(const QString& path) {
+#ifdef Q_OS_WIN
+    // qputenv uses the narrow MSVC environment API and corrupts paths that
+    // cannot be represented by the active code page. qEnvironmentVariable,
+    // used by the extractor, reads the wide environment on Windows.
+    const wchar_t* value = path.isNull()
+        ? L""
+        : reinterpret_cast<const wchar_t*>(path.utf16());
+    return _wputenv_s(L"TESSDATA_DIR", value) == 0;
+#else
+    return path.isNull()
+        ? qunsetenv("TESSDATA_DIR")
+        : qputenv("TESSDATA_DIR", path.toUtf8());
+#endif
+}
+
 int ocrSmoke(const QString& path) {
 #if defined(QUIZPANE_HAS_QT_PDF) && defined(DOCUMENT_EXTRACTOR_HAS_OCR)
     const auto pdf = quizpane::studio::ExtractorRegistry{}.extract(path);
@@ -113,23 +130,23 @@ int main(int argc, char** argv) {
     if (ocrSmoke(pdfPath) != 0) return 8;
     // Build scripts supply the models explicitly. Exercise Unicode model paths
     // and corruption without touching those originals or relying on fallback.
-    const QByteArray previousModels = qgetenv("TESSDATA_DIR");
+    const QString previousModels = qEnvironmentVariable("TESSDATA_DIR");
     if (!previousModels.isEmpty()) {
-        const QDir originals(QString::fromUtf8(previousModels));
+        const QDir originals(previousModels);
         const QString unicodeModels = directory.filePath(QStringLiteral("中文路径 OCR 模型"));
         if (!QDir().mkpath(unicodeModels)) return 21;
         for (const QString& language : {QStringLiteral("chi_sim"), QStringLiteral("eng")}) {
             const QString name = language + QStringLiteral(".traineddata");
             if (!QFile::copy(originals.filePath(name), QDir(unicodeModels).filePath(name))) return 21;
         }
-        qputenv("TESSDATA_DIR", unicodeModels.toUtf8());
+        if (!setTessdataDirectory(unicodeModels)) return 21;
         const int unicodeResult = ocrSmoke(pdfPath);
         QFile corrupt(QDir(unicodeModels).filePath(QStringLiteral("chi_sim.traineddata")));
         if (!corrupt.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 22;
         corrupt.write("invalid test model");
         corrupt.close();
         const auto invalidModels = registry.extract(pdfPath);
-        qputenv("TESSDATA_DIR", previousModels);
+        if (!setTessdataDirectory(previousModels)) return 22;
         if (unicodeResult != 0 || invalidModels.ocrFailedPages == 0 || invalidModels.usedOcr ||
             !invalidModels.error.contains(QStringLiteral("识别模型缺失或损坏"))) return 22;
     }
