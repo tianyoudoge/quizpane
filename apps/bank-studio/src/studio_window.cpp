@@ -148,7 +148,14 @@ bool launchQuizPaneForProvider(const QString& providerEntryPath) {
             QStringLiteral("../../../../desktop-qt/小窗刷题.app/Contents/MacOS/小窗刷题"))
         << QStringLiteral("/Applications/小窗刷题.app/Contents/MacOS/小窗刷题");
 #elif defined(Q_OS_WIN)
-    candidates << QDir(appDir).filePath(QStringLiteral("小窗刷题.exe"));
+    // Win7 绿色包使用 ASCII 文件名；中文名回退兼容其他 Windows 包。
+#if defined(QUIZPANE_WINDOWS7_COMPAT)
+    candidates << QDir(appDir).filePath(QStringLiteral("QuizPane.exe"))
+               << QDir(appDir).filePath(QStringLiteral("小窗刷题.exe"));
+#else
+    candidates << QDir(appDir).filePath(QStringLiteral("小窗刷题.exe"))
+               << QDir(appDir).filePath(QStringLiteral("QuizPane.exe"));
+#endif
 #else
     candidates << QDir(appDir).filePath(QStringLiteral("小窗刷题"))
                << QStandardPaths::findExecutable(QStringLiteral("小窗刷题"));
