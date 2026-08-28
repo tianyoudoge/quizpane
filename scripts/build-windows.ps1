@@ -72,7 +72,13 @@ try {
 $Stage = Join-Path $Dist "QuizPane"
 if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
-$Executables = @("小窗刷题.exe", "题库制作器.exe")
+# Windows 7 自带的压缩文件夹组件不能可靠解压 ZIP 中的 UTF-8 文件名。
+# 仅 Win7 绿色包使用 ASCII 名称；常规 Windows 包继续保留现有产品名。
+$Executables = if ($Windows7Compat) {
+  @("QuizPane.exe", "QuizPaneStudio.exe")
+} else {
+  @("小窗刷题.exe", "题库制作器.exe")
+}
 $Sources = @(
   (Join-Path $Build "apps/desktop-qt/小窗刷题.exe"),
   (Join-Path $Build "apps/bank-studio/题库制作器.exe")
@@ -81,7 +87,8 @@ for ($Index = 0; $Index -lt $Executables.Count; $Index++) {
   Copy-Item $Sources[$Index] (Join-Path $Stage $Executables[$Index]) -Force
   if ($DebugBuild) {
     $Pdb = [System.IO.Path]::ChangeExtension($Sources[$Index], ".pdb")
-    if (Test-Path $Pdb) { Copy-Item $Pdb $Stage -Force }
+    $PackagedPdb = [System.IO.Path]::ChangeExtension($Executables[$Index], ".pdb")
+    if (Test-Path $Pdb) { Copy-Item $Pdb (Join-Path $Stage $PackagedPdb) -Force }
   }
   & (Join-Path $QtRoot "bin/windeployqt.exe") --release --no-translations `
     (Join-Path $Stage $Executables[$Index])
