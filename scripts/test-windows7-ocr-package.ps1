@@ -43,6 +43,18 @@ function Invoke-NativeCommand {
     }
 }
 
+# Loader failures normally display a modal dialog on Windows. CI has no user to
+# dismiss it, so child smoke processes must inherit non-interactive error mode.
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class QuizPaneNativeMethods {
+    [DllImport("kernel32.dll")]
+    public static extern uint SetErrorMode(uint mode);
+}
+"@
+$PreviousErrorMode = [QuizPaneNativeMethods]::SetErrorMode(0x8003)
+
 foreach ($File in @("tessdata/chi_sim.traineddata", "tessdata/eng.traineddata",
                     "licenses/tesseract.txt", "licenses/leptonica.txt", "licenses/tessdata-fast.txt")) {
     if (-not (Test-Path (Join-Path $PackageRoot $File))) { throw "OCR ZIP 缺少 $File" }
@@ -65,6 +77,11 @@ foreach ($Binary in (Get-ChildItem $PackageRoot -File | Where-Object { $_.Extens
 $Smoke = Join-Path $PackageRoot "document_extractor_test.exe"
 if (Test-Path $Smoke) { throw "冒烟测试目标已存在，拒绝覆盖：$Smoke" }
 Copy-Item (Join-Path $BuildDir "tests/document_extractor_test.exe") $Smoke -Force
+$Dependencies = Invoke-NativeCommand -FilePath $Dumpbin `
+    -ArgumentList @("/dependents", $Smoke) -TimeoutSeconds 30
+if ($Dependencies.ExitCode -ne 0) { throw "无法检查 OCR 冒烟程序依赖" }
+Write-Host "OCR smoke direct dependencies:"
+Write-Host $Dependencies.Stdout
 $OldData = $env:TESSDATA_DIR
 $OldPrefix = $env:TESSDATA_PREFIX
 $OldPlugins = $env:QT_PLUGIN_PATH
@@ -107,6 +124,7 @@ try {
     $env:TESSDATA_PREFIX = $OldPrefix
     $env:QT_PLUGIN_PATH = $OldPlugins
     $env:QT_QPA_PLATFORM_PLUGIN_PATH = $OldPlatformPlugins
+    [QuizPaneNativeMethods]::SetErrorMode($PreviousErrorMode) | Out-Null
     Remove-Item $Smoke
 }
 # The negative test intentionally exits nonzero; do not leak it to Actions.
