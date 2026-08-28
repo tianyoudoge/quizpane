@@ -5,15 +5,59 @@ param(
 $ErrorActionPreference = "Stop"
 $RepositoryRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $PackageRoot = (Resolve-Path $PackageRoot).Path
+
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+        [int]$TimeoutSeconds = 60
+    )
+    $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $StartInfo.FileName = $FilePath
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.CreateNoWindow = $true
+    $StartInfo.RedirectStandardOutput = $true
+    $StartInfo.RedirectStandardError = $true
+    foreach ($Argument in $ArgumentList) { $StartInfo.ArgumentList.Add($Argument) }
+    $Process = [System.Diagnostics.Process]::new()
+    $Process.StartInfo = $StartInfo
+    try {
+        if (-not $Process.Start()) { throw "无法启动 $FilePath" }
+        $StdoutTask = $Process.StandardOutput.ReadToEndAsync()
+        $StderrTask = $Process.StandardError.ReadToEndAsync()
+        $TimedOut = -not $Process.WaitForExit($TimeoutSeconds * 1000)
+        if ($TimedOut) {
+            try { $Process.Kill($true) } catch { $Process.Kill() }
+            $Process.WaitForExit()
+        }
+        $Stdout = $StdoutTask.GetAwaiter().GetResult()
+        $Stderr = $StderrTask.GetAwaiter().GetResult()
+        if ($TimedOut) { throw "$FilePath 超过 $TimeoutSeconds 秒未退出" }
+        return [pscustomobject]@{
+            ExitCode = $Process.ExitCode
+            Stdout = $Stdout
+            Stderr = $Stderr
+        }
+    } finally {
+        $Process.Dispose()
+    }
+}
+
 foreach ($File in @("tessdata/chi_sim.traineddata", "tessdata/eng.traineddata",
                     "licenses/tesseract.txt", "licenses/leptonica.txt", "licenses/tessdata-fast.txt")) {
     if (-not (Test-Path (Join-Path $PackageRoot $File))) { throw "OCR ZIP 缺少 $File" }
 }
 # A tripwire for common Win8+ imports, NOT a complete Win7 API certification.
 $Unsupported = '\b(WaitOnAddress|WakeByAddressSingle|WakeByAddressAll|GetSystemTimePreciseAsFileTime|GetCurrentThreadStackLimits|SetThreadDescription|GetTempPath2[AW]|CreateFile2|GetDpiForWindow|GetDpiForSystem|SetProcessDpiAwarenessContext)\b'
+$Dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
 foreach ($Binary in (Get-ChildItem $PackageRoot -File | Where-Object { $_.Extension -in @(".exe", ".dll") })) {
-    $Imports = & dumpbin /imports $Binary.FullName
-    if ($LASTEXITCODE -ne 0) { throw "无法检查 $($Binary.Name) 的导入表" }
+    Write-Host "Checking Win7 imports: $($Binary.Name)"
+    $DumpbinResult = Invoke-NativeCommand -FilePath $Dumpbin `
+        -ArgumentList @("/imports", $Binary.FullName) -TimeoutSeconds 30
+    if ($DumpbinResult.ExitCode -ne 0) {
+        throw "无法检查 $($Binary.Name) 的导入表：$($DumpbinResult.Stderr)"
+    }
+    $Imports = $DumpbinResult.Stdout
     if ($Imports -match $Unsupported) { throw "$($Binary.Name) 引用了已知的 Win7 不支持的 API" }
 }
 # Tests execute against the extracted ZIP's Qt runtimes and models, not PATH,
@@ -30,8 +74,15 @@ try {
     $env:TESSDATA_PREFIX = $null
     $env:QT_PLUGIN_PATH = $null
     $env:QT_QPA_PLATFORM_PLUGIN_PATH = $null
-    & $Smoke --ocr-smoke "$RepositoryRoot/tests/fixtures/ocr-scan-fixture.pdf"
-    if ($LASTEXITCODE -ne 0) { throw "解压包 OCR 冒烟失败" }
+    Write-Host "Running OCR smoke from extracted package"
+    $SmokeResult = Invoke-NativeCommand -FilePath $Smoke `
+        -ArgumentList @("--ocr-smoke", "$RepositoryRoot/tests/fixtures/ocr-scan-fixture.pdf") `
+        -TimeoutSeconds 60
+    $SmokeOutput = "$($SmokeResult.Stdout)`n$($SmokeResult.Stderr)"
+    Write-Host $SmokeOutput
+    if ($SmokeResult.ExitCode -ne 0) {
+        throw "解压包 OCR 冒烟失败（退出码 $($SmokeResult.ExitCode)）：$SmokeOutput"
+    }
     # A damaged Chinese model must not silently fall back to English-only OCR.
     $Chinese = Join-Path $PackageRoot "tessdata/chi_sim.traineddata"
     $Backup = "$Chinese.smoke-backup"
@@ -39,9 +90,14 @@ try {
     Move-Item $Chinese $Backup
     try {
         [System.IO.File]::WriteAllText($Chinese, "intentional invalid model for smoke test")
-        $Failure = & $Smoke --ocr-smoke "$RepositoryRoot/tests/fixtures/ocr-scan-fixture.pdf" 2>&1
-        if ($LASTEXITCODE -ne 8 -or -not ($Failure -match "识别模型")) {
-            throw "模型损坏时 OCR 未给出预期错误（退出码 $LASTEXITCODE）：$Failure"
+        Write-Host "Running damaged-model OCR smoke"
+        $FailureResult = Invoke-NativeCommand -FilePath $Smoke `
+            -ArgumentList @("--ocr-smoke", "$RepositoryRoot/tests/fixtures/ocr-scan-fixture.pdf") `
+            -TimeoutSeconds 60
+        $Failure = "$($FailureResult.Stdout)`n$($FailureResult.Stderr)"
+        Write-Host $Failure
+        if ($FailureResult.ExitCode -ne 8 -or -not ($Failure -match "识别模型")) {
+            throw "模型损坏时 OCR 未给出预期错误（退出码 $($FailureResult.ExitCode)）：$Failure"
         }
     } finally {
         Move-Item $Backup $Chinese -Force

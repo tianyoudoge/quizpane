@@ -199,6 +199,7 @@ jobs:
 
       - name: Verify offline OCR in extracted ZIP
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.enable_ocr }}
+        timeout-minutes: 5
         shell: pwsh
         run: |
           ./scripts/test-windows7-ocr-package.ps1 `
