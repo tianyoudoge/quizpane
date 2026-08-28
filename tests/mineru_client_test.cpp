@@ -1,0 +1,417 @@
+// MinerU 客户端协议测试。
+//
+// 两部分：
+//   1. 纯函数：请求体、鉴权、两种错误信封、轮询状态解析。不触网。
+//   2. 全链路状态机：用本地 QTcpServer 桩服务跑完 申请链接 → 上传 → 轮询 →
+//      下载 的完整流程。真实 API 需要凭据且会消耗额度，不适合进 CI。
+
+#include "quizpane/studio/mineru_client.hpp"
+
+#include <QCoreApplication>
+#include <QEventLoop>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTemporaryDir>
+#include <QTimer>
+
+#include <cstdio>
+
+namespace {
+
+int fail(const char* message) {
+    std::fprintf(stderr, "%s\n", message);
+    return 1;
+}
+
+// 极简 HTTP 桩服务。按请求路径返回预置响应，足以驱动客户端状态机。
+class StubServer : public QTcpServer {
+public:
+    explicit StubServer(QObject* parent = nullptr) : QTcpServer(parent) {}
+
+    int pollCount = 0;
+    int uploadCount = 0;
+    QByteArray uploadedBody;
+
+protected:
+    void incomingConnection(qintptr descriptor) override {
+        auto* socket = new QTcpSocket(this);
+        socket->setSocketDescriptor(descriptor);
+        connect(socket, &QTcpSocket::readyRead, this, [this, socket] {
+            buffers_[socket].append(socket->readAll());
+            QByteArray& buffer = buffers_[socket];
+            const int headerEnd = buffer.indexOf("\r\n\r\n");
+            if (headerEnd < 0)
+                return;
+            const QByteArray header = buffer.left(headerEnd);
+            // 只在拿到完整请求体后作答，否则 PUT 上传会被截断。
+            int contentLength = 0;
+            for (const QByteArray& line : header.split('\r')) {
+                const QByteArray trimmed = line.trimmed();
+                if (trimmed.toLower().startsWith("content-length:"))
+                    contentLength = trimmed.mid(trimmed.indexOf(':') + 1).trimmed().toInt();
+            }
+            const QByteArray body = buffer.mid(headerEnd + 4);
+            if (body.size() < contentLength)
+                return;
+            respond(socket, header, body);
+            buffers_.remove(socket);
+        });
+        connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater);
+    }
+
+private:
+    void respond(QTcpSocket* socket, const QByteArray& header, const QByteArray& body) {
+        const QByteArray requestLine = header.left(header.indexOf('\r'));
+        const bool authorized = header.toLower().contains("authorization: bearer test-token");
+
+        auto send = [socket](const QByteArray& status, const QByteArray& payload,
+                             const QByteArray& contentType = "application/json") {
+            const QByteArray response = "HTTP/1.1 " + status + "\r\nContent-Type: " + contentType +
+                                        "\r\nContent-Length: " +
+                                        QByteArray::number(payload.size()) +
+                                        "\r\nConnection: close\r\n\r\n" + payload;
+            socket->write(response);
+            socket->flush();
+            socket->disconnectFromHost();
+        };
+
+        if (requestLine.contains("/api/v4/file-urls/batch")) {
+            if (!authorized) {
+                // 官方鉴权失败用 {msgCode, msg, success} 信封，且可能带 200。
+                send("200 OK",
+                     R"({"traceId":"t","msgCode":"A0202","msg":"user authenticate failed",)"
+                     R"("data":null,"success":false,"total":0})");
+                return;
+            }
+            const QByteArray uploadUrl =
+                "http://127.0.0.1:" + QByteArray::number(serverPort()) + "/upload/slot";
+            send("200 OK", R"({"code":0,"msg":"ok","data":{"batch_id":"batch-1","file_urls":[")" +
+                               uploadUrl + R"("]}})");
+            return;
+        }
+        if (requestLine.startsWith("PUT") && requestLine.contains("/upload/slot")) {
+            ++uploadCount;
+            uploadedBody = body;
+            send("200 OK", "");
+            return;
+        }
+        if (requestLine.contains("/api/v4/extract-results/batch/batch-1")) {
+            ++pollCount;
+            if (pollCount < 2) {
+                // 第一轮还在解析，带进度；客户端应继续轮询而不是报错。
+                send("200 OK",
+                     R"({"code":0,"data":{"extract_result":[{"state":"running",)"
+                     R"("extract_progress":{"extracted_pages":3,"total_pages":10}}]}})");
+                return;
+            }
+            const QByteArray zipUrl =
+                "http://127.0.0.1:" + QByteArray::number(serverPort()) + "/result.zip";
+            send("200 OK", R"({"code":0,"data":{"extract_result":[{"state":"done",)"
+                           R"("full_zip_url":")" + zipUrl + R"("}]}})");
+            return;
+        }
+        if (requestLine.contains("/result.zip")) {
+            send("200 OK", "PK\x03\x04stub-zip-bytes", "application/zip");
+            return;
+        }
+        send("404 Not Found", "{}");
+    }
+
+    QHash<QTcpSocket*, QByteArray> buffers_;
+};
+
+// 等待信号，带超时。测试绝不允许无限挂起。
+bool waitForFinish(quizpane::studio::MineruExtractionJob* job, bool* okOut, QString* zipOut,
+                   QString* errorOut) {
+    QEventLoop loop;
+    bool fired = false;
+    QObject::connect(job, &quizpane::studio::MineruExtractionJob::finished, &loop,
+                     [&](bool ok, const QString& zip, const QString& error) {
+                         *okOut = ok;
+                         *zipOut = zip;
+                         *errorOut = error;
+                         fired = true;
+                         loop.quit();
+                     });
+    QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+    loop.exec();
+    return fired;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    QCoreApplication app(argc, argv);
+    using namespace quizpane::studio;
+
+    // —— 纯函数 ——
+
+    MineruSettings settings;
+    settings.token = QStringLiteral("test-token");
+
+    const QJsonObject body = buildUploadUrlRequestBody(settings, QStringLiteral("paper.pdf"));
+    if (body.value(QStringLiteral("model_version")).toString() != QStringLiteral("vlm"))
+        return fail("default model_version should be vlm");
+    if (body.value(QStringLiteral("language")).toString() != QStringLiteral("ch"))
+        return fail("default language should be ch");
+    if (!body.value(QStringLiteral("enable_formula")).toBool() ||
+        !body.value(QStringLiteral("enable_table")).toBool())
+        return fail("formula/table extraction should default to on");
+    const QJsonArray files = body.value(QStringLiteral("files")).toArray();
+    if (files.size() != 1 ||
+        files.first().toObject().value(QStringLiteral("name")).toString() !=
+            QStringLiteral("paper.pdf"))
+        return fail("upload body must carry exactly one named file");
+    // 文字型 PDF 不该请求 OCR：多余的识别只会引入误差。
+    if (files.first().toObject().contains(QStringLiteral("is_ocr")))
+        return fail("is_ocr must be omitted unless explicitly requested");
+    MineruSettings ocrSettings = settings;
+    ocrSettings.isOcr = true;
+    if (!buildUploadUrlRequestBody(ocrSettings, QStringLiteral("scan.pdf"))
+             .value(QStringLiteral("files"))
+             .toArray()
+             .first()
+             .toObject()
+             .value(QStringLiteral("is_ocr"))
+             .toBool())
+        return fail("is_ocr must be forwarded when requested");
+
+    QString requestError;
+    const QNetworkRequest request =
+        buildMineruRequest(settings, QStringLiteral("/api/v4/file-urls/batch"), &requestError);
+    if (!requestError.isEmpty())
+        return fail("valid settings should build a request");
+    if (request.rawHeader("Authorization") != QByteArrayLiteral("Bearer test-token"))
+        return fail("Bearer token header missing");
+
+    // 没有 Token 时必须在本地失败，不发出请求——避免把明显无效的调用打到线上。
+    MineruSettings tokenless;
+    QString tokenlessError;
+    buildMineruRequest(tokenless, QStringLiteral("/api/v4/file-urls/batch"), &tokenlessError);
+    if (tokenlessError.isEmpty())
+        return fail("missing token must be rejected locally");
+
+    // 鉴权失败信封（HTTP 200 + success=false）必须被识别为错误，并给出可操作提示。
+    const MineruUploadTicket authFailure = parseUploadUrlResponse(
+        QByteArrayLiteral(R"({"msgCode":"A0202","msg":"user authenticate failed",)"
+                          R"("success":false})"),
+        200);
+    if (authFailure.error.isEmpty())
+        return fail("success=false envelope must be treated as failure");
+    if (!authFailure.error.contains(QStringLiteral("Token")))
+        return fail("A0202 should be explained in terms of the token");
+
+    // 过期 Token 与额度耗尽都要给出下一步动作，而不是抛出裸错误码。
+    if (!parseUploadUrlResponse(QByteArrayLiteral(R"({"msgCode":"A0211","msg":"expired",)"
+                                                  R"("success":false})"),
+                                200)
+             .error.contains(QStringLiteral("重新生成")))
+        return fail("A0211 should tell the user to regenerate the token");
+    if (!parsePollResponse(QByteArrayLiteral(R"({"code":-60018,"msg":"quota"})"), 200)
+             .error.contains(QStringLiteral("额度")))
+        return fail("-60018 should be explained as a quota problem");
+    if (!parsePollResponse(QByteArrayLiteral(R"({"code":-60012,"msg":"task not found"})"), 200)
+             .error.contains(QStringLiteral("任务")))
+        return fail("-60012 should be explained as a missing task");
+
+    const MineruUploadTicket ticket = parseUploadUrlResponse(
+        QByteArrayLiteral(R"({"code":0,"data":{"batch_id":"b1","file_urls":["https://x/y"]}})"),
+        200);
+    if (!ticket.error.isEmpty() || ticket.batchId != QStringLiteral("b1") ||
+        ticket.uploadUrl != QStringLiteral("https://x/y"))
+        return fail("valid upload ticket not parsed");
+
+    // 轮询状态机：running 继续等，failed/done 结束。
+    const MineruPollResult running = parsePollResponse(
+        QByteArrayLiteral(R"({"code":0,"data":{"extract_result":[{"state":"running",)"
+                          R"("extract_progress":{"extracted_pages":4,"total_pages":9}}]}})"),
+        200);
+    if (running.finished || running.extractedPages != 4 || running.totalPages != 9)
+        return fail("running state should report progress and keep polling");
+    // 批次刚建立时条目为空，这不是错误。
+    if (parsePollResponse(QByteArrayLiteral(R"({"code":0,"data":{"extract_result":[]}})"), 200)
+            .finished)
+        return fail("empty extract_result should keep polling");
+    const MineruPollResult failed = parsePollResponse(
+        QByteArrayLiteral(R"({"code":0,"data":{"extract_result":[{"state":"failed",)"
+                          R"("err_msg":"broken pdf"}]}})"),
+        200);
+    if (!failed.finished || !failed.error.contains(QStringLiteral("broken pdf")))
+        return fail("failed state must surface err_msg");
+    const MineruPollResult done = parsePollResponse(
+        QByteArrayLiteral(R"({"code":0,"data":{"extract_result":[{"state":"done",)"
+                          R"("full_zip_url":"https://x/r.zip"}]}})"),
+        200);
+    if (!done.finished || done.zipUrl != QStringLiteral("https://x/r.zip") ||
+        !done.error.isEmpty())
+        return fail("done state must yield a zip url");
+    // done 但没有下载地址是协议异常，必须显式失败而不是静默产出空结果。
+    if (parsePollResponse(
+            QByteArrayLiteral(R"({"code":0,"data":{"extract_result":[{"state":"done"}]}})"), 200)
+            .error.isEmpty())
+        return fail("done without a zip url must be an error");
+
+    if (describeMineruStage(MineruStage::Polling).isEmpty())
+        return fail("stages need human readable descriptions");
+
+    // —— 全链路状态机（本地桩服务）——
+
+    QTemporaryDir directory;
+    if (!directory.isValid())
+        return fail("temporary directory unavailable");
+    const QString sourcePath = directory.filePath(QStringLiteral("paper.pdf"));
+    {
+        QFile source(sourcePath);
+        if (!source.open(QIODevice::WriteOnly))
+            return fail("cannot stage source pdf");
+        source.write(QByteArrayLiteral("%PDF-1.7 stub content"));
+    }
+
+    StubServer server;
+    if (!server.listen(QHostAddress::LocalHost))
+        return fail("stub server failed to listen");
+
+    MineruSettings stubSettings;
+    stubSettings.token = QStringLiteral("test-token");
+    stubSettings.baseUrl =
+        QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());
+
+    QNetworkAccessManager manager;
+    const QString zipPath = directory.filePath(QStringLiteral("out/result.zip"));
+    {
+        MineruExtractionJob job(&manager);
+        QList<MineruStage> stages;
+        QObject::connect(&job, &MineruExtractionJob::stageChanged, &job,
+                         [&stages](MineruStage stage, const QString&) { stages.append(stage); });
+        int lastExtracted = -1;
+        int lastTotal = -1;
+        QObject::connect(&job, &MineruExtractionJob::progress, &job,
+                         [&](int extracted, int total) {
+                             lastExtracted = extracted;
+                             lastTotal = total;
+                         });
+
+        bool ok = false;
+        QString resultZip;
+        QString error;
+        job.start(stubSettings, sourcePath, zipPath);
+        if (!waitForFinish(&job, &ok, &resultZip, &error))
+            return fail("job never finished");
+        if (!ok)
+            return fail(QStringLiteral("stubbed job failed: %1").arg(error).toUtf8().constData());
+        if (resultZip != zipPath)
+            return fail("job reported an unexpected zip path");
+        if (!QFile::exists(zipPath))
+            return fail("result zip was not written to disk");
+        // 上传的内容必须与源文件逐字节一致。
+        if (server.uploadCount != 1 ||
+            server.uploadedBody != QByteArrayLiteral("%PDF-1.7 stub content"))
+            return fail("uploaded body does not match the source file");
+        // running 之后必须继续轮询，而不是当成结束。
+        if (server.pollCount < 2)
+            return fail("client should keep polling while the task is running");
+        if (lastExtracted != 3 || lastTotal != 10)
+            return fail("progress from the running state was not surfaced");
+        if (!stages.contains(MineruStage::Uploading) || !stages.contains(MineruStage::Polling) ||
+            !stages.contains(MineruStage::Downloading) || !stages.contains(MineruStage::Done))
+            return fail("job did not pass through the expected stages");
+        if (job.stage() != MineruStage::Done)
+            return fail("final stage should be Done");
+    }
+
+    // 错误路径：Token 不被桩服务接受时必须失败并给出提示，不能写出结果文件。
+    {
+        MineruSettings badSettings = stubSettings;
+        badSettings.token = QStringLiteral("wrong-token");
+        const QString badZip = directory.filePath(QStringLiteral("bad/result.zip"));
+        MineruExtractionJob job(&manager);
+        bool ok = true;
+        QString resultZip;
+        QString error;
+        job.start(badSettings, sourcePath, badZip);
+        if (!waitForFinish(&job, &ok, &resultZip, &error))
+            return fail("rejected job never finished");
+        if (ok || error.isEmpty())
+            return fail("bad token must fail the job");
+        if (QFile::exists(badZip))
+            return fail("failed job must not leave a result file behind");
+        if (job.stage() != MineruStage::Failed)
+            return fail("final stage should be Failed");
+    }
+
+    // 不存在的源文件在本地即失败，不发起任何网络请求。
+    {
+        MineruExtractionJob job(&manager);
+        bool ok = true;
+        QString resultZip;
+        QString error;
+        job.start(stubSettings, directory.filePath(QStringLiteral("missing.pdf")),
+                  directory.filePath(QStringLiteral("missing/out.zip")));
+        if (!waitForFinish(&job, &ok, &resultZip, &error))
+            return fail("missing-source job never finished");
+        if (ok || !error.contains(QStringLiteral("找不到")))
+            return fail("missing source file must fail locally");
+    }
+
+    // 取消：状态机必须停在 Cancelled，且报告失败而不是静默结束。
+    {
+        MineruExtractionJob job(&manager);
+        bool ok = true;
+        QString resultZip;
+        QString error;
+        job.start(stubSettings, sourcePath, directory.filePath(QStringLiteral("c/out.zip")));
+        job.cancel();
+        if (!waitForFinish(&job, &ok, &resultZip, &error))
+            return fail("cancelled job never reported");
+        if (ok)
+            return fail("cancelled job must not report success");
+        if (job.stage() != MineruStage::Cancelled)
+            return fail("final stage should be Cancelled");
+    }
+
+    // 取消上传后必须能删除源文件。Windows 上打开中的文件不允许删除，因此
+    // 这条断言能在真实目标平台（Win7/Win10）抓住"取消时泄漏文件句柄"的回归。
+    //
+    // 注意：POSIX 允许删除打开中的文件，所以本断言在 macOS/Linux 上恒为真、
+    // 起不到把关作用（已实测确认）。保留它是为了在 Windows CI 上有效；
+    // QFile 生命周期挂在 reply 而非 finished 回调上的理由见 mineru_client.cpp。
+    {
+        const QString deleteProbe = directory.filePath(QStringLiteral("delete-probe.pdf"));
+        {
+            QFile probe(deleteProbe);
+            if (!probe.open(QIODevice::WriteOnly))
+                return fail("cannot stage delete probe file");
+            probe.write(QByteArray(512 * 1024, 'x'));
+        }
+        MineruExtractionJob job(&manager);
+        QEventLoop uploadWait;
+        QObject::connect(&job, &MineruExtractionJob::stageChanged, &uploadWait,
+                         [&uploadWait](MineruStage stage, const QString&) {
+                             if (stage == MineruStage::Uploading)
+                                 uploadWait.quit();
+                         });
+        QTimer::singleShot(10000, &uploadWait, &QEventLoop::quit);
+        bool ok = true;
+        QString resultZip;
+        QString error;
+        job.start(stubSettings, deleteProbe, directory.filePath(QStringLiteral("dp/out.zip")));
+        uploadWait.exec();
+        job.cancel();
+        if (!waitForFinish(&job, &ok, &resultZip, &error))
+            return fail("cancelled upload never reported");
+        if (ok)
+            return fail("cancelled upload must not report success");
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        if (!QFile::remove(deleteProbe))
+            return fail("source file still open after cancelling the upload");
+    }
+
+    std::fprintf(stdout, "mineru_client_test ok\n");
+    return 0;
+}

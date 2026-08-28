@@ -1018,5 +1018,130 @@ int main(int argc, char** argv) {
     if (question2Review.value("needsReview").toBool())
         return 118;
 
+    // 资料分析题干几乎都以年份开头（“111.2016年～2020年，……”）。题号正则用
+    // `\.(?!\d)` 挡住 “1.5 倍”这类小数，但它会连同真题号一起否掉，导致整卷只
+    // 剩题干不以数字开头的少数题目。
+    ExtractedDocument yearLeadingStems;
+    yearLeadingStems.sourcePath = QStringLiteral("year-leading-stems.txt");
+    yearLeadingStems.plainText = QStringLiteral(
+        "111.2016年～2020年，某地产量在以下哪个范围内？\nA. 甲 B. 乙\nC. 丙 D. 丁\n"
+        "112.2018~2022年，某地同比增长的年份有几个？\nA. 5 B. 4\nC. 3 D. 2\n"
+        "113.以下折线图反映了哪一数据的变化趋势？\nA. 出口额 B. 出口量\nC. 面积 D. 产量\n"
+        "【参考答案】ABC\n");
+    const auto yearLeadingResult = RuleBasedBankGenerator{}.generate({yearLeadingStems});
+    // QJsonArray 的 operator+ 是"追加一个值"，不是拼接两个数组，这里必须逐项追加。
+    QJsonArray yearLeadingAll = yearLeadingResult.questions;
+    for (const auto& value : yearLeadingResult.needsReviewQuestions)
+        yearLeadingAll.append(value);
+    if (yearLeadingAll.size() != 3)
+        return 60;
+    // 题干必须保留年份本身，题号被剥离后不能把 “2016年” 一起吃掉。
+    if (!yearLeadingAll.at(0).toObject().value("stem").toString().startsWith(
+            QStringLiteral("2016年")))
+        return 61;
+    // 末页“【参考答案】ABC”这种连续答案串没有任何题号，只能按顺序对应题号；
+    // 字母数与题数相等时才允许采用。
+    for (int index = 0; index < 3; ++index) {
+        const QString expected = QStringList{QStringLiteral("a"), QStringLiteral("b"),
+                                             QStringLiteral("c")}
+                                     .at(index);
+        const QJsonArray optionIds = yearLeadingAll.at(index)
+                                         .toObject()
+                                         .value("answer")
+                                         .toObject()
+                                         .value("optionIds")
+                                         .toArray();
+        if (optionIds.size() != 1 || optionIds.at(0).toString() != expected)
+            return 62;
+    }
+
+    // 小数必须继续被排除，否则 “1.5 倍”会被当成第 1 题。
+    ExtractedDocument decimalStem;
+    decimalStem.sourcePath = QStringLiteral("decimal-stem.txt");
+    decimalStem.plainText = QStringLiteral(
+        "1. 下列说法正确的是？\nA. 甲 B. 乙\n答案：A\n"
+        "1.5倍以上的年份共有几个？这是解析正文，不是新题。\n");
+    const auto decimalResult = RuleBasedBankGenerator{}.generate({decimalStem});
+    if (decimalResult.questions.size() + decimalResult.needsReviewQuestions.size() != 1)
+        return 63;
+
+    // 连续答案串数量与题数不符时必须放弃配对：错位写入比缺答案更有害，
+    // 缺答案会显式进复核，错位则会静默产出语义错误的题库。
+    ExtractedDocument mismatchedRun;
+    mismatchedRun.sourcePath = QStringLiteral("mismatched-run.txt");
+    mismatchedRun.plainText = QStringLiteral(
+        "1. 第一题\nA. 甲 B. 乙\n"
+        "2. 第二题\nA. 丙 B. 丁\n"
+        "【参考答案】ABCD\n");
+    const auto mismatchedResult = RuleBasedBankGenerator{}.generate({mismatchedRun});
+    if (mismatchedResult.questions.size() != 0 ||
+        mismatchedResult.needsReviewQuestions.size() != 2)
+        return 64;
+
+    // 真题的答案串常常只覆盖主体大题，卷末还附带没有答案的练习。整卷题数与
+    // 答案数对不上，但答案串仍严格对应一段连续题号时应当采用——否则整卷答案
+    // 全部丢失。这里 111-113 有答案串，卷末的 1-2 题没有。
+    ExtractedDocument trailingPractice;
+    trailingPractice.sourcePath = QStringLiteral("trailing-practice.txt");
+    trailingPractice.plainText = QStringLiteral(
+        "111.2016年～2020年，某地产量在以下哪个范围内？\nA. 甲 B. 乙\nC. 丙 D. 丁\n"
+        "112.2018~2022年，某地同比增长的年份有几个？\nA. 5 B. 4\nC. 3 D. 2\n"
+        "113.以下折线图反映了哪一数据的变化趋势？\nA. 出口额 B. 出口量\nC. 面积 D. 产量\n"
+        "【参考答案】ABC\n"
+        "补充练习\n"
+        "1. 卷末练习第一题\nA. 甲 B. 乙\n"
+        "2. 卷末练习第二题\nA. 丙 B. 丁\n");
+    const auto trailingPracticeResult = RuleBasedBankGenerator{}.generate({trailingPractice});
+    QJsonArray trailingPracticeAll = trailingPracticeResult.questions;
+    for (const auto& value : trailingPracticeResult.needsReviewQuestions)
+        trailingPracticeAll.append(value);
+    // 卷末练习位于答案区之后，按既有规则会被当作答案区内的解析文本剔除，
+    // 因此这里只应剩 111-113 三道题。关键断言是它们的答案没有错位。
+    if (trailingPracticeAll.size() != 3)
+        return 66;
+    for (const auto& value : trailingPracticeAll) {
+        const QJsonObject question = value.toObject();
+        const int number = question.value("source").toObject().value("questionNumber").toInt();
+        const QJsonArray optionIds =
+            question.value("answer").toObject().value("optionIds").toArray();
+        if (number >= 111 && number <= 113) {
+            const QString expected =
+                QStringList{QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("c")}
+                    .at(number - 111);
+            if (optionIds.size() != 1 || optionIds.at(0).toString() != expected)
+                return 67;
+        } else if (!optionIds.isEmpty()) {
+            // 卷末练习没有答案，绝不能被答案串顺延绑定。
+            return 68;
+        }
+    }
+
+    // 存在两段长度相同的候选区间时无法判断答案串该绑哪段，必须整段放弃。
+    ExtractedDocument ambiguousSegments;
+    ambiguousSegments.sourcePath = QStringLiteral("ambiguous-segments.txt");
+    ambiguousSegments.plainText = QStringLiteral(
+        "11. 第一段第一题\nA. 甲 B. 乙\n"
+        "12. 第一段第二题\nA. 丙 B. 丁\n"
+        "21. 第二段第一题\nA. 戊 B. 己\n"
+        "22. 第二段第二题\nA. 庚 B. 辛\n"
+        "【参考答案】AB\n");
+    const auto ambiguousResult = RuleBasedBankGenerator{}.generate({ambiguousSegments});
+    for (const auto& value : ambiguousResult.questions) {
+        if (!value.toObject().value("answer").toObject().value("optionIds").toArray().isEmpty())
+            return 69;
+    }
+
+    // 单题的“答案：A”不是答案区起点。把它误判成答案区会切断题目块，
+    // 让本来能正常识别答案的题反而失去答案。
+    ExtractedDocument perQuestionAnswer;
+    perQuestionAnswer.sourcePath = QStringLiteral("per-question-answer.txt");
+    perQuestionAnswer.plainText = QStringLiteral(
+        "1. 第一题\nA. 甲\nB. 乙\n答案：A\n"
+        "2. 第二题\nA. 丙\nB. 丁\n答案：B\n");
+    const auto perQuestionResult = RuleBasedBankGenerator{}.generate({perQuestionAnswer});
+    if (perQuestionResult.questions.size() != 2 ||
+        !perQuestionResult.needsReviewQuestions.isEmpty())
+        return 65;
+
     return 0;
 }

@@ -10,6 +10,10 @@ QLabel#eyebrow { color: #aeb5bd; font-size: 11px; font-weight: 600; }
 QLabel#muted { color: #9ca3ab; }
 QLabel#sideStep { color: #aeb5bd; padding: 9px 10px; border-radius: 7px; }
 QLabel#sideStep[active="true"] { color: #ffffff; background: #252a31; }
+QPushButton#parseModeChip { background: #16191e; color: #9aa3ad; border: 1px solid #2b3138; border-radius: 8px; padding: 8px 10px; text-align: left; font-size: 12px; }
+QPushButton#parseModeChip:hover { border-color: #3c444d; color: #c8ced5; }
+QPushButton#parseModeChip[mode="local"] { color: #7fb98a; }
+QPushButton#parseModeChip[mode="cloud"] { color: #79a9d8; }
 QFrame#sidebarSupport { background: #1d1813; border: 1px solid #58432e; border-radius: 8px; }
 QPushButton#sidebarSupportButton { background: transparent; color: #f1bd77; border: none; padding: 2px 0; text-align: left; font-weight: 650; }
 QPushButton#sidebarSupportButton:hover { color: #ffd5a0; background: transparent; }
@@ -37,7 +41,7 @@ QPushButton#reviewCategoryChip { background: #182636; color: #9ed3fc; border: 1p
 QPushButton#reviewCategoryChip:hover { background: #223c52; border-color: #8acbff; color: #e3f3ff; }
 QPushButton#reviewCategoryChip:checked { background: #234d6c; color: #ffffff; border: 2px solid #8acbff; padding: 5px 11px; }
 QPushButton#reviewCategoryChip:focus { border-color: #c0e5ff; }
-/* 复核页的“全部标记 / 手动修正 / AI 修正”是明确动作，不应伪装成普通文本链接。 */
+/* 复核页的批量确认与手动修正是明确动作，不应伪装成普通文本链接。 */
 QPushButton#reviewActionButton { background: #20252b; color: #dce1e7; border: 1px solid #414954; border-radius: 7px; padding: 7px 12px; font-weight: 600; }
 QPushButton#reviewActionButton:hover { background: #2a3038; border-color: #717c89; color: #ffffff; }
 QPushButton#reviewActionButton:disabled { color: #747b85; background: #171b20; border-color: #303640; }
