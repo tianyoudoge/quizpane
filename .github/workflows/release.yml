@@ -280,7 +280,7 @@ jobs:
           Expand-Archive -Path $Archive -DestinationPath $Inspect -Force
           $Root = Join-Path $Inspect "QuizPane"
           $Required = @(
-            "小窗刷题.exe", "题库制作器.exe", "Qt5Core.dll", "Qt5Gui.dll",
+            "QuizPane.exe", "QuizPaneStudio.exe", "Qt5Core.dll", "Qt5Gui.dll",
             "Qt5Network.dll", "Qt5Pdf.dll", "Qt5WebSockets.dll", "Qt5Widgets.dll",
             "MSVCP140.dll", "VCRUNTIME140.dll", "ucrtbase.dll",
             "api-ms-win-crt-runtime-l1-1-0.dll", "platforms/qwindows.dll"
@@ -289,6 +289,16 @@ jobs:
             if (-not (Test-Path (Join-Path $Root $RelativePath))) {
               throw "Missing packaged runtime file: $RelativePath"
             }
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $Zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $Archive))
+          try {
+            $NonAsciiEntries = @($Zip.Entries | Where-Object { $_.FullName -match '[^\x00-\x7F]' } | ForEach-Object FullName)
+          } finally {
+            $Zip.Dispose()
+          }
+          if ($NonAsciiEntries.Count -gt 0) {
+            throw "Windows 7 package contains non-ASCII paths: $($NonAsciiEntries -join ', ')"
           }
           if (Get-ChildItem $Root -Recurse -Filter "Qt6*.dll") {
             throw "Windows 7 package unexpectedly contains Qt 6 DLLs"

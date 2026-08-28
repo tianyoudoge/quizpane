@@ -2235,7 +2235,15 @@ void MainWindow::openBankStudio() {
             QStringLiteral("../Helpers/题库制作器.app/Contents/MacOS/题库制作器"))
         << QStringLiteral("/Applications/题库制作器.app/Contents/MacOS/题库制作器");
 #elif defined(Q_OS_WIN)
-    candidates << QDir(appDir).filePath(QStringLiteral("题库制作器.exe"));
+    // Win7 绿色包使用 ASCII 文件名，避开系统 ZIP 解压器的 Unicode 文件名乱码；
+    // 中文名回退继续兼容常规 Windows 包和旧安装。
+#if defined(QUIZPANE_WINDOWS7_COMPAT)
+    candidates << QDir(appDir).filePath(QStringLiteral("QuizPaneStudio.exe"))
+               << QDir(appDir).filePath(QStringLiteral("题库制作器.exe"));
+#else
+    candidates << QDir(appDir).filePath(QStringLiteral("题库制作器.exe"))
+               << QDir(appDir).filePath(QStringLiteral("QuizPaneStudio.exe"));
+#endif
 #else
     candidates << QDir(appDir).filePath(QStringLiteral("题库制作器"))
                << QStandardPaths::findExecutable(QStringLiteral("题库制作器"));
@@ -2476,11 +2484,18 @@ try {
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
   Expand-Archive -LiteralPath $Package -DestinationPath $work -Force
   $source = Join-Path $work 'QuizPane'
-  if (-not (Test-Path -LiteralPath (Join-Path $source '小窗刷题.exe'))) { throw '更新包结构不正确' }
+  $mainExecutable = if (Test-Path -LiteralPath (Join-Path $source 'QuizPane.exe')) {
+    'QuizPane.exe'
+  } elseif (Test-Path -LiteralPath (Join-Path $source '小窗刷题.exe')) {
+    '小窗刷题.exe'
+  } else {
+    throw '更新包结构不正确'
+  }
+  $restartTarget = Join-Path $Destination $mainExecutable
   Get-ChildItem -LiteralPath $source -Force | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
   }
-  Start-Process -FilePath $Restart
+  Start-Process -FilePath $restartTarget
 } catch {
   "[$(Get-Date -Format o)] $_" | Out-File -LiteralPath $Log -Append -Encoding utf8
   # 覆盖失败时恢复旧程序，避免用户更新后只看到程序消失。
