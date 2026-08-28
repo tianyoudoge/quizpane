@@ -105,6 +105,13 @@ add_executable(browser_protocol_test
 target_link_libraries(browser_protocol_test PRIVATE ${QUIZPANE_QT_PACKAGE}::Core)
 add_test(NAME browser_protocol_test COMMAND browser_protocol_test)
 
+add_test(
+    NAME win7_ocr_patch_test
+    COMMAND ${CMAKE_COMMAND}
+        -DPATCH_SCRIPT=${PROJECT_SOURCE_DIR}/cmake/win7-ocr/portable-tesseract.cmake
+        -DTEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/win7-ocr-patch-test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/win7_ocr_patch_test.cmake)
+
 if(TARGET question_maker_engine)
     add_executable(studio_review_ui_test
         studio_review_ui_test.cpp

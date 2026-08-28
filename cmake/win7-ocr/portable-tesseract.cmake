@@ -17,3 +17,22 @@ if(already_patched EQUAL -1)
         "endif()" contents "${contents}")
     file(WRITE "${path}" "${contents}")
 endif()
+
+# Tesseract 5.5.2 installs its public headers but omits the corresponding
+# INSTALL_INTERFACE usage requirement from libtesseract. Its exported CMake
+# target therefore links successfully while consumers receive no include path.
+# Patch the pinned source so Tesseract::libtesseract is self-contained.
+set(build_include [=[$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>]=])
+set(install_include [=[$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>]=])
+file(READ "${path}" contents)
+string(FIND "${contents}" "${install_include}" include_already_patched)
+if(include_already_patched EQUAL -1)
+    string(FIND "${contents}" "${build_include}" include_found)
+    if(include_found EQUAL -1)
+        message(FATAL_ERROR
+            "Pinned Tesseract public include block changed; review the exported target")
+    endif()
+    string(REPLACE "${build_include}"
+        "${build_include}\n         ${install_include}" contents "${contents}")
+    file(WRITE "${path}" "${contents}")
+endif()
