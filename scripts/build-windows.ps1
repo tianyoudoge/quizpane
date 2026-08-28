@@ -5,6 +5,7 @@ param(
     [string]$CMakeToolchainFile = "",
     [string]$VcpkgTargetTriplet = "",
     [string]$TessdataDir = $env:TESSDATA_DIR,
+    [string]$OcrPrefix = "",
     [ValidateSet("5", "6")]
     [string]$QtMajorVersion = "6",
     [ValidateSet("x64", "x86")]
@@ -50,12 +51,23 @@ $CMakeArgs = @(
 )
 if ($CMakeToolchainFile) { $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$CMakeToolchainFile" }
 if ($VcpkgTargetTriplet) { $CMakeArgs += "-DVCPKG_TARGET_TRIPLET=$VcpkgTargetTriplet" }
-cmake @CMakeArgs
-if ($LASTEXITCODE -ne 0) { throw "CMake 配置失败，退出码 $LASTEXITCODE" }
-cmake --build $Build --parallel
-if ($LASTEXITCODE -ne 0) { throw "项目编译失败，退出码 $LASTEXITCODE" }
-ctest --test-dir $Build --output-on-failure
-if ($LASTEXITCODE -ne 0) { throw "自动测试失败，退出码 $LASTEXITCODE" }
+if ($OcrPrefix) {
+  $CMakeArgs += "-DTesseract_DIR=$OcrPrefix/lib/cmake/tesseract"
+  $CMakeArgs += "-DLeptonica_DIR=$OcrPrefix/lib/cmake/leptonica"
+}
+# ctest runs before staging the app: pass the same verified models used in the ZIP.
+$PreviousTessdata = $env:TESSDATA_DIR
+if (-not $DisableOcr -and $TessdataDir) { $env:TESSDATA_DIR = $TessdataDir }
+try {
+  cmake @CMakeArgs
+  if ($LASTEXITCODE -ne 0) { throw "CMake 配置失败，退出码 $LASTEXITCODE" }
+  cmake --build $Build --parallel
+  if ($LASTEXITCODE -ne 0) { throw "项目编译失败，退出码 $LASTEXITCODE" }
+  ctest --test-dir $Build --output-on-failure
+  if ($LASTEXITCODE -ne 0) { throw "自动测试失败，退出码 $LASTEXITCODE" }
+} finally {
+  $env:TESSDATA_DIR = $PreviousTessdata
+}
 
 $Stage = Join-Path $Dist "QuizPane"
 if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
@@ -123,6 +135,9 @@ if (-not $DisableOcr) {
     $Source = Join-Path $TessdataDir "$Language.traineddata"
     if (-not (Test-Path $Source)) { throw "缺少 OCR 语言数据：$Source" }
     Copy-Item $Source $Tessdata -Force
+  }
+  if ($OcrPrefix) {
+    Copy-Item (Join-Path $OcrPrefix "licenses") $Stage -Recurse -Force
   }
 }
 $PlatformName = if ($Windows7Compat) { "windows7-$Architecture" } else { "windows-$Architecture" }

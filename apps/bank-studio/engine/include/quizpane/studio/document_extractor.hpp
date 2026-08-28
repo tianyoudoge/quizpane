@@ -48,6 +48,10 @@ struct ExtractedDocument {
     bool hasPageBoundaries = false;
     // 扫描页经过本地 OCR 时置 true，仅用于提示识别来源，不改变后续解析路径。
     bool usedOcr = false;
+    // Keep OCR failures distinct from an ordinary document without question
+    // numbers (e.g. a readable cover followed by an unreadable outlined body).
+    int ocrSkippedPages = 0;
+    int ocrFailedPages = 0;
     // 文字 PDF 也可能把统计图、图形推理题嵌为位图。扫描 PDF 会在提取时保留
     // 渲染页；文字 PDF 的页面则由规则生成器只在确认需要原卷视觉上下文时按需
     // 载入，避免“全卷每页渲染 + PNG 压缩”拖慢普通纯文字题库。

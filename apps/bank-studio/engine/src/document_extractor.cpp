@@ -321,10 +321,27 @@ QString bundledTessdataPath() {
 QString recognizePage(const QImage& source, QString* error) {
     QImage image = whiteBackground(source).convertToFormat(QImage::Format_RGB888);
     tesseract::TessBaseAPI api;
-    const QByteArray tessdataPath = QFile::encodeName(bundledTessdataPath());
+    const QByteArray tessdataPath = bundledTessdataPath().toUtf8();
     const char* dataPath = tessdataPath.isEmpty() ? nullptr : tessdataPath.constData();
-    if (api.Init(dataPath, "chi_sim+eng") != 0 && api.Init(dataPath, "eng") != 0) {
-        *error = QStringLiteral("Tesseract 初始化失败，发行包中的 chi_sim/eng 语言数据不可用");
+    // Tesseract's narrow file APIs cannot reliably open Chinese Windows paths.
+    // Load model bytes through Qt; no short-path names or system codepage needed.
+    const auto reader = [](const char* path, std::vector<char>* bytes) {
+        QFile file(QString::fromUtf8(path));
+        if (!file.open(QIODevice::ReadOnly) || file.size() <= 0 ||
+            file.size() > 128 * 1024 * 1024) return false;
+        const QByteArray data = file.readAll();
+        if (file.error() != QFileDevice::NoError || data.size() != file.size()) return false;
+        bytes->assign(data.constData(), data.constData() + data.size());
+        return true;
+    };
+    const int initialized = api.Init(dataPath, 0, "chi_sim+eng", tesseract::OEM_DEFAULT,
+                                    nullptr, 0, nullptr, nullptr, false, reader);
+    std::vector<std::string> languages;
+    if (initialized == 0) api.GetLoadedLanguagesAsVector(&languages);
+    if (initialized != 0 ||
+        std::find(languages.begin(), languages.end(), "chi_sim") == languages.end() ||
+        std::find(languages.begin(), languages.end(), "eng") == languages.end()) {
+        *error = QStringLiteral("文字识别无法启动：中英文识别模型缺失或损坏。请重新完整解压安装包，保留 tessdata 文件夹");
         return {};
     }
     api.SetImage(image.constBits(), image.width(), image.height(), 3, image.bytesPerLine());
@@ -539,6 +556,7 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
                 QString ocrError;
                 text = recognizePage(pageImage, &ocrError);
                 if (!ocrError.isEmpty()) {
+                    ++result.ocrFailedPages;
                     result.warnings.append(
                         QStringLiteral("第 %1 页 OCR 失败：%2").arg(page + 1).arg(ocrError));
                     pages.append(QString{});
@@ -546,8 +564,9 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
                 }
                 result.usedOcr = true;
 #else
+                ++result.ocrSkippedPages;
                 result.warnings.append(QStringLiteral(
-                    "第 %1 页是扫描内容，当前构建未启用 OCR，已跳过").arg(page + 1));
+                    "第 %1 页没有可提取的文字，需要文字识别（OCR）；当前版本未启用 OCR，已跳过。请使用带 OCR 的版本或先将文件转换为带文字层的 PDF").arg(page + 1));
                 pages.append(QString{});
                 continue;
 #endif
@@ -568,9 +587,16 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
     result.plainText = pages.join(QChar('\f'));
     result.hasPageBoundaries = true;
     if (result.plainText.trimmed().isEmpty()) {
-        result.error = result.warnings.isEmpty()
-            ? QStringLiteral("PDF 没有可提取的文字内容")
-            : QStringLiteral("PDF 所有页面均无法提取：%1").arg(result.warnings.join(QStringLiteral("；")));
+        // Avoid repeating the same model/feature error hundreds of times for
+        // a long scanned book. Keep detailed page warnings separately.
+        if (result.ocrSkippedPages > 0)
+            result.error = QStringLiteral("此 PDF 有 %1 页需要文字识别（OCR），当前版本未启用，无法提取题目。请使用带 OCR 的版本或先转换为带文字层的 PDF")
+                .arg(result.ocrSkippedPages);
+        else if (result.ocrFailedPages > 0)
+            result.error = QStringLiteral("此 PDF 有 %1 页文字识别（OCR）失败：%2")
+                .arg(result.ocrFailedPages).arg(result.warnings.value(0));
+        else
+            result.error = QStringLiteral("PDF 没有可提取的文字内容");
     }
     diagnostic::event(QStringLiteral("extractor"), QStringLiteral("pdf-finished"),
         {{QStringLiteral("file"), QFileInfo(path).fileName()},
