@@ -31,13 +31,16 @@ macOS 上依赖源码构建及 Qt6 回归只能验证共享逻辑，不能验证
 
 ### 本次本地验证（2026-08-28，macOS arm64）
 
-- Qt6 Release 全量 28 项测试通过。
+- Qt6 Release 原有 28 项测试通过；新增 Win7 OCR CMake 回归后，关闭 OCR 的 CI 配置
+  全量 29 项测试通过。
 - 固定的 Tesseract/Leptonica 精简静态库完成源码构建，并链接提取器执行扫描 PDF、
   中文模型路径、损坏中文模型测试，均通过。
 - 关闭 OCR、保留 QtPdf 的提取器与规则测试通过；无 QtPdf/OCR 配置的相关测试也通过。
 - 四个 PowerShell 脚本通过真实 PowerShell 语法解析；解压目录的模型测试脚本在本机
   使用上述原生测试程序通过了正向/损坏模型检查。未执行 Windows PE 导入检查。
-- 工作流 YAML 解析通过。**尚未执行 Windows GitHub 构建，也未进行 Win7 SP1 实机测试。**
+- Windows Server 2022 [GitHub 工作流 #33142659825](https://github.com/tianyoudoge/quizpane/actions/runs/33142659825)
+  的 x64/x86 Qt5/v142 构建、29 项测试、中文路径 ZIP OCR、损坏模型和导入检查均通过，
+  已生成两种架构的 `ocr-test` Artifact。**尚未进行 Win7 SP1 实机测试。**
 
 ## 必须补充的 Win7 SP1 验收
 
