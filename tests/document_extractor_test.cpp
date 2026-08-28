@@ -2,6 +2,7 @@
 #include "quizpane/zip_archive.hpp"
 
 #include <QFile>
+#include <QDir>
 #include <QGuiApplication>
 #include <QImage>
 #include <QPainter>
@@ -9,9 +10,32 @@
 
 #include <cstdio>
 
+namespace {
+int ocrSmoke(const QString& path) {
+#if defined(QUIZPANE_HAS_QT_PDF) && defined(DOCUMENT_EXTRACTOR_HAS_OCR)
+    const auto pdf = quizpane::studio::ExtractorRegistry{}.extract(path);
+    const bool ok = pdf.error.isEmpty() && pdf.usedOcr && pdf.hasPageBoundaries &&
+        pdf.ocrFailedPages == 0 && pdf.ocrSkippedPages == 0 &&
+        pdf.plainText.contains(QStringLiteral("QUIZPANE"), Qt::CaseInsensitive) &&
+        pdf.plainText.contains(QStringLiteral("first option"), Qt::CaseInsensitive);
+    std::fprintf(stderr, "OCR smoke: ok=%d usedOcr=%d failedPages=%d error=%s\n",
+                 ok, pdf.usedOcr, pdf.ocrFailedPages, pdf.error.toUtf8().constData());
+    return ok ? 0 : 8;
+#else
+    Q_UNUSED(path);
+    std::fprintf(stderr, "OCR smoke requires both QtPdf and OCR in this build\n");
+    return 8;
+#endif
+}
+}
+
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
     QGuiApplication app(argc, argv);
+    // Run from the unpacked ZIP, with no build-machine model paths. Also useful
+    // for manual Windows 7 VM acceptance; fail if OCR was accidentally disabled.
+    if (app.arguments().size() == 3 && app.arguments().at(1) == "--ocr-smoke")
+        return ocrSmoke(app.arguments().at(2));
     // 透明 PDF 背景、字底笔画、单字下划线、无文字的空白横线必须区分。
     {
         QImage image(240, 100, QImage::Format_ARGB32);
@@ -86,6 +110,29 @@ int main(int argc, char** argv) {
     const QString pdfPath = QStringLiteral(DOCUMENT_EXTRACTOR_OCR_FIXTURE);
     const auto pdf = registry.extract(pdfPath);
 #ifdef DOCUMENT_EXTRACTOR_HAS_OCR
+    if (ocrSmoke(pdfPath) != 0) return 8;
+    // Build scripts supply the models explicitly. Exercise Unicode model paths
+    // and corruption without touching those originals or relying on fallback.
+    const QByteArray previousModels = qgetenv("TESSDATA_DIR");
+    if (!previousModels.isEmpty()) {
+        const QDir originals(QString::fromUtf8(previousModels));
+        const QString unicodeModels = directory.filePath(QStringLiteral("中文路径 OCR 模型"));
+        if (!QDir().mkpath(unicodeModels)) return 21;
+        for (const QString& language : {QStringLiteral("chi_sim"), QStringLiteral("eng")}) {
+            const QString name = language + QStringLiteral(".traineddata");
+            if (!QFile::copy(originals.filePath(name), QDir(unicodeModels).filePath(name))) return 21;
+        }
+        qputenv("TESSDATA_DIR", unicodeModels.toUtf8());
+        const int unicodeResult = ocrSmoke(pdfPath);
+        QFile corrupt(QDir(unicodeModels).filePath(QStringLiteral("chi_sim.traineddata")));
+        if (!corrupt.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 22;
+        corrupt.write("invalid test model");
+        corrupt.close();
+        const auto invalidModels = registry.extract(pdfPath);
+        qputenv("TESSDATA_DIR", previousModels);
+        if (unicodeResult != 0 || invalidModels.ocrFailedPages == 0 || invalidModels.usedOcr ||
+            !invalidModels.error.contains(QStringLiteral("识别模型缺失或损坏"))) return 22;
+    }
     if (!pdf.error.isEmpty() || !pdf.usedOcr || !pdf.hasPageBoundaries ||
         pdf.plainText.trimmed().isEmpty()) {
         const QByteArray diagnostic =
@@ -99,7 +146,7 @@ int main(int argc, char** argv) {
         return 8;
     }
 #else
-    if (pdf.error.isEmpty() || pdf.usedOcr || !pdf.hasPageBoundaries)
+    if (pdf.error.isEmpty() || pdf.usedOcr || !pdf.hasPageBoundaries || pdf.ocrSkippedPages == 0)
         return 8;
 #endif
 #endif

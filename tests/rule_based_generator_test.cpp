@@ -31,6 +31,29 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     using namespace quizpane::studio;
 
+    // A readable cover must not conceal the reason an outlined/scanned body
+    // failed. Do not tell users to change question numbers when OCR is absent.
+    {
+        ExtractedDocument cover;
+        cover.sourcePath = "cover-with-outlined-body.pdf";
+        cover.plainText = QStringLiteral("专项题本\f\f");
+        cover.hasPageBoundaries = true;
+        cover.ocrSkippedPages = 2;
+        auto result = RuleBasedBankGenerator{}.generate({cover});
+        if (!result.questions.isEmpty() || !result.needsReviewQuestions.isEmpty() ||
+            !result.warnings.join(";").contains(QStringLiteral("未启用")) ||
+            result.warnings.join(";").contains(QStringLiteral("题号锚点"))) return 158;
+        cover.ocrSkippedPages = 0;
+        cover.ocrFailedPages = 2;
+        cover.warnings = QStringList{QStringLiteral("识别模型损坏")};
+        result = RuleBasedBankGenerator{}.generate({cover});
+        if (!result.warnings.join(";").contains(QStringLiteral("识别模型损坏")) ||
+            result.warnings.join(";").contains(QStringLiteral("题号锚点"))) return 159;
+        cover.ocrFailedPages = 0;
+        result = RuleBasedBankGenerator{}.generate({cover});
+        if (!result.warnings.join(";").contains(QStringLiteral("题号锚点"))) return 160;
+    }
+
     // 明确分套时答案独立、原题号和页码不变，标题不得流入上一题选项。
     ExtractedDocument booklet;
     booklet.sourcePath = QStringLiteral("booklet.txt");

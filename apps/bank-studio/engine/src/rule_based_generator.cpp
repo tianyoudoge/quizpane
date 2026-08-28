@@ -2196,8 +2196,16 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         }
 
         if (anchors.isEmpty()) {
-            result.warnings.append(QStringLiteral("%1：没有识别到题号锚点")
-                                       .arg(QFileInfo(document.sourcePath).fileName()));
+            QString reason = QStringLiteral("没有识别到题号锚点");
+            if (document.ocrSkippedPages > 0)
+                reason = QStringLiteral("有 %1 页需要文字识别（OCR），但当前版本未启用，尚未读到可用题目。这不是题号格式问题；请使用带 OCR 的版本或先转换为带文字层的 PDF")
+                    .arg(document.ocrSkippedPages);
+            else if (document.ocrFailedPages > 0)
+                reason = QStringLiteral("有 %1 页文字识别（OCR）失败，尚未读到可用题目。%2")
+                    .arg(document.ocrFailedPages)
+                    .arg(document.warnings.value(0));
+            result.warnings.append(QStringLiteral("%1：%2")
+                .arg(QFileInfo(document.sourcePath).fileName(), reason));
             continue;
         }
 
