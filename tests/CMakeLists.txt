@@ -190,7 +190,10 @@ if(TARGET question_maker_engine)
 
     add_executable(generation_workflow_test generation_workflow_test.cpp)
     target_link_libraries(generation_workflow_test PRIVATE
-        question_maker_engine ${QUIZPANE_QT_PACKAGE}::Core)
+        question_maker_engine quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core)
+    target_compile_definitions(generation_workflow_test PRIVATE
+        MINERU_ANSWER_LAYOUT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mineru-answer-layout-fixture.json"
+    )
     add_test(NAME generation_workflow_test COMMAND generation_workflow_test)
 
 if(QUIZPANE_ENABLE_DIAGNOSTIC_LOGGING OR QUIZPANE_ENABLE_PROD_DIAGNOSTICS)

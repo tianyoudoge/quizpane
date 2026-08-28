@@ -488,6 +488,31 @@ int main(int argc, char** argv) {
         return 108;
     if (!quizpane::validateBank(bankFor(formulaResult), &validationError)) return 105;
 
+    // 同一份版面坐标来自 MinerU 时，四个独立 span 是可信的定位证据：激活
+    // option.image，每个作答项各带一张裁图，不再退化成整题截图。四项不完整时
+    // 生成器仍会走上面的安全回退。
+    ExtractedDocument mineruFormulaImages = formulaImages;
+    mineruFormulaImages.sourcePath = QStringLiteral("mineru-formula-options.pdf");
+    mineruFormulaImages.extractionBackend = QStringLiteral("mineru-vlm");
+    const auto mineruFormulaResult = RuleBasedBankGenerator{}.generate({mineruFormulaImages});
+    if (mineruFormulaResult.questions.size() != 1 ||
+        !mineruFormulaResult.needsReviewQuestions.isEmpty() ||
+        mineruFormulaResult.assets.size() != 4)
+        return 161;
+    const QJsonObject mineruFormulaQuestion = mineruFormulaResult.questions.first().toObject();
+    if (mineruFormulaQuestion.contains("stemImage"))
+        return 162;
+    const QJsonArray mineruOptions = mineruFormulaQuestion.value("options").toArray();
+    if (mineruOptions.size() != 4)
+        return 163;
+    for (const QJsonValue& option : mineruOptions) {
+        const QJsonObject image = option.toObject().value("image").toObject();
+        const QString path = image.value("path").toString();
+        if (path.isEmpty() ||
+            QImage::fromData(mineruFormulaResult.assets.value(path), "PNG").isNull())
+            return 164;
+    }
+
     // 有些图形题的 A/B/C/D 是矢量字，根本没有文字层锚点。此时必须截出本题
     // 的完整图阵和四个选项，且下边界止于下一题，不能退化成整张试卷页面。
     ExtractedDocument visualFallback;

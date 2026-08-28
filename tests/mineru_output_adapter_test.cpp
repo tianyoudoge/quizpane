@@ -52,6 +52,8 @@ int main(int argc, char** argv) {
         return fail("sourcePath not propagated");
     if (!document.hasPageBoundaries)
         return fail("hasPageBoundaries must be true so source.page can be derived");
+    if (document.extractionBackend != QStringLiteral("mineru-pipeline"))
+        return fail("document extraction backend metadata missing");
 
     // 与本地 PdfExtractor 同构：换页符分页。
     const QStringList pages = document.plainText.split(QChar(u'\f'));

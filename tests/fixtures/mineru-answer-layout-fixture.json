@@ -1,0 +1,48 @@
+{
+  "_backend": "vlm",
+  "_version_name": "golden-answer-v1",
+  "pdf_info": [
+    {
+      "page_idx": 0,
+      "page_size": [595, 842],
+      "para_blocks": [
+        {
+          "type": "text",
+          "lines": [
+            {
+              "bbox": [72, 90, 180, 110],
+              "spans": [
+                {"type": "text", "content": "答案及解析", "bbox": [72, 90, 180, 110]}
+              ]
+            },
+            {
+              "bbox": [72, 130, 410, 150],
+              "spans": [
+                {"type": "text", "content": "1. Alpha is the first option.", "bbox": [72, 130, 410, 150]}
+              ]
+            },
+            {
+              "bbox": [72, 165, 260, 185],
+              "spans": [
+                {"type": "text", "content": "故正确答案为 A。", "bbox": [72, 165, 260, 185]}
+              ]
+            }
+          ]
+        }
+      ],
+      "discarded_blocks": [
+        {
+          "type": "footer",
+          "lines": [
+            {
+              "bbox": [72, 800, 260, 820],
+              "spans": [
+                {"type": "text", "content": "答案册页脚不得进入解析", "bbox": [72, 800, 260, 820]}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

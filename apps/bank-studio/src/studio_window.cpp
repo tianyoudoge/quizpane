@@ -1362,11 +1362,29 @@ void StudioWindow::beginPreflight() {
         packageProvider();
         return;
     }
+    const bool cloudActive = mineruJob_ &&
+        mineruJob_->stage() != MineruStage::Idle &&
+        mineruJob_->stage() != MineruStage::Done &&
+        mineruJob_->stage() != MineruStage::Failed &&
+        mineruJob_->stage() != MineruStage::Cancelled;
+    if (cloudActive || (workflow_ && workflow_->isActive())) {
+        if (cloudActive)
+            mineruJob_->cancel();
+        if (workflow_ && workflow_->isActive()) {
+            workflow_->cancel();
+            activityTimer_->stop();
+            activitySpinner_->hide();
+            progressBar_->setValue(0);
+            phaseLabel_->setText(QStringLiteral("已取消"));
+            phaseDetail_->setText(QStringLiteral("本次整理已取消，可重新开始。"));
+            updateNavigation();
+        }
+        return;
+    }
     if (sourcePaths_.isEmpty()) return;
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("generation-start"),
         {{QStringLiteral("mode"), QStringLiteral("rules")},
          {QStringLiteral("sources"), sourcePaths_.size()}});
-    if (workflow_ && workflow_->isActive()) return;
     if (workflow_) workflow_->deleteLater();
     workflow_ = new GenerationWorkflow(this);
     connect(workflow_, &GenerationWorkflow::progressChanged,
@@ -1376,13 +1394,13 @@ void StudioWindow::beginPreflight() {
     connect(workflow_, &GenerationWorkflow::failed, this, [this](const QString& error) {
         activityTimer_->stop();
         activitySpinner_->hide();
-        startButton_->setEnabled(true);
+        updateNavigation();
         QMessageBox::warning(this, QStringLiteral("整理未完成"), error);
     });
     connect(workflow_, &GenerationWorkflow::finished, this, [this] {
         activityTimer_->stop();
         activitySpinner_->hide();
-        startButton_->setEnabled(true);
+        updateNavigation();
         if (generatedQuestions_.isEmpty() && reviewQuestions_.isEmpty()) {
             QMessageBox::warning(this, QStringLiteral("没有生成题目"),
                                  QStringLiteral("没有从资料中识别出可用题目。"));
@@ -1395,7 +1413,8 @@ void StudioWindow::beginPreflight() {
     sourceCount_->setText(QString::number(sourcePaths_.size()));
     generatedCount_->setText(QStringLiteral("0"));
     reviewCount_->setText(QStringLiteral("0"));
-    startButton_->setEnabled(false);
+    startButton_->setEnabled(true);
+    startButton_->setText(QStringLiteral("取消整理"));
     spinnerFrame_ = 0;
     activitySpinner_->setText(QStringLiteral("◐ 运行中"));
     activitySpinner_->show();
@@ -1443,6 +1462,11 @@ bool StudioWindow::shouldUseCloudParse() const {
         if (suffix == QStringLiteral("pdf") || suffix == QStringLiteral("png") ||
             suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg"))
             return true;
+        const QString answerSuffix =
+            QFileInfo(answerPathsByQuestion_.value(path)).suffix().toLower();
+        if (answerSuffix == QStringLiteral("pdf") || answerSuffix == QStringLiteral("png") ||
+            answerSuffix == QStringLiteral("jpg") || answerSuffix == QStringLiteral("jpeg"))
+            return true;
     }
     return false;
 #endif
@@ -1450,12 +1474,22 @@ bool StudioWindow::shouldUseCloudParse() const {
 
 void StudioWindow::processNextCloudSource() {
     // 所有资料处理完毕（或都不需要云解析）后再跑规则引擎。
+    const auto benefitsFromCloud = [](const QString& path) {
+        const QString suffix = QFileInfo(path).suffix().toLower();
+        return suffix == QStringLiteral("pdf") || suffix == QStringLiteral("png") ||
+               suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg");
+    };
     while (cloudIndex_ < pendingGroups_.size()) {
-        const QString suffix =
-            QFileInfo(pendingGroups_.at(cloudIndex_).questionPath).suffix().toLower();
-        if (suffix == QStringLiteral("pdf") || suffix == QStringLiteral("png") ||
-            suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg"))
+        const SourceMaterialGroup& group = pendingGroups_.at(cloudIndex_);
+        if (benefitsFromCloud(group.questionPath) && group.mineruZipPath.isEmpty()) {
+            cloudParsingAnswer_ = false;
             break;
+        }
+        if (!group.answerPath.isEmpty() && benefitsFromCloud(group.answerPath) &&
+            group.mineruAnswerZipPath.isEmpty()) {
+            cloudParsingAnswer_ = true;
+            break;
+        }
         ++cloudIndex_;
     }
     if (cloudIndex_ >= pendingGroups_.size()) {
@@ -1463,7 +1497,9 @@ void StudioWindow::processNextCloudSource() {
         return;
     }
 
-    const QString sourcePath = pendingGroups_.at(cloudIndex_).questionPath;
+    const QString sourcePath = cloudParsingAnswer_
+        ? pendingGroups_.at(cloudIndex_).answerPath
+        : pendingGroups_.at(cloudIndex_).questionPath;
     MineruSettings settings;
     settings.token = loadMineruToken();
     settings.modelVersion = mineruConfig_.modelVersion;
@@ -1492,6 +1528,16 @@ void StudioWindow::processNextCloudSource() {
     connect(mineruJob_, &MineruExtractionJob::finished, this,
             [this](bool ok, const QString& zipPath, const QString& error) {
                 if (!ok) {
+                    if (mineruJob_ && mineruJob_->stage() == MineruStage::Cancelled) {
+                        pendingGroups_.clear();
+                        activityTimer_->stop();
+                        activitySpinner_->hide();
+                        progressBar_->setValue(0);
+                        phaseLabel_->setText(QStringLiteral("已取消"));
+                        phaseDetail_->setText(QStringLiteral("本次整理已取消，可重新开始。"));
+                        updateNavigation();
+                        return;
+                    }
                     // 云解析失败不应让整批资料前功尽弃：提示后退回本机解析，
                     // 让用户至少拿到可复核的结果。
                     QMessageBox::warning(this, QStringLiteral("云端解析未完成"),
@@ -1499,12 +1545,16 @@ void StudioWindow::processNextCloudSource() {
                     workflow_->startRuleBased(pendingGroups_);
                     return;
                 }
-                pendingGroups_[cloudIndex_].mineruZipPath = zipPath;
-                ++cloudIndex_;
+                if (cloudParsingAnswer_)
+                    pendingGroups_[cloudIndex_].mineruAnswerZipPath = zipPath;
+                else
+                    pendingGroups_[cloudIndex_].mineruZipPath = zipPath;
                 processNextCloudSource();
             });
     const QString zipPath = cloudTempDir_->filePath(
-        QStringLiteral("mineru-%1.zip").arg(cloudIndex_));
+        QStringLiteral("mineru-%1-%2.zip")
+            .arg(cloudIndex_)
+            .arg(cloudParsingAnswer_ ? QStringLiteral("answer") : QStringLiteral("question")));
     mineruJob_->start(settings, sourcePath, zipPath);
 }
 
@@ -2557,17 +2607,26 @@ void StudioWindow::dropEvent(QDropEvent* event) {
 }
 
 void StudioWindow::closeEvent(QCloseEvent* event) {
-    if (!workflow_ || !workflow_->isActive()) {
+    const bool cloudActive = mineruJob_ &&
+        mineruJob_->stage() != MineruStage::Idle &&
+        mineruJob_->stage() != MineruStage::Done &&
+        mineruJob_->stage() != MineruStage::Failed &&
+        mineruJob_->stage() != MineruStage::Cancelled;
+    const bool workflowActive = workflow_ && workflow_->isActive();
+    if (!cloudActive && !workflowActive) {
         event->accept();
         return;
     }
     if (!confirmAction(this, QStringLiteral("结束正在整理？"),
-                       QStringLiteral("本次本地整理尚未完成。关闭后需要重新开始整理。"),
+                       QStringLiteral("本次整理尚未完成。关闭后需要重新开始整理。"),
                        QStringLiteral("结束并关闭"))) {
         event->ignore();
         return;
     }
-    workflow_->cancel();
+    if (cloudActive)
+        mineruJob_->cancel();
+    if (workflowActive)
+        workflow_->cancel();
     event->accept();
 }
 

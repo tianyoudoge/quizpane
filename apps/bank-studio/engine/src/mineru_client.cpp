@@ -17,11 +17,10 @@
 namespace quizpane::studio {
 namespace {
 
-// 官方对同一批次的轮询有分钟级限流，且大文件解析需要时间。这里用固定间隔而
-// 非指数退避：解析通常在数十秒内完成，间隔过长会明显拖慢体感。
 constexpr int kPollIntervalMs = 3000;
 // 上限约 15 分钟。超时后显式失败，而不是无限等待一个可能已经卡住的任务。
 constexpr int kMaxPollAttempts = 300;
+constexpr int kMaxTransientRetries = 4;
 // 结果 ZIP 上限。官方单文件限 200MB，输出包含切图与原始 PDF，留出余量。
 constexpr qint64 kMaxZipBytes = 512LL * 1024 * 1024;
 
@@ -74,6 +73,24 @@ bool isFailureEnvelope(const QJsonObject& object, int httpStatus, const QString&
 }
 
 } // namespace
+
+bool isTransientMineruFailure(int httpStatus, int networkErrorCode) {
+    // QNetworkReply::OperationCanceledError == 5，用户取消绝不能被自动重试。
+    if (networkErrorCode == static_cast<int>(QNetworkReply::OperationCanceledError))
+        return false;
+    if (httpStatus == 408 || httpStatus == 425 || httpStatus == 429 || httpStatus >= 500)
+        return true;
+    // 没拿到 HTTP 响应的连接中断、DNS、超时等通常是暂时故障；已有明确的
+    // 4xx 响应则属于请求/权限问题，直接把服务端提示交给用户。
+    return networkErrorCode != static_cast<int>(QNetworkReply::NoError) && httpStatus == 0;
+}
+
+int mineruRetryDelayMs(int retryAttempt, int retryAfterSeconds) {
+    if (retryAfterSeconds > 0)
+        return qBound(1000, retryAfterSeconds * 1000, 60000);
+    const int exponent = qBound(0, retryAttempt - 1, 5);
+    return qMin(30000, 1000 * (1 << exponent));
+}
 
 QString describeMineruStage(MineruStage stage) {
     switch (stage) {
@@ -228,18 +245,46 @@ void MineruExtractionJob::failWith(const QString& error) {
                       {{QStringLiteral("error"), error}});
     // 排到事件循环再发：start() 里的前置校验（缺文件、缺 Token）如果同步发信号，
     // 调用方还没来得及连接就已经错过了结果。与 ModelClient 的前置失败同一处理。
-    QMetaObject::invokeMethod(
-        this, [this, error] { emit finished(false, QString(), error); }, Qt::QueuedConnection);
+    const quint64 generation = generation_;
+    QMetaObject::invokeMethod(this, [this, error, generation] {
+        if (generation == generation_)
+            emit finished(false, QString(), error);
+    }, Qt::QueuedConnection);
+}
+
+bool MineruExtractionJob::retryTransient(MineruStage stage, int httpStatus,
+                                         int networkErrorCode, int retryAfterSeconds,
+                                         const QString& detail,
+                                         const std::function<void()>& action) {
+    if (!isTransientMineruFailure(httpStatus, networkErrorCode) ||
+        transientRetryAttempts_ >= kMaxTransientRetries)
+        return false;
+    const int attempt = ++transientRetryAttempts_;
+    const int delay = mineruRetryDelayMs(attempt, retryAfterSeconds);
+    setStage(stage, QStringLiteral("%1，%2 秒后重试（%3/%4）")
+                        .arg(detail)
+                        .arg((delay + 999) / 1000)
+                        .arg(attempt)
+                        .arg(kMaxTransientRetries));
+    const quint64 generation = generation_;
+    QTimer::singleShot(delay, this, [this, generation, stage, action] {
+        if (generation == generation_ && stage_ == stage)
+            action();
+    });
+    return true;
 }
 
 void MineruExtractionJob::start(const MineruSettings& settings, const QString& sourcePath,
                                 const QString& outputZipPath) {
-    cancel();
+    clearReply();
+    ++generation_;
+    stage_ = MineruStage::Idle;
     settings_ = settings;
     sourcePath_ = sourcePath;
     outputZipPath_ = outputZipPath;
     batchId_.clear();
     pollAttempts_ = 0;
+    transientRetryAttempts_ = 0;
 
     const QFileInfo info(sourcePath_);
     if (!info.exists() || !info.isFile()) {
@@ -274,10 +319,16 @@ void MineruExtractionJob::requestUploadUrl() {
         const int status = current->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QString networkError =
             current->error() == QNetworkReply::NoError ? QString() : current->errorString();
+        const int networkErrorCode = static_cast<int>(current->error());
+        const int retryAfter = current->rawHeader("Retry-After").toInt();
         const MineruUploadTicket ticket =
             parseUploadUrlResponse(current->readAll(), status, networkError);
         current->deleteLater();
         if (!ticket.error.isEmpty()) {
+            if (retryTransient(MineruStage::RequestingUploadUrl, status, networkErrorCode,
+                               retryAfter, QStringLiteral("申请上传链接暂时失败"),
+                               [this] { requestUploadUrl(); }))
+                return;
             failWith(ticket.error);
             return;
         }
@@ -312,11 +363,18 @@ void MineruExtractionJob::uploadFile(const MineruUploadTicket& ticket) {
         const int status = current->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const bool ok = current->error() == QNetworkReply::NoError && status < 400;
         const QString networkError = current->errorString();
+        const int networkErrorCode = static_cast<int>(current->error());
+        const int retryAfter = current->rawHeader("Retry-After").toInt();
         current->deleteLater();
         if (!ok) {
+            if (retryTransient(MineruStage::Uploading, status, networkErrorCode, retryAfter,
+                               QStringLiteral("上传暂时中断"),
+                               [this] { requestUploadUrl(); }))
+                return;
             failWith(QStringLiteral("上传文档失败（HTTP %1）：%2").arg(status).arg(networkError));
             return;
         }
+        transientRetryAttempts_ = 0;
         // 上传完成即自动开始解析，无需再调提交接口。
         setStage(MineruStage::Polling);
         schedulePoll();
@@ -324,8 +382,13 @@ void MineruExtractionJob::uploadFile(const MineruUploadTicket& ticket) {
 }
 
 void MineruExtractionJob::schedulePoll() {
-    QTimer::singleShot(kPollIntervalMs, this, [this] {
-        if (stage_ == MineruStage::Polling)
+    // 解析时间越长，轮询越稀疏，降低大文件对官方接口的持续压力；前五次仍保持
+    // 3 秒以兼顾普通十页卷的完成体感，之后逐级退避，最多 30 秒。
+    const int exponent = qBound(0, pollAttempts_ / 5, 3);
+    const int delay = qMin(30000, kPollIntervalMs * (1 << exponent));
+    const quint64 generation = generation_;
+    QTimer::singleShot(delay, this, [this, generation] {
+        if (generation == generation_ && stage_ == MineruStage::Polling)
             poll();
     });
 }
@@ -351,9 +414,15 @@ void MineruExtractionJob::poll() {
         const int status = current->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QString networkError =
             current->error() == QNetworkReply::NoError ? QString() : current->errorString();
+        const int networkErrorCode = static_cast<int>(current->error());
+        const int retryAfter = current->rawHeader("Retry-After").toInt();
         const MineruPollResult result = parsePollResponse(current->readAll(), status, networkError);
         current->deleteLater();
 
+        if (retryTransient(MineruStage::Polling, status, networkErrorCode, retryAfter,
+                           QStringLiteral("查询解析进度暂时失败"), [this] { poll(); }))
+            return;
+        transientRetryAttempts_ = 0;
         if (result.totalPages > 0)
             emit progress(result.extractedPages, result.totalPages);
         if (!result.error.isEmpty()) {
@@ -379,19 +448,26 @@ void MineruExtractionJob::download(const QString& zipUrl) {
     request.setTransferTimeout(600000);
     reply_ = manager_->get(request);
     QNetworkReply* current = reply_;
-    connect(current, &QNetworkReply::finished, this, [this, current] {
+    connect(current, &QNetworkReply::finished, this, [this, current, zipUrl] {
         if (reply_ != current)
             return;
         reply_ = nullptr;
         const int status = current->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const bool ok = current->error() == QNetworkReply::NoError && status < 400;
         const QString networkError = current->errorString();
+        const int networkErrorCode = static_cast<int>(current->error());
+        const int retryAfter = current->rawHeader("Retry-After").toInt();
         const QByteArray payload = current->readAll();
         current->deleteLater();
         if (!ok) {
+            if (retryTransient(MineruStage::Downloading, status, networkErrorCode, retryAfter,
+                               QStringLiteral("下载结果暂时失败"),
+                               [this, zipUrl] { download(zipUrl); }))
+                return;
             failWith(QStringLiteral("下载解析结果失败（HTTP %1）：%2").arg(status).arg(networkError));
             return;
         }
+        transientRetryAttempts_ = 0;
         if (payload.isEmpty()) {
             failWith(QStringLiteral("MinerU 返回了空的结果包"));
             return;
@@ -421,13 +497,15 @@ void MineruExtractionJob::cancel() {
         return;
     }
     clearReply();
+    ++generation_;
     setStage(MineruStage::Cancelled);
     diagnostic::event(QStringLiteral("mineru"), QStringLiteral("job-cancelled"));
     // 同 failWith：取消可能紧跟 start() 发生，异步发信号才能被可靠接收。
-    QMetaObject::invokeMethod(
-        this,
-        [this] { emit finished(false, QString(), QStringLiteral("已取消云解析")); },
-        Qt::QueuedConnection);
+    const quint64 generation = generation_;
+    QMetaObject::invokeMethod(this, [this, generation] {
+        if (generation == generation_)
+            emit finished(false, QString(), QStringLiteral("已取消云解析"));
+    }, Qt::QueuedConnection);
 }
 
 } // namespace quizpane::studio

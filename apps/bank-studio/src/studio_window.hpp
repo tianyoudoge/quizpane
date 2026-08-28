@@ -169,6 +169,7 @@ private:
     std::unique_ptr<QTemporaryDir> cloudTempDir_;
     QList<SourceMaterialGroup> pendingGroups_;
     int cloudIndex_ = 0;
+    bool cloudParsingAnswer_ = false;
     QTimer* activityTimer_ = nullptr;
     int spinnerFrame_ = 0;
     QStringList sourcePaths_;

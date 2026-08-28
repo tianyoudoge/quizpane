@@ -325,6 +325,9 @@ MineruAdaptResult adaptMineruLayout(const QByteArray& layoutJson, const QString&
     // 与本地 PdfExtractor 同构：换页符分隔，规则解析器据此生成 source.page。
     result.document.plainText = pageTexts.join(QChar(u'\f'));
     result.document.hasPageBoundaries = true;
+    result.document.extractionBackend = result.backend.isEmpty()
+        ? QStringLiteral("mineru")
+        : QStringLiteral("mineru-%1").arg(result.backend);
     // MinerU 对扫描页会自行 OCR。标记来源便于复核页提示用户核对识别结果，
     // 与本地 Tesseract 路径保持同一语义。
     result.document.usedOcr = true;

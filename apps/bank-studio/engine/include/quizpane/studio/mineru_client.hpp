@@ -6,6 +6,8 @@
 #include <QObject>
 #include <QString>
 
+#include <functional>
+
 class QNetworkAccessManager;
 class QNetworkReply;
 
@@ -78,6 +80,11 @@ struct MineruPollResult {
 MineruPollResult parsePollResponse(const QByteArray& payload, int httpStatus,
                                    const QString& networkError = {});
 
+// 仅对限流、服务端错误和短暂网络故障重试；鉴权、额度、文档格式等确定性错误
+// 立即返回。纯函数公开用于协议回归测试。
+bool isTransientMineruFailure(int httpStatus, int networkErrorCode);
+int mineruRetryDelayMs(int retryAttempt, int retryAfterSeconds = -1);
+
 // 单文件解析任务。发出阶段与进度信号，最终给出本地 ZIP 路径或错误。
 // 网络回调都在调用线程（GUI 线程）执行，不阻塞 UI；ZIP 落到调用方指定的
 // 临时目录，由调用方在完成或取消后清理。
@@ -105,6 +112,9 @@ private:
     void schedulePoll();
     void poll();
     void download(const QString& zipUrl);
+    bool retryTransient(MineruStage stage, int httpStatus, int networkErrorCode,
+                        int retryAfterSeconds, const QString& detail,
+                        const std::function<void()>& action);
     void failWith(const QString& error);
     void setStage(MineruStage stage, const QString& detail = {});
     void clearReply();
@@ -117,6 +127,8 @@ private:
     QString batchId_;
     MineruStage stage_ = MineruStage::Idle;
     int pollAttempts_ = 0;
+    int transientRetryAttempts_ = 0;
+    quint64 generation_ = 0;
 };
 
 } // namespace quizpane::studio

@@ -1678,6 +1678,18 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
             const QString id(label);
             options.append({id, QStringLiteral("图%1").arg(label.toUpper())});
         }
+        // MinerU 给出的独立 A/B/C/D span 坐标已经过适配器归一化。四个标签必须
+        // 同行、顺序完整且原 PDF 页面可渲染时，才把每个选项裁成独立图片；任何
+        // 条件不满足都保持整题截图 + 硬复核，绝不猜测缺失选项的边界。
+        if (document.extractionBackend.startsWith(QStringLiteral("mineru"))) {
+            ensurePdfPageImages(&document, {sourcePage});
+            optionImages = extractOptionImages(
+                document, sourcePage, anchor.number, generatedAssets);
+            if (optionImages.size() == 4)
+                attachStemImage = hasStemIllustrationCue;
+            else
+                optionImages.clear();
+        }
         // 文字层只剩“A、 B、 C、 D、”时，这一行是图形/公式选项的标签，不是
         // 题干。作答按钮会显示标签，结构化题干里不应再重复一遍空字母。
         static const QRegularExpression bareVisualLabels(QStringLiteral(

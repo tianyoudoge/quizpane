@@ -211,11 +211,9 @@ MinerU 的 pipeline 与 vlm 坐标系不同，**归一化必须在适配器入�
 像素级下划线检测保留（MinerU 不输出下划线样式，材料划线题仍靠它）；
 `needsReviewQuestions` 三层复核信号机制（hard/soft/批量审计）原样沿用。
 
-一个待评估项：MinerU 路径下 `option.image`（schema 已有字段、`parseQuestion`
-已有写入逻辑但从未被喂数据）可以被激活——Day9 第 129 题已验证 MinerU 能给出
-四张独立选项图 + 标签 bbox，比现状"整块截图挂 stemImage + 选项文本降级为
-图A/图B"体验更好。建议 Phase 3 再做，绑定规则按 §4.3（`A/B/C/D = 4/4`
-不满足即硬复核）。
+MinerU 路径下已激活 `option.image`（schema 与 `parseQuestion` 原本已有写入契约）：
+只有四个标签 bbox 完整、同行且横向有序时才生成 A–D 四张独立选项图；任一条件
+不满足就回退为整题 `stemImage` 并进入复核，绑定规则遵守 §4.3，不猜测缺失边界。
 
 ## 6. MinerU API 备忘（2026-08 官方口径）
 
@@ -247,10 +245,10 @@ MinerU 的 pipeline 与 vlm 坐标系不同，**归一化必须在适配器入�
   - 制作器 UI：单 Token 输入框 + 本地/云后端选择 + 上传前显式确认；
   - **同期执行 §5.2 的删除项**（`model_client`、`model_settings_dialog`、复核页两个 AI 按钮、死代码三处）。删除与新增同版本落地，避免出现"两个 sk 并存"的中间态。
 
-- **Phase 3 — 路由与体验（2–4 天）**
+- **Phase 3 — 路由与体验（核心收尾已完成）**
   - 复杂版面自动检测：只**建议**云解析，绝不自动上传；
-  - 确认复核页支持"缺选项补录"（Day11 第 124 题这类硬复核的落点），不支持则补齐该编辑能力；
-  - 评估激活 `option.image`（Day9 第 129 题四图已验证可行，见 §5.2 末）；
+  - 已确认复核页支持"缺选项补录"（Day11 第 124 题这类硬复核可直接落地）；
+  - 已激活 `option.image`（完整四标签才裁四图，否则安全回退）；
   - 按后端统计准确率与耗时。
 
 ## 8. 验收标准（以 Day11 为例）
@@ -327,7 +325,7 @@ A–D 无错位、第 130 题跨页题干图 + 四个文字选项归属正确。
 ### Phase 2（已完成）
 
 **新增**
-- `mineru_client.{hpp,cpp}`：`MineruExtractionJob` 状态机（申请链接 → PUT 上传 → 轮询 → 下载），含官方错误码到可操作提示的翻译、指数无关的固定轮询、超时与取消。
+- `mineru_client.{hpp,cpp}`：`MineruExtractionJob` 状态机（申请链接 → PUT 上传 → 轮询 → 下载），含官方错误码到可操作提示的翻译、限流/5xx/短暂网络故障的指数退避、长任务渐进轮询、超时与取消。
 - `mineru_settings_dialog.{hpp,cpp}`：单 Token 输入 + 模型版本 + 强制 OCR + **允许上传**开关（默认关闭）。
 - `tests/mineru_client_test.cpp`（已注册 CTest）：纯函数协议测试 + 本地 `QTcpServer` 桩服务跑完整状态机。
 
@@ -340,19 +338,26 @@ A–D 无错位、第 130 题跨页题干图 + 四个文字选项归属正确。
 **保留**：`PdfExtractor` 全部、像素级下划线检测、`needsReviewQuestions` 三层信号、人工拖拽重裁（`recropReviewAsset`）。
 
 **接线**
-- `SourceMaterialGroup` 增加 `mineruZipPath` / `mineruAnswerZipPath`；非空时 `GenerationWorkflow` 用适配器替代本机提取，其余流程不变。
-- `StudioWindow::startCloudParseThenGenerate()` 在工作流之前串行完成云解析；仅对 PDF/图片启用，Token 读取失败或云解析失败都**退回本机解析**而非中断整理。
+- `SourceMaterialGroup` 增加 `mineruZipPath` / `mineruAnswerZipPath`；非空时 `GenerationWorkflow` 用适配器替代本机提取，其余流程不变。题目文件与答案另册都会进入同一云解析队列。
+- `StudioWindow::startCloudParseThenGenerate()` 在工作流之前串行完成云解析；仅对 PDF/图片启用，Token 读取失败或云解析失败都**退回本机解析**而非中断整理。运行按钮可取消云任务或本地工作流，关闭窗口也会终止当前云请求。
 - 云解析中间产物存放于 `QTemporaryDir`，随整理结束自动清理。
 - 每份云解析资料会在 `warnings` 里标注后端与模型版本，便于复核时重点核对，也满足 §8 的"模型版本写入诊断元数据"。
 
 **真实 API 端到端验证**：用真 Token 跑通 申请链接 → 上传 → 轮询（进度 7/10）→ 下载 → 适配 → 19 题带答案，`backend=hybrid version=3.4.4`。
 
-**测试状态**：全套 20 个 CTest 全部通过（原 22 个，减去随死代码删除的 `chunker_test`、`checkpoint_store_test`、`model_client_test`，加上新增的 2 个 MinerU 测试）。
+**测试状态**：与后续 master 回归项合并后，全套 28 个 CTest 全部通过；其中包含 MinerU 协议/状态机、版面适配、答案另册工作流、图片选项及 Studio 复核 UI。
 
-### 尚未做（原 Phase 3）
+### Phase 3 收尾（已完成）
+
+- 答案另册接入云解析并写入 `mineruAnswerZipPath`；新增独立合成答案夹具，离线验证页脚过滤与答案映射。
+- `ExtractedDocument::extractionBackend` 标记 MinerU 来源；只有云端提供完整、同行且有序的 A/B/C/D span 时才激活四张 `option.image`，否则维持整题截图与复核回退。
+- MinerU 请求支持最多四次连续瞬时故障重试，尊重 `Retry-After`，长时间 pending 的轮询间隔从 3 秒逐级退避到 30 秒。
+- 取消信号贯通“取消整理”按钮、云任务、本地工作流与关窗路径；延迟轮询/重试用任务代次隔离，不会在取消后复活旧请求。
+- 真卷素材受版权限制仍不进仓库；保留 `mineru_regression_harness` 供本地 Day9/Day11 包验证，CI 使用复刻相同缺陷形态的合成 golden fixture。
+
+### 后续体验项（不阻塞替换旧 AI 链路）
 
 - 复杂版面自动检测与"建议云解析"提示（当前是用户在设置里显式开关，不做自动判断）
-- 复核页"缺选项补录"能力确认/补齐
-- 激活 `option.image`（Day9 第 129 题已验证 MinerU 能给出四张独立选项图）
+- 更多版式夹具：扫描卷、双栏卷、无答案卷、图片选项跨页、表格跨页
 - 按后端统计准确率与耗时
 - §10 记的三处既存问题（schema 与 validator 不一致等）

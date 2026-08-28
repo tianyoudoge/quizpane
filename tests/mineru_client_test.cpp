@@ -35,6 +35,8 @@ public:
 
     int pollCount = 0;
     int uploadCount = 0;
+    int uploadTicketRequestCount = 0;
+    int transientTicketFailures = 0;
     QByteArray uploadedBody;
 
 protected:
@@ -81,6 +83,12 @@ private:
         };
 
         if (requestLine.contains("/api/v4/file-urls/batch")) {
+            ++uploadTicketRequestCount;
+            if (transientTicketFailures > 0) {
+                --transientTicketFailures;
+                send("503 Service Unavailable", R"({"msg":"busy"})");
+                return;
+            }
             if (!authorized) {
                 // 官方鉴权失败用 {msgCode, msg, success} 信封，且可能带 200。
                 send("200 OK",
@@ -258,6 +266,12 @@ int main(int argc, char** argv) {
 
     if (describeMineruStage(MineruStage::Polling).isEmpty())
         return fail("stages need human readable descriptions");
+    if (!isTransientMineruFailure(429, 0) || !isTransientMineruFailure(503, 0) ||
+        isTransientMineruFailure(401, 0) || isTransientMineruFailure(0, 5))
+        return fail("transient failure classification is unsafe");
+    if (mineruRetryDelayMs(1) != 1000 || mineruRetryDelayMs(3) != 4000 ||
+        mineruRetryDelayMs(1, 7) != 7000)
+        return fail("retry delay must use exponential backoff and Retry-After");
 
     // —— 全链路状态机（本地桩服务）——
 
@@ -284,6 +298,8 @@ int main(int argc, char** argv) {
     QNetworkAccessManager manager;
     const QString zipPath = directory.filePath(QStringLiteral("out/result.zip"));
     {
+        // 首次申请链接返回 503，客户端应自动退避重试，不能让整次整理失败。
+        server.transientTicketFailures = 1;
         MineruExtractionJob job(&manager);
         QList<MineruStage> stages;
         QObject::connect(&job, &MineruExtractionJob::stageChanged, &job,
@@ -312,6 +328,8 @@ int main(int argc, char** argv) {
         if (server.uploadCount != 1 ||
             server.uploadedBody != QByteArrayLiteral("%PDF-1.7 stub content"))
             return fail("uploaded body does not match the source file");
+        if (server.uploadTicketRequestCount < 2)
+            return fail("transient upload-ticket failure was not retried");
         // running 之后必须继续轮询，而不是当成结束。
         if (server.pollCount < 2)
             return fail("client should keep polling while the task is running");

@@ -46,6 +46,10 @@ struct ExtractedDocument {
     // 文本由 PDF/OCR 按页提取时，使用换页符分隔。规则解析器据此生成 source.page，
     // TXT/DOCX 没有稳定页码时保持 false，避免伪造来源位置。
     bool hasPageBoundaries = false;
+    // 文档感知来源。空值/"local-qt" 表示本地提取，MinerU 适配器写入
+    // "mineru-<backend>"。规则引擎只用它启用经过云端版面坐标验证的能力，
+    // 不依赖 MinerU 的原始 JSON 字段。
+    QString extractionBackend;
     // 扫描页经过本地 OCR 时置 true，仅用于提示识别来源，不改变后续解析路径。
     bool usedOcr = false;
     // Keep OCR failures distinct from an ordinary document without question
