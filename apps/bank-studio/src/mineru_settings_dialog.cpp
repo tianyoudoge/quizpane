@@ -21,7 +21,8 @@ QLabel* mutedLabel(const QString& text) {
 
 }  // namespace
 
-std::optional<MineruConfig> editMineruSettings(QWidget* parent, const MineruConfig& current) {
+std::optional<MineruConfig> editMineruSettings(QWidget* parent, const MineruConfig& current,
+                                                const QString& notice) {
     QDialog dialog(parent);
     dialog.setWindowTitle(QStringLiteral("智能解析设置"));
     dialog.setMinimumWidth(580);
@@ -31,6 +32,12 @@ std::optional<MineruConfig> editMineruSettings(QWidget* parent, const MineruConf
     layout->addWidget(title);
     layout->addWidget(mutedLabel(QStringLiteral(
         "适合扫描件、图表和复杂版面。需要识别的文件会上传到 MinerU。")));
+    if (!notice.trimmed().isEmpty()) {
+        auto* problem = new QLabel(notice);
+        problem->setObjectName(QStringLiteral("notice"));
+        problem->setWordWrap(true);
+        layout->addWidget(problem);
+    }
 
     auto* form = new QFormLayout;
     form->setSpacing(10);

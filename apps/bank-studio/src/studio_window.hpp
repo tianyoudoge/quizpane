@@ -95,7 +95,7 @@ private:
     QJsonArray reviewOptions() const;
     void addReviewOption(const QString& id = {}, const QString& text = {});
     // 返回 true 仅表示用户确认并成功保存了配置；取消或保存失败都不改变调用方流程。
-    bool editMineruSettings();
+    bool editMineruSettings(const QString& notice = {});
     void updateParseModeSummary();
     void editParseModeSettings();
     void selectParseMode(bool cloud);

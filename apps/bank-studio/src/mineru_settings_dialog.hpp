@@ -27,6 +27,7 @@ struct MineruConfig {
 
 // 创建并同步执行 MinerU 设置对话框。
 [[nodiscard]] std::optional<MineruConfig> editMineruSettings(QWidget* parent,
-                                                             const MineruConfig& current);
+                                                             const MineruConfig& current,
+                                                             const QString& notice = {});
 
 }  // namespace quizpane::studio

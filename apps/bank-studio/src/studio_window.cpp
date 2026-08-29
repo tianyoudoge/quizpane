@@ -751,11 +751,11 @@ void StudioWindow::editParseModeSettings() {
     updateParseModeSummary();
 }
 
-bool StudioWindow::editMineruSettings() {
+bool StudioWindow::editMineruSettings(const QString& notice) {
     MineruConfig configForEditor = mineruConfig_;
     configForEditor.token = loadMineruToken();
     const std::optional<MineruConfig> updated =
-        quizpane::studio::editMineruSettings(this, configForEditor);
+        quizpane::studio::editMineruSettings(this, configForEditor, notice);
     if (!updated)
         return false;
     QString error;
@@ -1508,9 +1508,13 @@ void StudioWindow::startCloudParseThenGenerate(const QList<SourceMaterialGroup>&
         cloudTempDir_ = std::make_unique<QTemporaryDir>();
         if (!cloudTempDir_->isValid()) {
             cloudTempDir_.reset();
-            QMessageBox::warning(this, QStringLiteral("无法使用云端解析"),
-                                 QStringLiteral("无法创建临时目录，本次改用本机解析。"));
-            workflow_->startRuleBased(groups);
+            activityTimer_->stop();
+            activitySpinner_->hide();
+            progressBar_->setValue(0);
+            pages_->setCurrentIndex(0);
+            updateNavigation();
+            QMessageBox::warning(this, QStringLiteral("无法使用智能解析"),
+                                 QStringLiteral("无法创建临时目录，已停止整理。请稍后重试。"));
             return;
         }
     }
@@ -1614,11 +1618,22 @@ void StudioWindow::processNextCloudSource() {
                         updateNavigation();
                         return;
                     }
-                    // 云解析失败不应让整批资料前功尽弃：提示后退回本机解析，
-                    // 让用户至少拿到可复核的结果。
-                    QMessageBox::warning(this, QStringLiteral("云端解析未完成"),
-                                         error + QStringLiteral("\n本次改用本机解析。"));
-                    workflow_->startRuleBased(pendingGroups_);
+                    // 网络、额度和鉴权错误都不能替用户把“智能模式”切成规则模式。
+                    // 停在资料页；鉴权错误会把原始提示直接带进配置页。
+                    pendingGroups_.clear();
+                    activityTimer_->stop();
+                    activitySpinner_->hide();
+                    progressBar_->setValue(0);
+                    pages_->setCurrentIndex(0);
+                    updateNavigation();
+                    const bool tokenProblem = error.contains(QStringLiteral("Token"),
+                                                             Qt::CaseInsensitive);
+                    if (tokenProblem) {
+                        editMineruSettings(error);
+                    } else {
+                        QMessageBox::warning(this, QStringLiteral("智能解析未完成"),
+                                             error + QStringLiteral("\n已停止整理，请修正后重试。"));
+                    }
                     return;
                 }
                 if (cloudParsingAnswer_)
