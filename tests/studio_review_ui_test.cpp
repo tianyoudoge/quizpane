@@ -22,8 +22,9 @@ public:
     static QJsonObject question(const QString& id, const QString& risk = {},
                                const QString& signal = {}, const QString& reason = {}) {
         QJsonObject q{{"id", id}, {"stem", QStringLiteral("请核对题干与选项是否和原题一致。")},
-            {"type", "single_choice"},
-            {"source", QJsonObject{{"questionNumber", id.mid(1).toInt()}}},
+            {"type", "single_choice"}, {"catalogId", "generated"},
+            {"source", QJsonObject{{"document", QStringLiteral("测试资料.pdf")},
+                                    {"questionNumber", id.mid(1).toInt()}}},
             {"options", QJsonArray{QJsonObject{{"id", "a"}, {"text", "选项 A"}},
                                    QJsonObject{{"id", "b"}, {"text", "选项 B"}}}},
             {"answer", QJsonObject{{"optionIds", QJsonArray{"a"}}}}};
@@ -107,6 +108,19 @@ public:
         window.allQuestionsButton_->click();
         for (int i = 0; i < group->childCount(); ++i)
             if (group->child(i)->isHidden()) return 7;
+
+        // 精确回归真实事故：大量图片/OCR 软提示题必须保持收录；用户编辑并
+        // 确认一个硬问题后，不能让最终打包输入退化成只剩当前这一题。
+        window.showReviewQuestion(group->child(3));
+        window.confirmCurrentReviewQuestion();
+        int selectedAfterSingleEdit = 0;
+        for (int i = 0; i < group->childCount(); ++i)
+            if (group->child(i)->checkState(0) == Qt::Checked)
+                ++selectedAfterSingleEdit;
+        if (selectedAfterSingleEdit != 4 ||
+            group->child(1)->checkState(0) != Qt::Checked ||
+            group->child(2)->checkState(0) != Qt::Checked) return 25;
+
         bool hasSimpleSummary = false;
         for (auto* label : window.riskCategoryPanel_->findChildren<QLabel*>())
             if (label->text().contains(QStringLiteral("还有 2 项需要决定")) && label->wordWrap())
