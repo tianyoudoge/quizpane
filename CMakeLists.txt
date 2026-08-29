@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.24)
 
 project(QuizPane VERSION 0.5.6 LANGUAGES C CXX)
 
+# 便于用户反馈时确认实际运行的包，而不把 Git 提交号或构建机路径带进产品。
+# 格式遵循产品约定：MMddHHmmyyyy，例如 082914272026。
+string(TIMESTAMP QUIZPANE_BUILD_VERSION "%m%d%H%M%Y")
+
 if(WIN32)
     # 禁止 Windows SDK 注入 min/max 宏，避免破坏 std::min/std::max 和
     # std::numeric_limits<T>::max() 等现代 C++ API。对子目录所有目标生效。

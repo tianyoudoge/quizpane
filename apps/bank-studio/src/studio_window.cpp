@@ -92,6 +92,10 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#ifndef QUIZPANE_BUILD_VERSION
+#define QUIZPANE_BUILD_VERSION "dev"
+#endif
+
 namespace quizpane::studio {
 namespace {
 
@@ -713,6 +717,16 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     }
     auto* helpMenu = menuBar()->addMenu(QStringLiteral("帮助"));
     helpMenu->addAction(QStringLiteral("赞赏支持…"), this, &StudioWindow::showDonationDialog);
+    auto* buildVersion = helpMenu->addAction(
+        QStringLiteral("构建版本：%1").arg(QStringLiteral(QUIZPANE_BUILD_VERSION)));
+    buildVersion->setObjectName(QStringLiteral("studioBuildVersionAction"));
+    buildVersion->setEnabled(false);
+    auto* about = helpMenu->addAction(QStringLiteral("关于题库制作器"), this, [this] {
+        QMessageBox::about(this, QStringLiteral("关于题库制作器"),
+            QStringLiteral("题库制作器\n版本 %1\n构建版本 %2")
+                .arg(QApplication::applicationVersion(), QStringLiteral(QUIZPANE_BUILD_VERSION)));
+    });
+    about->setObjectName(QStringLiteral("studioAboutAction"));
     applyStyle();
     updateNavigation();
     // UI 建好后再询问，避免启动阶段抢在主窗口出现前弹对话框。

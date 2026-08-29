@@ -1,5 +1,6 @@
 #include "studio_window.hpp"
 
+#include <QAction>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -42,6 +43,11 @@ public:
             window.parseStatusText_->text() != QStringLiteral("智能模式") ||
             !window.progressBar_ || !window.progressStatus_ ||
             window.progressStatus_->text() != QStringLiteral("准备中")) return 19;
+        auto* buildVersion = window.findChild<QAction*>(QStringLiteral("studioBuildVersionAction"));
+        auto* about = window.findChild<QAction*>(QStringLiteral("studioAboutAction"));
+        if (!buildVersion || buildVersion->isEnabled() ||
+            !buildVersion->text().startsWith(QStringLiteral("构建版本：")) || !about ||
+            about->text() != QStringLiteral("关于题库制作器")) return 24;
         // 已提交云端任务的恢复状态只落非敏感信息；Token 不在 QSettings 内。
         QTemporaryDir cloudCache;
         if (!cloudCache.isValid()) return 22;

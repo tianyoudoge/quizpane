@@ -73,6 +73,7 @@ quizpane_optimize_target(quizpane_bank_studio)
 quizpane_apply_windows7_manifest(quizpane_bank_studio)
 target_compile_definitions(quizpane_bank_studio PRIVATE
     QUIZPANE_VERSION="${PROJECT_VERSION}"
+    QUIZPANE_BUILD_VERSION="${QUIZPANE_BUILD_VERSION}"
 )
 set_target_properties(quizpane_bank_studio PROPERTIES
     AUTORCC TRUE
