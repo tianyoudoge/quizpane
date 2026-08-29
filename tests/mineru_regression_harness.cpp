@@ -5,7 +5,7 @@
 // 单元测试用 tests/fixtures/mineru-layout-fixture.json 这份合成夹具覆盖结构。
 //
 // 用法：
-//   mineru_regression_harness <layout.json 或 result.zip> <output-dir>
+//   mineru_regression_harness <layout.json 或 result.zip> <output-dir> [source.pdf]
 //
 // 它把 MinerU 输出适配成 ExtractedDocument 后直接喂给现有规则引擎，打印锚点
 // 数量与生成结果，并把题库 JSON 落到 output-dir，供人工比对与 golden 归档。
@@ -41,15 +41,16 @@ bool writeFile(const QString& path, const QByteArray& bytes) {
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
-    if (app.arguments().size() != 3) {
-        qCritical("usage: mineru_regression_harness <layout.json|result.zip> <output-dir>");
+    if (app.arguments().size() < 3 || app.arguments().size() > 4) {
+        qCritical("usage: mineru_regression_harness <layout.json|result.zip> <output-dir> [source.pdf]");
         return 2;
     }
 
     const QString input = app.arguments().at(1);
     const QString outputDir = app.arguments().at(2);
-    const QString sourcePath =
-        QFileInfo(input).absolutePath() + QStringLiteral("/source.pdf");
+    const QString sourcePath = app.arguments().size() == 4
+        ? QFileInfo(app.arguments().at(3)).absoluteFilePath()
+        : QFileInfo(input).absolutePath() + QStringLiteral("/source.pdf");
 
     using namespace quizpane::studio;
     const MineruAdaptResult adapted =

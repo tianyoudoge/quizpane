@@ -32,6 +32,7 @@ struct QuestionAnchor {
     int line = 0;
     int number = 0;
     QString firstStemLine;
+    bool inferredNumber = false;
 };
 
 struct MaterialMarker {
@@ -91,6 +92,89 @@ void normalizeTrailingQuestionNumberLayout(QList<SourceLine>* lines) {
         lines->removeAt(index);
         index = start;
     }
+}
+
+// 极少数原卷本身就漏印题号（例如 10 题后正文直接以“20世纪以来”开头，下一题
+// 却是 12）。只在 n 与 n+2 之间同时满足以下证据时补 n+1：上一题已有 D 选项、
+// 候选正文与 D 选项存在明显视觉段距、候选块在下一题前拥有完整 A-D。补号题仍
+// 强制进入复核，避免把普通续段猜成题目。
+QSet<int> recoverSingleMissingQuestionNumbers(ExtractedDocument* document,
+                                               QList<SourceLine>* lines) {
+    QSet<int> recoveredLines;
+    if (!document || !lines || lines->isEmpty())
+        return recoveredLines;
+    struct ExistingAnchor { int line; int number; };
+    QList<ExistingAnchor> existing;
+    for (int index = 0; index < lines->size(); ++index) {
+        const auto match = questionPattern().match(lines->at(index).text);
+        if (match.hasMatch() && match.captured(1).toInt() > 0)
+            existing.append({index, match.captured(1).toInt()});
+    }
+    static const QRegularExpression optionAtStart(
+        QStringLiteral(R"(^\s*([A-Da-d])\s*[.．、:：)）])"));
+    static const QRegularExpression optionAnywhere(
+        QStringLiteral(R"((?<![A-Za-z0-9])([A-Da-d])\s*[.．、:：)）])"));
+    static const QRegularExpression forbiddenCandidate(QStringLiteral(
+        R"(^\s*(?:答案|参考答案|正确答案|解析|第\s*[一二三四五六七八九十\d]+\s*(?:部分|章|节)))"));
+    const auto boundsFor = [document](const SourceLine& line) {
+        for (const PdfTextAnchor& anchor : document->lineAnchors.value(line.page))
+            if (anchor.text.simplified() == line.text.simplified())
+                return anchor.bounds;
+        return QRectF{};
+    };
+    for (int pair = 0; pair + 1 < existing.size(); ++pair) {
+        const ExistingAnchor previous = existing.at(pair);
+        const ExistingAnchor next = existing.at(pair + 1);
+        if (next.number != previous.number + 2 || next.line <= previous.line + 2)
+            continue;
+        int previousOptionD = -1;
+        for (int index = previous.line + 1; index < next.line; ++index) {
+            const auto option = optionAtStart.match(lines->at(index).text);
+            if (option.hasMatch() && option.captured(1).compare(QStringLiteral("d"),
+                                                                Qt::CaseInsensitive) == 0) {
+                previousOptionD = index;
+                break;
+            }
+        }
+        const int candidate = previousOptionD + 1;
+        if (previousOptionD < 0 || candidate >= next.line ||
+            lines->at(candidate).text.size() < 12 ||
+            questionPattern().match(lines->at(candidate).text).hasMatch() ||
+            optionAtStart.match(lines->at(candidate).text).hasMatch() ||
+            forbiddenCandidate.match(lines->at(candidate).text).hasMatch())
+            continue;
+
+        QSet<QString> candidateOptions;
+        for (int index = candidate + 1; index < next.line; ++index) {
+            auto matches = optionAnywhere.globalMatch(lines->at(index).text);
+            while (matches.hasNext())
+                candidateOptions.insert(matches.next().captured(1).toLower());
+        }
+        if (!candidateOptions.contains(QStringLiteral("a")) ||
+            !candidateOptions.contains(QStringLiteral("b")) ||
+            !candidateOptions.contains(QStringLiteral("c")) ||
+            !candidateOptions.contains(QStringLiteral("d")))
+            continue;
+
+        const QRectF optionBounds = boundsFor(lines->at(previousOptionD));
+        const QRectF candidateBounds = boundsFor(lines->at(candidate));
+        if (optionBounds.isEmpty() || candidateBounds.isEmpty() ||
+            lines->at(previousOptionD).page != lines->at(candidate).page ||
+            candidateBounds.top() - optionBounds.bottom() <=
+                qMax<qreal>(0.004, qMax(optionBounds.height(), candidateBounds.height()) * 0.35))
+            continue;
+
+        const QString originalText = lines->at(candidate).text;
+        lines->operator[](candidate).text =
+            QStringLiteral("%1. %2").arg(previous.number + 1).arg(originalText);
+        document->questionAnchors[lines->at(candidate).page].append(
+            {QString::number(previous.number + 1), candidateBounds});
+        document->warnings.append(
+            QStringLiteral("第 %1 页有一处原卷缺失题号，已根据前后题号与完整选项补为第 %2 题，需人工核对")
+                .arg(lines->at(candidate).page).arg(previous.number + 1));
+        recoveredLines.insert(candidate);
+    }
+    return recoveredLines;
 }
 
 const QRegularExpression& inlineAnswerPattern() {
@@ -2007,6 +2091,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         QList<SourceLine> lines = sourceLines(document);
         removeRepeatedPageFurniture(document, &lines);
         normalizeTrailingQuestionNumberLayout(&lines);
+        const QSet<int> inferredQuestionLines =
+            recoverSingleMissingQuestionNumbers(&document, &lines);
 
         // 收集所有答案区头行号。整体前后分开的文件只有一个，阶段分组的文件
         // 会有多个（每个阶段一组题+一组答案）。答案区头本身不作为题目终点，
@@ -2061,7 +2147,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             const int number = match.captured(1).toInt();
             if (number <= 0)
                 continue;
-            anchors.append({index, number, match.captured(2).trimmed()});
+            anchors.append({index, number, match.captured(2).trimmed(),
+                            inferredQuestionLines.contains(index)});
         }
 
         // 材料扫描：材料头与“根据材料回答N-M题”的范围头一起出现，范围头可能与
@@ -2419,6 +2506,13 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                                                  allowMultipleAnswers,
                                                  isInsideGraphicalReasoningPart(lines, anchor.line),
                                                  hasAnswerKey);
+            if (anchor.inferredNumber) {
+                const QString reason = QStringLiteral("原卷缺失题号，已根据相邻题号与完整选项补为第 %1 题；请核对题目边界")
+                    .arg(anchor.number);
+                question = withReviewSignal(question, QStringLiteral("question-number-inferred"), reason);
+                reviewReason = reviewReason.isEmpty() ? reason
+                                                      : reviewReason + QStringLiteral("；") + reason;
+            }
             if (repeatedNumber) {
                 auto source = question.value("source").toObject();
                 source.insert("questionLabel", QStringLiteral("原第 %1 题 · 同号第 %2 处")

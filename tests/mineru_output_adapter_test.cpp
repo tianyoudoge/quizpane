@@ -50,6 +50,45 @@ QByteArray trailingQuestionNumberLayout() {
 )json");
 }
 
+QByteArray modernMiddleLayout() {
+    // 覆盖当前 middle.json 的关键形态：乱序/缺页、深层嵌套 blocks、中文拆 span、
+    // 公式 span，以及单个 span 内的多个选项标签。
+    return QByteArrayLiteral(R"json(
+{
+  "_backend": "vlm",
+  "_version_name": "test-modern",
+  "pdf_info": [
+    {"page_idx": 2, "page_size": [600, 800], "para_blocks": [
+      {"type": "text", "lines": [{"bbox": [30, 80, 540, 100], "spans": [
+        {"type": "text", "bbox": [30, 80, 540, 100], "content": "A. 甲 B. 乙"}
+      ]}]}
+    ]},
+    {"page_idx": 0, "page_size": [600, 800], "para_blocks": [
+      {"type": "text", "blocks": [{"type": "text", "blocks": [
+        {"type": "text", "lines": [{"bbox": [30, 40, 540, 60], "spans": [
+          {"type": "text", "bbox": [30, 40, 80, 60], "content": "数"},
+          {"type": "text", "bbox": [80, 40, 130, 60], "content": "量关系"},
+          {"type": "inline_equation", "bbox": [130, 40, 190, 60], "content": "x^2"},
+          {"type": "text", "bbox": [190, 40, 240, 60], "content": "测试"}
+        ]}]}
+      ]}]}
+    ]}
+  ]
+}
+)json");
+}
+
+QByteArray optionEndingInNumberLayout() {
+    return QByteArrayLiteral(R"json(
+{"pdf_info":[{"page_idx":0,"page_size":[600,800],"para_blocks":[
+  {"type":"text","lines":[
+    {"bbox":[30,40,540,60],"spans":[{"type":"text","bbox":[30,40,540,60],"content":"D.某项统计指标的年均增长率达到13."}]},
+    {"bbox":[30,90,540,110],"spans":[{"type":"text","bbox":[30,90,540,110],"content":"17.2012年至2021年的真实题目，年均增长13."}]}
+  ]}
+]}]}
+)json");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -75,6 +114,8 @@ int main(int argc, char** argv) {
         return fail("hasPageBoundaries must be true so source.page can be derived");
     if (document.extractionBackend != QStringLiteral("mineru-pipeline"))
         return fail("document extraction backend metadata missing");
+    if (document.usedOcr)
+        return fail("cloud parsing must not be mislabeled as forced OCR");
 
     // 与本地 PdfExtractor 同构：换页符分页。
     const QStringList pages = document.plainText.split(QChar(u'\f'));
@@ -158,6 +199,30 @@ int main(int argc, char** argv) {
     if (adaptMineruLayout(QByteArray(), sourcePath).error.isEmpty())
         return fail("empty payload must be rejected");
 
+    const MineruAdaptResult modern = adaptMineruLayout(modernMiddleLayout(), sourcePath);
+    if (!modern.error.isEmpty())
+        return fail("modern middle layout was rejected");
+    const QStringList modernPages = modern.document.plainText.split(QChar(u'\f'));
+    if (modernPages.size() != 3 || modernPages.at(1) != QString{})
+        return fail("out-of-order or missing pages did not preserve source page positions");
+    if (modernPages.at(0) != QStringLiteral("数量关系$x^2$测试"))
+        return fail("Chinese spans or formula spans were reconstructed incorrectly");
+    const auto mergedOptions = modern.document.optionLabelAnchors.value(3);
+    if (mergedOptions.size() != 2 ||
+        qFuzzyCompare(mergedOptions.at(0).bounds.left(), mergedOptions.at(1).bounds.left()))
+        return fail("multiple labels in one span must receive distinct approximate bounds");
+    MineruParseOptions forcedOcr;
+    forcedOcr.usedOcr = true;
+    if (!adaptMineruLayout(modernMiddleLayout(), sourcePath, forcedOcr).document.usedOcr)
+        return fail("explicit forced OCR metadata was not propagated");
+    const MineruAdaptResult optionEnding =
+        adaptMineruLayout(optionEndingInNumberLayout(), sourcePath);
+    if (!optionEnding.error.isEmpty() ||
+        optionEnding.document.plainText.contains(QStringLiteral("13. D.某项")) ||
+        optionEnding.document.questionAnchors.value(1).size() != 1 ||
+        optionEnding.document.questionAnchors.value(1).first().text != QStringLiteral("17"))
+        return fail("an option ending in a number was mistaken for a trailing question number");
+
     // 真实 MinerU 在部分双栏题卡 PDF 上会把行首题号读到行尾。适配器必须把
     // 它还原为规则引擎可识别的行首题号，并以该行 bbox 补回视觉锚点。
     const MineruAdaptResult repaired = adaptMineruLayout(trailingQuestionNumberLayout(), sourcePath);
@@ -199,6 +264,14 @@ int main(int argc, char** argv) {
     if (adaptMineruZip(emptyZipPath, sourcePath).error.isEmpty())
         return fail("archive without layout.json must be rejected");
 
+    const QString middleZipPath = directory.filePath(QStringLiteral("modern.zip"));
+    if (!quizpane::writeZipArchive(
+            middleZipPath,
+            {{QStringLiteral("job/document_middle.json"), modernMiddleLayout()}}, &zipError))
+        return fail("failed to write middle-json zip");
+    if (!adaptMineruZip(middleZipPath, sourcePath).error.isEmpty())
+        return fail("adaptMineruZip rejected a modern *_middle.json archive");
+
     // 目录入口。
     const QString layoutCopy = directory.filePath(QStringLiteral("layout.json"));
     {
@@ -215,6 +288,18 @@ int main(int argc, char** argv) {
         return fail("temporary directory unavailable");
     if (adaptMineruDirectory(emptyDirectory.path(), sourcePath).error.isEmpty())
         return fail("directory without layout.json must be rejected");
+
+    QTemporaryDir middleDirectory;
+    if (!middleDirectory.isValid())
+        return fail("temporary middle directory unavailable");
+    QDir().mkpath(middleDirectory.filePath(QStringLiteral("job")));
+    QFile middleFile(middleDirectory.filePath(QStringLiteral("job/document_middle.json")));
+    if (!middleFile.open(QIODevice::WriteOnly) ||
+        middleFile.write(modernMiddleLayout()) != modernMiddleLayout().size())
+        return fail("failed to stage modern middle json");
+    middleFile.close();
+    if (!adaptMineruDirectory(middleDirectory.path(), sourcePath).error.isEmpty())
+        return fail("adaptMineruDirectory rejected a modern *_middle.json result");
 
     std::fprintf(stdout, "mineru_output_adapter_test ok\n");
     return 0;

@@ -1022,6 +1022,34 @@ int main(int argc, char** argv) {
         if (warning.contains(QStringLiteral("第 4 题"))) sawMissingNumberWarning = true;
     if (!sawMissingNumberWarning)
         return 115;
+
+    // 原卷漏印单个题号时，仅凭 n / n+2、明显段距和候选块完整 A-D 做受限恢复。
+    // 补出的题必须保留并进入复核，不能继续吞进上一题。
+    ExtractedDocument missingPrintedNumber;
+    missingPrintedNumber.sourcePath = QStringLiteral("missing-printed-number.pdf");
+    missingPrintedNumber.hasPageBoundaries = true;
+    missingPrintedNumber.plainText = QStringLiteral(
+        "10. 第十题正文\nA.甲\nB.乙\nC.丙\nD.丁\n"
+        "20世纪以来，这是一道原卷漏印题号但正文完整的题目。\nA.甲\nB.乙\nC.丙\nD.丁\n"
+        "12. 第十二题正文\nA.甲\nB.乙\nC.丙\nD.丁\n");
+    const QStringList missingLines = missingPrintedNumber.plainText.split(QChar(u'\n'));
+    for (int index = 0; index < missingLines.size(); ++index) {
+        const qreal top = 0.05 + index * 0.035;
+        missingPrintedNumber.lineAnchors[1].append(
+            {missingLines.at(index), QRectF(0.1, top, 0.8, 0.015)});
+    }
+    // 候选题干与上一题 D 选项之间留出明显段距。
+    missingPrintedNumber.lineAnchors[1][5].bounds.moveTop(0.245);
+    const auto recoveredNumberResult =
+        RuleBasedBankGenerator{}.generate({missingPrintedNumber}, false);
+    if (recoveredNumberResult.questions.size() != 2 ||
+        recoveredNumberResult.needsReviewQuestions.size() != 1 ||
+        recoveredNumberResult.needsReviewQuestions.first().toObject()
+                .value("source").toObject().value("questionNumber").toInt() != 11 ||
+        !recoveredNumberResult.needsReviewQuestions.first().toObject()
+                .value("review").toObject().value("signals").toArray()
+                .contains(QStringLiteral("question-number-inferred")))
+        return 161;
     QJsonObject auditQuestion3, auditQuestion2;
     for (const auto& value : auditResult.questions) {
         const QJsonObject question = value.toObject();
