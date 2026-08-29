@@ -430,8 +430,14 @@ MineruConfig loadStoredMineruConfig() {
     result.modelVersion =
         settings.value(QStringLiteral("modelVersion"), result.modelVersion).toString();
     result.isOcr = settings.value(QStringLiteral("isOcr"), result.isOcr).toBool();
-    result.cloudEnabled =
-        settings.value(QStringLiteral("cloudEnabled"), result.cloudEnabled).toBool();
+    result.modeSelectedByUser =
+        settings.value(QStringLiteral("modeSelectedByUser"), false).toBool();
+    // v0.5.6 之前 cloudEnabled=false 既可能是默认值，也可能来自一次空 Token 保存，
+    // 无法代表用户的明确选择。没有新标记的旧配置统一迁移到智能模式默认值。
+    if (result.modeSelectedByUser) {
+        result.cloudEnabled =
+            settings.value(QStringLiteral("cloudEnabled"), result.cloudEnabled).toBool();
+    }
     settings.endGroup();
     // 不在启动时读取钥匙串。macOS 对从 DMG 直接运行、或尚未用稳定 Developer ID
     // 签名的 App 可能每次读取都要求授权；只有用户实际使用云解析或打开设置时
@@ -445,6 +451,7 @@ bool storeMineruConfig(const MineruConfig& value, QString* error) {
     settings.setValue(QStringLiteral("modelVersion"), value.modelVersion);
     settings.setValue(QStringLiteral("isOcr"), value.isOcr);
     settings.setValue(QStringLiteral("cloudEnabled"), value.cloudEnabled);
+    settings.setValue(QStringLiteral("modeSelectedByUser"), value.modeSelectedByUser);
     settings.endGroup();
     settings.sync();
     if (settings.status() != QSettings::NoError) {
@@ -666,9 +673,10 @@ void StudioWindow::selectParseMode(bool cloud) {
         editMineruSettings();
         return;
     }
-    if (cloud == mineruConfig_.cloudEnabled)
+    if (cloud == mineruConfig_.cloudEnabled && mineruConfig_.modeSelectedByUser)
         return;
     mineruConfig_.cloudEnabled = cloud;
+    mineruConfig_.modeSelectedByUser = true;
     MineruConfig persisted = mineruConfig_;
     persisted.token = loadMineruToken();
     QString error;
@@ -731,9 +739,10 @@ void StudioWindow::editParseModeSettings() {
             editMineruSettings();
         return;
     }
-    if (wantCloud == mineruConfig_.cloudEnabled)
+    if (wantCloud == mineruConfig_.cloudEnabled && mineruConfig_.modeSelectedByUser)
         return;
     mineruConfig_.cloudEnabled = wantCloud;
+    mineruConfig_.modeSelectedByUser = true;
     MineruConfig persisted = mineruConfig_;
     persisted.token = loadMineruToken();
     QString error;
@@ -1413,10 +1422,10 @@ void StudioWindow::beginPreflight() {
         return;
     }
     if (sourcePaths_.isEmpty()) return;
-    // 智能解析被选中且本批存在 PDF / 图片时，Token 是开始整理的必要条件。
-    // 过去这里会继续进入 processNextCloudSource()，再悄悄降级为规则解析；
-    // 这既违背用户选择，也让首次使用者不知道 Token 应该在哪里填。
-    if (mineruConfig_.cloudEnabled && shouldUseCloudParse() &&
+    // 只要用户选了智能模式，Token 就必须先配好。即便这批恰好全是 TXT/DOCX，
+    // 也不能把“智能模式”悄悄当成规则模式执行；配置完成后，程序仍会仅对真正
+    // 需要版面识别的 PDF/图片调用 MinerU。
+    if (mineruConfig_.cloudEnabled &&
         loadMineruToken().trimmed().isEmpty()) {
         if (!editMineruSettings() || !mineruConfig_.cloudEnabled ||
             loadMineruToken().trimmed().isEmpty()) {

@@ -75,19 +75,26 @@ std::optional<MineruConfig> editMineruSettings(QWidget* parent, const MineruConf
     auto* save = buttons->addButton(QStringLiteral("保存设置"), QDialogButtonBox::AcceptRole);
     cancel->setObjectName(QStringLiteral("dialogCancelButton"));
     save->setObjectName(QStringLiteral("primaryButton"));
+    // Token 是智能模式真正开始工作的前提。空值不能被当作“保存后改用规则模式”，
+    // 否则用户刚选择智能模式就会被静默改回去。
+    save->setEnabled(!token->text().trimmed().isEmpty());
+    QObject::connect(token, &QLineEdit::textChanged, &dialog, [token, save] {
+        save->setEnabled(!token->text().trimmed().isEmpty());
+    });
     layout->addWidget(buttons);
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(save, &QPushButton::clicked, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
     if (dialog.exec() != QDialog::Accepted)
         return std::nullopt;
 
-    MineruConfig result;
+    MineruConfig result = current;
     result.token = token->text().trimmed();
     result.modelVersion = modelVersion->currentData().toString();
     // 是否扫描件由 MinerU 自动判断；不再让用户为每一批资料做全局选择。
     result.isOcr = false;
-    result.cloudEnabled = !result.token.isEmpty();
+    result.cloudEnabled = true;
+    result.modeSelectedByUser = true;
     return result;
 }
 
