@@ -42,6 +42,28 @@ QString joinSpanText(const QJsonObject& line) {
     return text;
 }
 
+// 少数双栏/题卡式 PDF 会让 MinerU 把左侧题号排到本视觉行的末尾。例如原卷
+// ``1. 借景是……建筑`` 会被还原成 ``借景是……建筑1.``。题目正文仍在，
+// 但后续规则引擎只接受行首题号，因而会误报“没有识别到题号锚点”。
+//
+// 仅修复“足够长的正文 + 行末独立题号”这一窄形态：选项 ``A. 1.``、小数
+// 或普通短句末尾的数字不会命中。保留一个合成题号行及其原始整行 bbox，令
+// 下游的视觉裁切仍有可用锚点；span 内已经丢失题号的精确位置，不能伪造它。
+QString repairTrailingQuestionNumber(const QString& text, QString* number) {
+    static const QRegularExpression trailingQuestion(QStringLiteral(
+        R"(^\s*(.{12,}?)\s*(\d{1,4})\s*[.．、]\s*$)"));
+    const auto match = trailingQuestion.match(text);
+    if (!match.hasMatch())
+        return text;
+    const QString stem = match.captured(1).trimmed();
+    const int value = match.captured(2).toInt();
+    if (stem.isEmpty() || value <= 0)
+        return text;
+    if (number)
+        *number = match.captured(2);
+    return QStringLiteral("%1. %2").arg(match.captured(2), stem);
+}
+
 // MinerU 的 bbox 是页面坐标（单位与 page_size 一致），ExtractedDocument 要求
 // 归一化到 0..1——本地 PdfExtractor 走的是同一套约定，因而两条路径产出的锚点
 // 可以被规则引擎无差别消费。
@@ -145,7 +167,9 @@ PageText buildPageText(const QJsonObject& page, int pageNumber, const QSizeF& pa
 
         for (const QJsonValue& lineValue : lineArray) {
             const QJsonObject line = lineValue.toObject();
-            const QString text = joinSpanText(line);
+            const QString rawText = joinSpanText(line);
+            QString repairedQuestionNumber;
+            const QString text = repairTrailingQuestionNumber(rawText, &repairedQuestionNumber);
             if (text.trimmed().isEmpty())
                 continue;
             const QRectF bounds =
@@ -153,6 +177,8 @@ PageText buildPageText(const QJsonObject& page, int pageNumber, const QSizeF& pa
             if (!bounds.isEmpty())
                 result->lineAnchors[pageNumber].append({text, bounds});
             collectAnchorsFromSpans(line, pageNumber, pageSize, result);
+            if (!repairedQuestionNumber.isEmpty() && !bounds.isEmpty())
+                result->questionAnchors[pageNumber].append({repairedQuestionNumber, bounds});
             lines.append(text);
         }
         Q_UNUSED(type)

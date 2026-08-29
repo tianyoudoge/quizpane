@@ -29,6 +29,27 @@ QByteArray readFixture() {
     return file.readAll();
 }
 
+QByteArray trailingQuestionNumberLayout() {
+    // 模拟粉笔题卡类 PDF 的真实 MinerU 失序形态：题号并未漏识别，而是被排到
+    // 题干视觉行的末尾。这里不放入真实试卷内容，避免把第三方题库带进仓库。
+    return QByteArrayLiteral(R"json(
+{
+  "pdf_info": [{
+    "page_idx": 0,
+    "page_size": [600, 800],
+    "para_blocks": [{
+      "type": "text",
+      "lines": [
+        {"bbox": [30, 80, 540, 94], "spans": [{"type": "text", "bbox": [30, 80, 540, 94], "content": "这是第一道题的完整题干，题号被错误排到行尾1."}]},
+        {"bbox": [45, 102, 500, 116], "spans": [{"type": "text", "bbox": [45, 102, 500, 116], "content": "题干的续行文字。"}]},
+        {"bbox": [30, 180, 540, 194], "spans": [{"type": "text", "bbox": [30, 180, 540, 194], "content": "这是第二道题的完整题干，题号同样被排到行尾2."}]}
+      ]
+    }]
+  }]
+}
+)json");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -136,6 +157,21 @@ int main(int argc, char** argv) {
         return fail("layout without pdf_info must be rejected");
     if (adaptMineruLayout(QByteArray(), sourcePath).error.isEmpty())
         return fail("empty payload must be rejected");
+
+    // 真实 MinerU 在部分双栏题卡 PDF 上会把行首题号读到行尾。适配器必须把
+    // 它还原为规则引擎可识别的行首题号，并以该行 bbox 补回视觉锚点。
+    const MineruAdaptResult repaired = adaptMineruLayout(trailingQuestionNumberLayout(), sourcePath);
+    if (!repaired.error.isEmpty())
+        return fail("trailing-question-number layout was rejected");
+    if (!repaired.document.plainText.contains(
+            QStringLiteral("1. 这是第一道题的完整题干，题号被错误排到行尾")) ||
+        !repaired.document.plainText.contains(
+            QStringLiteral("2. 这是第二道题的完整题干，题号同样被排到行尾")))
+        return fail("trailing question numbers were not restored to line starts");
+    const auto repairedAnchors = repaired.document.questionAnchors.value(1);
+    if (repairedAnchors.size() != 2 || repairedAnchors.at(0).text != QStringLiteral("1") ||
+        repairedAnchors.at(1).text != QStringLiteral("2") || repairedAnchors.at(0).bounds.isEmpty())
+        return fail("trailing question numbers did not produce usable anchors");
 
     // ZIP 入口：正常包可读，缺 layout.json 的包必须被拒绝。
     QTemporaryDir directory;
