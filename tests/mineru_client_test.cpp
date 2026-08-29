@@ -37,6 +37,9 @@ public:
     int uploadCount = 0;
     int uploadTicketRequestCount = 0;
     int transientTicketFailures = 0;
+    int transientDownloadFailures = 0;
+    int downloadCount = 0;
+    int latestZipTicket = 0;
     QByteArray uploadedBody;
 
 protected:
@@ -117,13 +120,28 @@ private:
                      R"("extract_progress":{"extracted_pages":3,"total_pages":10}}]}})");
                 return;
             }
+            latestZipTicket = pollCount;
             const QByteArray zipUrl =
-                "http://127.0.0.1:" + QByteArray::number(serverPort()) + "/result.zip";
+                "http://127.0.0.1:" + QByteArray::number(serverPort()) + "/result.zip?ticket=" +
+                QByteArray::number(latestZipTicket);
             send("200 OK", R"({"code":0,"data":{"extract_result":[{"state":"done",)"
                            R"("full_zip_url":")" + zipUrl + R"("}]}})");
             return;
         }
         if (requestLine.contains("/result.zip")) {
+            ++downloadCount;
+            const QByteArray currentTicket = "ticket=" + QByteArray::number(latestZipTicket);
+            if (!requestLine.contains(currentTicket)) {
+                send("403 Forbidden", R"({"msg":"stale signed url"})");
+                return;
+            }
+            if (transientDownloadFailures > 0) {
+                --transientDownloadFailures;
+                // 使用 503 而非直接断连：Qt 会自行重发 HTTP 0 场景，导致桩服务
+                // 难以稳定观察应用层逻辑；两者都会走同一个 retryTransient 分支。
+                send("503 Service Unavailable", R"({"msg":"temporary download failure"})");
+                return;
+            }
             send("200 OK", "PK\x03\x04stub-zip-bytes", "application/zip");
             return;
         }
@@ -298,8 +316,10 @@ int main(int argc, char** argv) {
     QNetworkAccessManager manager;
     const QString zipPath = directory.filePath(QStringLiteral("out/result.zip"));
     {
-        // 首次申请链接返回 503，客户端应自动退避重试，不能让整次整理失败。
+        // 首次申请链接和首次结果下载均返回 503。客户端必须自动退避，且结果
+        // 下载要重新轮询拿新的预签名地址，不能复用旧地址。
         server.transientTicketFailures = 1;
+        server.transientDownloadFailures = 1;
         MineruExtractionJob job(&manager);
         QList<MineruStage> stages;
         QObject::connect(&job, &MineruExtractionJob::stageChanged, &job,
@@ -333,6 +353,8 @@ int main(int argc, char** argv) {
         // running 之后必须继续轮询，而不是当成结束。
         if (server.pollCount < 2)
             return fail("client should keep polling while the task is running");
+        if (server.pollCount < 3 || server.downloadCount != 2)
+            return fail("download retry must refresh the signed result url through polling");
         if (lastExtracted != 3 || lastTotal != 10)
             return fail("progress from the running state was not surfaced");
         if (!stages.contains(MineruStage::Uploading) || !stages.contains(MineruStage::Polling) ||

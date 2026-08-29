@@ -477,7 +477,9 @@ void MineruExtractionJob::download(const QString& zipUrl) {
         if (!ok) {
             if (retryTransient(MineruStage::Downloading, status, networkErrorCode, retryAfter,
                                QStringLiteral("下载结果暂时失败"),
-                               [this, zipUrl] { download(zipUrl); }))
+                               // full_zip_url 是短时签名地址。连接被 OSS 关闭后，不能抱着
+                               // 同一个地址重试；重新轮询会拿到新的签名地址，再发起下载。
+                               [this] { poll(); }))
                 return;
             failWith(QStringLiteral("下载解析结果失败（HTTP %1）：%2").arg(status).arg(networkError));
             return;
