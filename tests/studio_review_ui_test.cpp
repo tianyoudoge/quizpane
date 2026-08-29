@@ -94,38 +94,31 @@ public:
             window.reviewTree_->header()->fontMetrics().height()) return 14;
         auto* group = window.reviewTree_->topLevelItem(0);
         auto chips = window.findChildren<QPushButton*>(QStringLiteral("reviewCategoryChip"));
-        if (chips.size() != 1 || !chips.first()->isCheckable() ||
-            chips.first()->cursor().shape() != Qt::PointingHandCursor) return 1;
+        if (!chips.isEmpty()) return 1;
         if (!window.allReviewButton_->isChecked() ||
-            !window.allReviewButton_->text().endsWith("4") ||
+            !window.allReviewButton_->text().endsWith("2") ||
             !window.allQuestionsButton_->text().endsWith("5") ||
-            !group->child(0)->isHidden() || group->child(1)->isHidden()) return 2;
+            !group->child(0)->isHidden() || !group->child(1)->isHidden() ||
+            group->child(3)->isHidden() || group->child(4)->isHidden() ||
+            group->child(1)->checkState(0) != Qt::Checked) return 2;
         window.allReviewButton_->click();  // Active tabs cannot silently toggle filtering off.
         if (!window.allReviewButton_->isChecked() || !group->child(0)->isHidden()) return 3;
-        chips.first()->click();
-        if (!chips.first()->isChecked() || window.allReviewButton_->isChecked() ||
-            group->child(1)->isHidden() || group->child(2)->isHidden() ||
-            !group->child(3)->isHidden() ||
-            group->child(1)->checkState(0) != Qt::Unchecked) return 4;
-        window.missingAnswerButton_->click();
-        if (chips.first()->isChecked() || group->child(3)->isHidden() ||
-            !group->child(2)->isHidden()) return 5;
-        window.duplicateButton_->click();
-        if (group->child(4)->isHidden() || !group->child(3)->isHidden()) return 6;
+        if (!window.missingAnswerButton_->isHidden() || !window.duplicateButton_->isHidden()) return 4;
         window.allQuestionsButton_->click();
         for (int i = 0; i < group->childCount(); ++i)
             if (group->child(i)->isHidden()) return 7;
-        bool hasGenerationHint = false;
+        bool hasSimpleSummary = false;
         for (auto* label : window.riskCategoryPanel_->findChildren<QLabel*>())
-            if (label->text().contains(QStringLiteral("未勾选的题目不会纳入题库")) && label->wordWrap())
-                hasGenerationHint = true;
-        if (!hasGenerationHint) return 8;
+            if (label->text().contains(QStringLiteral("还有 2 项需要决定")) && label->wordWrap())
+                hasSimpleSummary = true;
+        if (!hasSimpleSummary || window.nextButton_->text() != QStringLiteral("继续设置题库  →") ||
+            window.nextButton_->objectName() != QStringLiteral("primaryButton")) return 8;
 
         // Optional real-widget screenshots, without adding user fixtures to the repository.
         const QString previewDir = qEnvironmentVariable("QUIZPANE_UI_PREVIEW_DIR");
         if (!previewDir.isEmpty()) {
             window.allReviewButton_->click();
-            window.reviewTree_->setCurrentItem(group->child(1));
+            window.reviewTree_->setCurrentItem(group->child(3));
             for (const QString& theme : {QStringLiteral("dark"), QStringLiteral("light")}) {
                 QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
                 settings.setValue(QStringLiteral("ui/colorTheme"), theme);
@@ -134,20 +127,15 @@ public:
                 if (!window.grab().save(QDir(previewDir).filePath(theme + ".png"))) return 9;
             }
         }
-        window.confirmRiskCategory("image-content");
-        if (group->child(1)->checkState(0) != Qt::Checked ||
-            group->child(2)->checkState(0) != Qt::Checked ||
-            group->child(3)->checkState(0) != Qt::Unchecked) return 10;
-
         // Rebuilding must delete old nested rows/buttons and their group membership.
         window.populateReview(candidate);
-        if (window.findChildren<QPushButton*>(QStringLiteral("reviewCategoryChip")).size() != 1 ||
-            window.reviewFilterGroup_->buttons().size() != 5) return 11;
+        if (!window.findChildren<QPushButton*>(QStringLiteral("reviewCategoryChip")).isEmpty() ||
+            window.reviewFilterGroup_->buttons().size() != 4) return 11;
         candidate.questions = {question("q1")};
         candidate.needsReviewQuestions = {};
         candidate.hasAnswerKey = false;
         window.populateReview(candidate);
-        if (!window.riskCategoryPanel_->isHidden() || !window.missingAnswerButton_->isHidden() ||
+        if (window.riskCategoryPanel_->isHidden() || !window.missingAnswerButton_->isHidden() ||
             !window.allQuestionsButton_->isChecked() || window.reviewFilterGroup_->buttons().size() != 4)
             return 12;
 
@@ -159,7 +147,7 @@ public:
             {"review", QJsonObject{{"needsReview", true}, {"riskLevel", "soft"},
                 {"signals", QJsonArray{"image-content"}}}}}};
         window.populateReview(candidate);
-        window.findChild<QPushButton*>(QStringLiteral("reviewCategoryChip"))->click();
+        window.allQuestionsButton_->click();
         auto* material = window.reviewTree_->topLevelItem(0);
         if (material->isHidden() || material->child(0)->isHidden()) return 13;
         candidate.materials = {};
@@ -182,6 +170,12 @@ public:
             app.processEvents();
             if (!window.grab().save(QDir(previewDir).filePath("repeated-numbers.png"))) return 17;
         }
+        // 删除选项必须是清晰可见的文字操作，并且真的从草稿中移除。
+        auto removeButtons = window.findChildren<QPushButton*>(QStringLiteral("reviewOptionRemoveButton"));
+        if (removeButtons.size() != 2 || removeButtons.first()->text() != QStringLiteral("删除")) return 5;
+        removeButtons.first()->click();
+        app.processEvents();
+        if (window.reviewOptionEditors_.size() != 1) return 6;
         return 0;
     }
 };

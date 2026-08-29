@@ -45,9 +45,12 @@ QPushButton:hover { background: #edf5fb; border-color: #83aed0; }
 QPushButton#primaryButton { background: #2f7fbc; color: #ffffff; border-color: #2f7fbc; font-weight: 600; }
 QPushButton#primaryButton:hover { background: #226da7; border-color: #226da7; }
 QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #526171; border-color: transparent; }
+QPushButton#dangerTextButton, QPushButton#reviewOptionRemoveButton { background: transparent; color: #b54040; border-color: transparent; }
+QPushButton#dangerTextButton:hover, QPushButton#reviewOptionRemoveButton:hover { background: #fff1f1; color: #963535; border-color: #e8bcbc; }
 QPushButton#dialogCancelButton { background: #ffffff; color: #6d4a4a; border-color: #d9c7c7; }
 QPushButton#dialogCancelButton:hover { background: #fff6f6; border-color: #c78d8d; }
 QFrame#reviewFilterBar { border: none; border-bottom: 1px solid #cbd6df; }
+QLabel#reviewSummary { color: #405263; font-weight: 600; padding: 2px 0; }
 QPushButton#reviewFilterTab { background: transparent; color: #596979; border: none; border-bottom: 3px solid transparent; border-radius: 0; padding: 9px 12px; }
 QPushButton#reviewFilterTab:hover { background: #eaf2f8; color: #185d91; }
 QPushButton#reviewFilterTab:checked { background: #e5f0f9; color: #185d91; border-bottom-color: #2f7fbc; font-weight: 600; }

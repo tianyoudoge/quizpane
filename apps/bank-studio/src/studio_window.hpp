@@ -82,7 +82,6 @@ private:
     void updateWorkflowProgress(const WorkflowProgress& progress);
     void populateReview(const GeneratedBankCandidate& candidate);
     void applyReviewFilter();
-    void confirmRiskCategory(const QString& signal);
     void showReviewQuestion(QTreeWidgetItem* item);
     bool saveCurrentReviewQuestion();
     bool reviewQuestionIsDirty() const;

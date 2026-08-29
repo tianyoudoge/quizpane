@@ -46,10 +46,13 @@ QPushButton:hover { background: #2a3037; border-color: #59616b; }
 QPushButton#primaryButton { background: #347fb9; color: #ffffff; border-color: #347fb9; font-weight: 600; }
 QPushButton#primaryButton:hover { background: #468fc7; border-color: #468fc7; }
 QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #b7bec7; border-color: transparent; }
+QPushButton#dangerTextButton, QPushButton#reviewOptionRemoveButton { background: transparent; color: #ef8f8f; border-color: transparent; }
+QPushButton#dangerTextButton:hover, QPushButton#reviewOptionRemoveButton:hover { background: #3b2427; color: #ffaaaa; border-color: #74434a; }
 QPushButton#dialogCancelButton { background: #20191b; color: #e4b7b7; border-color: #65464a; }
 QPushButton#dialogCancelButton:hover { background: #302024; border-color: #a1666d; }
 /* 分类采用连续标签栏，动作保留独立按钮；原生 Qt 5/6 均支持这些状态。 */
 QFrame#reviewFilterBar { border: none; border-bottom: 1px solid #343a42; }
+QLabel#reviewSummary { color: #c2c9d1; font-weight: 600; padding: 2px 0; }
 QPushButton#reviewFilterTab { background: transparent; color: #aeb5bd; border: none; border-bottom: 3px solid transparent; border-radius: 0; padding: 9px 12px; }
 QPushButton#reviewFilterTab:hover { background: #171f28; color: #d8eafa; }
 QPushButton#reviewFilterTab:checked { background: #142333; color: #8acbff; border-bottom-color: #77bdf2; font-weight: 600; }
