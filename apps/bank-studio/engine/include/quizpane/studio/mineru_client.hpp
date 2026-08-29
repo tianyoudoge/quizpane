@@ -96,12 +96,17 @@ public:
     // sourcePath：本地 PDF；outputZipPath：结果 ZIP 的落盘位置。
     void start(const MineruSettings& settings, const QString& sourcePath,
                const QString& outputZipPath);
+    // 恢复一个已经上传完成的云端任务。只重新轮询和下载结果，绝不重复上传原文件。
+    void resume(const MineruSettings& settings, const QString& batchId,
+                const QString& outputZipPath);
     void cancel();
 
     [[nodiscard]] MineruStage stage() const { return stage_; }
 
 signals:
     void stageChanged(quizpane::studio::MineruStage stage, const QString& detail);
+    // 文件上传成功、云端开始处理后发出。调用方可安全持久化 batchId，用于下次启动恢复。
+    void taskSubmitted(const QString& batchId);
     // 解析进度。总页数未知时 totalPages 为 0。
     void progress(int extractedPages, int totalPages);
     void finished(bool ok, const QString& zipPath, const QString& error);
@@ -128,6 +133,7 @@ private:
     MineruStage stage_ = MineruStage::Idle;
     int pollAttempts_ = 0;
     int transientRetryAttempts_ = 0;
+    int weakNetworkAttempts_ = 0;
     quint64 generation_ = 0;
 };
 

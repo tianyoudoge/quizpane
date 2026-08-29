@@ -12,9 +12,8 @@
 #include <QSet>
 #include <QStringList>
 
-#include <QTemporaryDir>
-
 #include <memory>
+#include <optional>
 
 class QLabel;
 class QButtonGroup;
@@ -76,6 +75,10 @@ private:
     void startCloudParseThenGenerate(const QList<SourceMaterialGroup>& groups);
     bool shouldUseCloudParse() const;
     void processNextCloudSource();
+    void offerCloudTaskResume();
+    void persistCloudTask();
+    void clearPersistedCloudTask(bool removeCachedResults = true);
+    void updateMineruConfigSummary();
     void updateWorkflowProgress(const WorkflowProgress& progress);
     void populateReview(const GeneratedBankCandidate& candidate);
     void applyReviewFilter();
@@ -114,6 +117,8 @@ private:
     QFrame* parseModeCard_ = nullptr;
     QPushButton* ruleModeCard_ = nullptr;
     QPushButton* smartModeCard_ = nullptr;
+    QPushButton* mineruConfigButton_ = nullptr;
+    QLabel* mineruConfigSummary_ = nullptr;
     QFrame* parseStatusChip_ = nullptr;
     QLabel* parseStatusText_ = nullptr;
     QLabel* phaseLabel_ = nullptr;
@@ -169,9 +174,11 @@ private:
     // 只保存非敏感配置；Token 始终按需从系统钥匙串读取，不驻留在窗口对象里。
     MineruConfig mineruConfig_;
     MineruExtractionJob* mineruJob_ = nullptr;
-    // 云解析中间产物只存活于本次整理：QTemporaryDir 析构时自动清理，避免用户
-    // 材料的副本长期留在磁盘上。
-    std::unique_ptr<QTemporaryDir> cloudTempDir_;
+    // 已提交的云端任务会落到 QSettings（Token 不在其中）。结果 ZIP 仅缓存于
+    // AppLocalDataLocation，任务完成或用户选择不再等待后立即清理。
+    QString cloudSessionId_;
+    QString cloudCacheDir_;
+    QString cloudBatchId_;
     QList<SourceMaterialGroup> pendingGroups_;
     int cloudIndex_ = 0;
     bool cloudParsingAnswer_ = false;

@@ -82,6 +82,7 @@
 #include <QSettings>
 #include <QProcess>
 #include <QTreeWidget>
+#include <QUuid>
 
 #include <algorithm>
 #include <functional>
@@ -484,6 +485,88 @@ bool storeMineruConfig(const MineruConfig& value, QString* error) {
     return true;
 }
 
+// QSettings 使用各平台原生的用户配置目录；本项目已在 Win7/Win10/macOS 上用它
+// 保存主题与非敏感配置。云任务数量很小，不需要为了这一点状态额外带 SQLite。
+struct PersistedCloudTask {
+    QString sessionId;
+    QString cacheDir;
+    QString batchId;
+    QList<SourceMaterialGroup> groups;
+    int sourceIndex = 0;
+    bool parsingAnswer = false;
+};
+
+constexpr auto kCloudTaskSettingsGroup = "question-maker/mineru/pending-cloud-task";
+
+std::optional<PersistedCloudTask> loadPersistedCloudTask() {
+    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    settings.beginGroup(QString::fromLatin1(kCloudTaskSettingsGroup));
+    PersistedCloudTask task;
+    task.sessionId = settings.value(QStringLiteral("sessionId")).toString();
+    task.cacheDir = settings.value(QStringLiteral("cacheDir")).toString();
+    task.batchId = settings.value(QStringLiteral("batchId")).toString();
+    task.sourceIndex = settings.value(QStringLiteral("sourceIndex"), 0).toInt();
+    task.parsingAnswer = settings.value(QStringLiteral("parsingAnswer"), false).toBool();
+    const int count = settings.beginReadArray(QStringLiteral("groups"));
+    for (int index = 0; index < count; ++index) {
+        settings.setArrayIndex(index);
+        SourceMaterialGroup group;
+        group.questionPath = settings.value(QStringLiteral("questionPath")).toString();
+        group.answerPath = settings.value(QStringLiteral("answerPath")).toString();
+        group.hasAnswerKey = settings.value(QStringLiteral("hasAnswerKey"), true).toBool();
+        group.mineruZipPath = settings.value(QStringLiteral("mineruZipPath")).toString();
+        group.mineruAnswerZipPath =
+            settings.value(QStringLiteral("mineruAnswerZipPath")).toString();
+        if (!group.questionPath.isEmpty())
+            task.groups.append(group);
+    }
+    settings.endArray();
+    settings.endGroup();
+    if (task.sessionId.isEmpty() || task.cacheDir.isEmpty() || task.groups.isEmpty() ||
+        task.sourceIndex < 0 || task.sourceIndex >= task.groups.size())
+        return std::nullopt;
+    return task;
+}
+
+void savePersistedCloudTask(const PersistedCloudTask& task) {
+    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    settings.remove(QString::fromLatin1(kCloudTaskSettingsGroup));
+    settings.beginGroup(QString::fromLatin1(kCloudTaskSettingsGroup));
+    settings.setValue(QStringLiteral("sessionId"), task.sessionId);
+    settings.setValue(QStringLiteral("cacheDir"), task.cacheDir);
+    settings.setValue(QStringLiteral("batchId"), task.batchId);
+    settings.setValue(QStringLiteral("sourceIndex"), task.sourceIndex);
+    settings.setValue(QStringLiteral("parsingAnswer"), task.parsingAnswer);
+    settings.beginWriteArray(QStringLiteral("groups"), task.groups.size());
+    for (int index = 0; index < task.groups.size(); ++index) {
+        settings.setArrayIndex(index);
+        const SourceMaterialGroup& group = task.groups.at(index);
+        settings.setValue(QStringLiteral("questionPath"), group.questionPath);
+        settings.setValue(QStringLiteral("answerPath"), group.answerPath);
+        settings.setValue(QStringLiteral("hasAnswerKey"), group.hasAnswerKey);
+        settings.setValue(QStringLiteral("mineruZipPath"), group.mineruZipPath);
+        settings.setValue(QStringLiteral("mineruAnswerZipPath"), group.mineruAnswerZipPath);
+    }
+    settings.endArray();
+    settings.endGroup();
+    settings.sync();
+}
+
+void removePersistedCloudTask(const QString& cacheDir, bool removeCachedResults) {
+    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    settings.remove(QString::fromLatin1(kCloudTaskSettingsGroup));
+    settings.sync();
+    if (!removeCachedResults || cacheDir.isEmpty())
+        return;
+    const QString root = QDir(QStandardPaths::writableLocation(
+        QStandardPaths::AppLocalDataLocation)).filePath(QStringLiteral("mineru-tasks"));
+    const QString normalizedRoot = QDir::cleanPath(root) + QDir::separator();
+    const QString normalizedCache = QDir::cleanPath(cacheDir);
+    // 只清本应用预期目录，防止损坏配置导致递归删除任意用户路径。
+    if (normalizedCache.startsWith(normalizedRoot))
+        QDir(normalizedCache).removeRecursively();
+}
+
 }  // namespace
 
 // ===== 应用外壳与四步向导装配 =====
@@ -632,6 +715,70 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     helpMenu->addAction(QStringLiteral("赞赏支持…"), this, &StudioWindow::showDonationDialog);
     applyStyle();
     updateNavigation();
+    // UI 建好后再询问，避免启动阶段抢在主窗口出现前弹对话框。
+    QTimer::singleShot(0, this, &StudioWindow::offerCloudTaskResume);
+}
+
+void StudioWindow::persistCloudTask() {
+    if (cloudSessionId_.isEmpty() || cloudCacheDir_.isEmpty() || pendingGroups_.isEmpty())
+        return;
+    savePersistedCloudTask({cloudSessionId_, cloudCacheDir_, cloudBatchId_, pendingGroups_,
+                            cloudIndex_, cloudParsingAnswer_});
+}
+
+void StudioWindow::clearPersistedCloudTask(bool removeCachedResults) {
+    removePersistedCloudTask(cloudCacheDir_, removeCachedResults);
+    cloudSessionId_.clear();
+    cloudCacheDir_.clear();
+    cloudBatchId_.clear();
+}
+
+void StudioWindow::offerCloudTaskResume() {
+    const auto saved = loadPersistedCloudTask();
+    if (!saved)
+        return;
+
+    QMessageBox choice(this);
+    choice.setWindowTitle(QStringLiteral("发现未完成的智能解析"));
+    choice.setIcon(QMessageBox::Information);
+    choice.setText(QStringLiteral("上次提交的云端任务仍可继续等待。"));
+    choice.setInformativeText(QStringLiteral(
+        "继续等待不会重复上传文件；云端任务会从上次进度继续。\n"
+        "若不再等待，只清除本机记录和缓存，云端已提交任务可能仍会自行完成。"));
+    auto* resume = choice.addButton(QStringLiteral("继续等待"), QMessageBox::AcceptRole);
+    auto* discard = choice.addButton(QStringLiteral("不再等待"), QMessageBox::DestructiveRole);
+    choice.exec();
+    if (choice.clickedButton() == discard) {
+        removePersistedCloudTask(saved->cacheDir, true);
+        return;
+    }
+    if (choice.clickedButton() != resume)
+        return;
+    if (loadMineruToken().trimmed().isEmpty()) {
+        if (!editMineruSettings(QStringLiteral("继续等待上次的云端任务，需要先配置 MinerU Token。")))
+            return;
+    }
+    cloudSessionId_ = saved->sessionId;
+    cloudCacheDir_ = saved->cacheDir;
+    cloudBatchId_ = saved->batchId;
+    pendingGroups_ = saved->groups;
+    cloudIndex_ = saved->sourceIndex;
+    cloudParsingAnswer_ = saved->parsingAnswer;
+    // 本机缓存被系统清理时，重新下载即可；不能把不存在的 ZIP 交给规则工作流。
+    for (SourceMaterialGroup& group : pendingGroups_) {
+        if (!group.mineruZipPath.isEmpty() && !QFileInfo::exists(group.mineruZipPath))
+            group.mineruZipPath.clear();
+        if (!group.mineruAnswerZipPath.isEmpty() && !QFileInfo::exists(group.mineruAnswerZipPath))
+            group.mineruAnswerZipPath.clear();
+    }
+    QDir().mkpath(cloudCacheDir_);
+    pages_->setCurrentIndex(1);
+    phaseLabel_->setText(QStringLiteral("恢复云端解析"));
+    phaseDetail_->setText(QStringLiteral("正在连接上次提交的任务。"));
+    startButton_->setText(QStringLiteral("停止等待"));
+    activitySpinner_->show();
+    activityTimer_->start(120);
+    processNextCloudSource();
 }
 
 void StudioWindow::updateParseModeSummary() {
@@ -665,6 +812,18 @@ void StudioWindow::updateParseModeSummary() {
             : (cloud ? QStringLiteral("本次资料无需智能增强，会按规则在本机整理")
                      : QStringLiteral("规则解析 · 资料不会离开这台电脑")));
     }
+    updateMineruConfigSummary();
+}
+
+void StudioWindow::updateMineruConfigSummary() {
+    if (!mineruConfigSummary_ || !mineruConfigButton_)
+        return;
+    const QString model = mineruConfig_.modelVersion == QStringLiteral("pipeline")
+        ? QStringLiteral("兼容识别") : QStringLiteral("准确识别（推荐）");
+    mineruConfigSummary_->setText(mineruConfig_.cloudEnabled
+        ? QStringLiteral("当前：%1").arg(model)
+        : QStringLiteral("智能解析未启用"));
+    mineruConfigButton_->setVisible(mineruConfig_.cloudEnabled);
 }
 
 void StudioWindow::selectParseMode(bool cloud) {
@@ -987,8 +1146,18 @@ QWidget* StudioWindow::buildSourcePage() {
     modeCards->addWidget(ruleModeCard_);
     modeCards->addWidget(smartModeWrapper);
     modeLayout->addLayout(modeCards);
+    auto* configRow = new QHBoxLayout;
+    mineruConfigSummary_ = mutedLabel(QString());
+    mineruConfigSummary_->setObjectName(QStringLiteral("mineruConfigSummary"));
+    mineruConfigButton_ = new QPushButton(QStringLiteral("查看配置与额度"));
+    mineruConfigButton_->setObjectName(QStringLiteral("secondaryButton"));
+    configRow->addWidget(mineruConfigSummary_);
+    configRow->addStretch();
+    configRow->addWidget(mineruConfigButton_);
+    modeLayout->addLayout(configRow);
     connect(ruleModeCard_, &QPushButton::clicked, this, [this] { selectParseMode(false); });
     connect(smartModeCard_, &QPushButton::clicked, this, [this] { selectParseMode(true); });
+    connect(mineruConfigButton_, &QPushButton::clicked, this, [this] { editMineruSettings(); });
     layout->addWidget(parseModeCard_);
     auto* drop = new QFrame;
     drop->setObjectName(QStringLiteral("dropZone"));
@@ -1051,7 +1220,7 @@ QWidget* StudioWindow::buildProgressPage() {
     layout->setSpacing(18);
     layout->addWidget(pageHeader(
         QStringLiteral("第二步"), QStringLiteral("整理题目"),
-        QStringLiteral("会先读取资料并检查题目结构；关闭窗口会结束本次未完成的整理。")));
+        QStringLiteral("会先读取资料并检查题目结构；已提交的云端解析可在下次打开时继续等待。")));
     // 这句是隐私声明，必须反映真实状态：开启云解析后"资料不会离开电脑"就是错的。
     parseModeSummary_ = mutedLabel(QString());
     parseModeSummary_->setObjectName(QStringLiteral("notice"));
@@ -1463,6 +1632,7 @@ void StudioWindow::beginPreflight() {
         activitySpinner_->hide();
         updateNavigation();
         QMessageBox::warning(this, QStringLiteral("整理未完成"), error);
+        clearPersistedCloudTask();
     });
     connect(workflow_, &GenerationWorkflow::finished, this, [this] {
         activityTimer_->stop();
@@ -1473,6 +1643,7 @@ void StudioWindow::beginPreflight() {
                                  QStringLiteral("没有从资料中识别出可用题目。"));
             return;
         }
+        clearPersistedCloudTask();
         pages_->setCurrentIndex(2);
     });
     updateParseModeSummary();
@@ -1511,22 +1682,24 @@ void StudioWindow::startCloudParseThenGenerate(const QList<SourceMaterialGroup>&
         workflow_->startRuleBased(groups);
         return;
     }
-    if (!cloudTempDir_) {
-        cloudTempDir_ = std::make_unique<QTemporaryDir>();
-        if (!cloudTempDir_->isValid()) {
-            cloudTempDir_.reset();
-            activityTimer_->stop();
-            activitySpinner_->hide();
-            progressBar_->setValue(0);
-            pages_->setCurrentIndex(0);
-            updateNavigation();
-            QMessageBox::warning(this, QStringLiteral("无法使用智能解析"),
-                                 QStringLiteral("无法创建临时目录，已停止整理。请稍后重试。"));
-            return;
-        }
+    const QString root = QDir(QStandardPaths::writableLocation(
+        QStandardPaths::AppLocalDataLocation)).filePath(QStringLiteral("mineru-tasks"));
+    cloudSessionId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    cloudCacheDir_ = QDir(root).filePath(cloudSessionId_);
+    if (!QDir().mkpath(cloudCacheDir_)) {
+        activityTimer_->stop();
+        activitySpinner_->hide();
+        progressBar_->setValue(0);
+        pages_->setCurrentIndex(0);
+        updateNavigation();
+        QMessageBox::warning(this, QStringLiteral("无法使用智能解析"),
+                             QStringLiteral("无法准备本机任务缓存，请检查存储空间后重试。"));
+        return;
     }
     pendingGroups_ = groups;
     cloudIndex_ = 0;
+    cloudBatchId_.clear();
+    persistCloudTask();
     processNextCloudSource();
 }
 
@@ -1573,6 +1746,8 @@ void StudioWindow::processNextCloudSource() {
             break;
         }
         ++cloudIndex_;
+        cloudBatchId_.clear();
+        persistCloudTask();
     }
     if (cloudIndex_ >= pendingGroups_.size()) {
         workflow_->startRuleBased(pendingGroups_);
@@ -1602,6 +1777,15 @@ void StudioWindow::processNextCloudSource() {
     if (mineruJob_)
         mineruJob_->deleteLater();
     mineruJob_ = new MineruExtractionJob(networkManager_, this);
+    connect(mineruJob_, &MineruExtractionJob::taskSubmitted, this, [this](const QString& batchId) {
+        cloudBatchId_ = batchId;
+        persistCloudTask();
+        QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+        const QString key = QStringLiteral("question-maker/mineru/usage/%1/submittedFiles")
+            .arg(QDate::currentDate().toString(Qt::ISODate));
+        settings.setValue(key, settings.value(key, 0).toInt() + 1);
+        settings.sync();
+    });
     connect(mineruJob_, &MineruExtractionJob::stageChanged, this,
             [this, sourcePath](MineruStage stage, const QString& detail) {
                 phaseLabel_->setText(QStringLiteral("云端解析"));
@@ -1620,6 +1804,7 @@ void StudioWindow::processNextCloudSource() {
                 if (!ok) {
                     if (mineruJob_ && mineruJob_->stage() == MineruStage::Cancelled) {
                         pendingGroups_.clear();
+                        clearPersistedCloudTask();
                         activityTimer_->stop();
                         activitySpinner_->hide();
                         progressBar_->setValue(0);
@@ -1630,7 +1815,6 @@ void StudioWindow::processNextCloudSource() {
                     }
                     // 网络、额度和鉴权错误都不能替用户把“智能模式”切成规则模式。
                     // 停在资料页；鉴权错误会把原始提示直接带进配置页。
-                    pendingGroups_.clear();
                     activityTimer_->stop();
                     activitySpinner_->hide();
                     progressBar_->setValue(0);
@@ -1642,7 +1826,7 @@ void StudioWindow::processNextCloudSource() {
                         editMineruSettings(error);
                     } else {
                         QMessageBox::warning(this, QStringLiteral("智能解析未完成"),
-                                             error + QStringLiteral("\n已停止整理，请修正后重试。"));
+                                             error + QStringLiteral("\n任务已保留，可稍后重新打开继续等待。"));
                     }
                     return;
                 }
@@ -1650,13 +1834,18 @@ void StudioWindow::processNextCloudSource() {
                     pendingGroups_[cloudIndex_].mineruAnswerZipPath = zipPath;
                 else
                     pendingGroups_[cloudIndex_].mineruZipPath = zipPath;
+                cloudBatchId_.clear();
+                persistCloudTask();
                 processNextCloudSource();
             });
-    const QString zipPath = cloudTempDir_->filePath(
+    const QString zipPath = QDir(cloudCacheDir_).filePath(
         QStringLiteral("mineru-%1-%2.zip")
             .arg(cloudIndex_)
             .arg(cloudParsingAnswer_ ? QStringLiteral("answer") : QStringLiteral("question")));
-    mineruJob_->start(settings, sourcePath, zipPath);
+    if (cloudBatchId_.isEmpty())
+        mineruJob_->start(settings, sourcePath, zipPath);
+    else
+        mineruJob_->resume(settings, cloudBatchId_, zipPath);
 }
 
 void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
@@ -2720,14 +2909,26 @@ void StudioWindow::closeEvent(QCloseEvent* event) {
         event->accept();
         return;
     }
-    if (!confirmAction(this, QStringLiteral("结束正在整理？"),
-                       QStringLiteral("本次整理尚未完成。关闭后需要重新开始整理。"),
-                       QStringLiteral("结束并关闭"))) {
+    const bool canResumeCloud = cloudActive && !cloudBatchId_.isEmpty();
+    const QString title = canResumeCloud ? QStringLiteral("保留云端任务并关闭？")
+                                         : QStringLiteral("结束正在整理？");
+    const QString text = canResumeCloud
+        ? QStringLiteral("文件已提交到云端。关闭后云端会继续处理；下次打开题库制作器时，"
+                         "可选择继续等待，不会重复上传。")
+        : QStringLiteral("本次整理尚未完成。关闭后需要重新开始整理。");
+    const QString acceptText = canResumeCloud ? QStringLiteral("保留并关闭")
+                                               : QStringLiteral("结束并关闭");
+    if (!confirmAction(this, title, text, acceptText)) {
         event->ignore();
         return;
     }
-    if (cloudActive)
+    if (cloudActive) {
+        if (canResumeCloud)
+            persistCloudTask();
+        else
+            clearPersistedCloudTask();
         mineruJob_->cancel();
+    }
     if (workflowActive)
         workflow_->cancel();
     event->accept();

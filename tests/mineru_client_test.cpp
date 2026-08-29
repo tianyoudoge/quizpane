@@ -38,6 +38,7 @@ public:
     int uploadTicketRequestCount = 0;
     int transientTicketFailures = 0;
     int transientDownloadFailures = 0;
+    int transientPollFailures = 0;
     int downloadCount = 0;
     int latestZipTicket = 0;
     QByteArray uploadedBody;
@@ -112,6 +113,11 @@ private:
             return;
         }
         if (requestLine.contains("/api/v4/extract-results/batch/batch-1")) {
+            if (transientPollFailures > 0) {
+                --transientPollFailures;
+                send("503 Service Unavailable", R"({"msg":"temporary poll failure"})");
+                return;
+            }
             ++pollCount;
             if (pollCount < 2) {
                 // 第一轮还在解析，带进度；客户端应继续轮询而不是报错。
@@ -267,8 +273,9 @@ int main(int argc, char** argv) {
         QByteArrayLiteral(R"({"code":0,"data":{"extract_result":[{"state":"failed",)"
                           R"("err_msg":"broken pdf"}]}})"),
         200);
-    if (!failed.finished || !failed.error.contains(QStringLiteral("broken pdf")))
-        return fail("failed state must surface err_msg");
+    if (!failed.finished || failed.error.isEmpty() ||
+        failed.error.contains(QStringLiteral("broken pdf")))
+        return fail("failed state must use a safe user-facing message");
     const MineruPollResult done = parsePollResponse(
         QByteArrayLiteral(R"({"code":0,"data":{"extract_result":[{"state":"done",)"
                           R"("full_zip_url":"https://x/r.zip"}]}})"),
@@ -322,8 +329,11 @@ int main(int argc, char** argv) {
         server.transientDownloadFailures = 1;
         MineruExtractionJob job(&manager);
         QList<MineruStage> stages;
+        QString submittedBatch;
         QObject::connect(&job, &MineruExtractionJob::stageChanged, &job,
                          [&stages](MineruStage stage, const QString&) { stages.append(stage); });
+        QObject::connect(&job, &MineruExtractionJob::taskSubmitted, &job,
+                         [&submittedBatch](const QString& batchId) { submittedBatch = batchId; });
         int lastExtracted = -1;
         int lastTotal = -1;
         QObject::connect(&job, &MineruExtractionJob::progress, &job,
@@ -348,6 +358,8 @@ int main(int argc, char** argv) {
         if (server.uploadCount != 1 ||
             server.uploadedBody != QByteArrayLiteral("%PDF-1.7 stub content"))
             return fail("uploaded body does not match the source file");
+        if (submittedBatch != QStringLiteral("batch-1"))
+            return fail("uploaded task must expose its batch id for persistence");
         if (server.uploadTicketRequestCount < 2)
             return fail("transient upload-ticket failure was not retried");
         // running 之后必须继续轮询，而不是当成结束。
@@ -362,6 +374,27 @@ int main(int argc, char** argv) {
             return fail("job did not pass through the expected stages");
         if (job.stage() != MineruStage::Done)
             return fail("final stage should be Done");
+    }
+
+    // 已上传任务的恢复：弱网轮询暂时失败时只延后重试；恢复路径不能再次申请
+    // 上传链接或上传原文件。
+    {
+        const int uploadsBeforeResume = server.uploadCount;
+        const int ticketsBeforeResume = server.uploadTicketRequestCount;
+        server.transientPollFailures = 2;
+        MineruExtractionJob job(&manager);
+        bool ok = false;
+        QString resultZip;
+        QString error;
+        const QString resumedZip = directory.filePath(QStringLiteral("resumed/result.zip"));
+        job.resume(stubSettings, QStringLiteral("batch-1"), resumedZip);
+        if (!waitForFinish(&job, &ok, &resultZip, &error))
+            return fail("resumed job never finished");
+        if (!ok || resultZip != resumedZip || !QFile::exists(resumedZip))
+            return fail("resumed task must download its result after weak-network polling");
+        if (server.uploadCount != uploadsBeforeResume ||
+            server.uploadTicketRequestCount != ticketsBeforeResume)
+            return fail("resumed task must not upload the original file again");
     }
 
     // 错误路径：Token 不被桩服务接受时必须失败并给出提示，不能写出结果文件。

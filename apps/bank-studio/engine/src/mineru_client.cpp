@@ -19,8 +19,6 @@ namespace quizpane::studio {
 namespace {
 
 constexpr int kPollIntervalMs = 3000;
-// 上限约 15 分钟。超时后显式失败，而不是无限等待一个可能已经卡住的任务。
-constexpr int kMaxPollAttempts = 300;
 constexpr int kMaxTransientRetries = 4;
 // 结果 ZIP 上限。官方单文件限 200MB，输出包含切图与原始 PDF，留出余量。
 constexpr qint64 kMaxZipBytes = 512LL * 1024 * 1024;
@@ -28,7 +26,6 @@ constexpr qint64 kMaxZipBytes = 512LL * 1024 * 1024;
 // MinerU 的错误信封有两种形状：鉴权类返回 {msgCode, msg, success}，任务类返回
 // {code, msg}。两种都要认，否则用户只能看到一个空洞的 HTTP 状态码。
 QString extractApiError(const QJsonObject& object, int httpStatus, const QString& networkError) {
-    const QString message = object.value(QStringLiteral("msg")).toString().trimmed();
     const QString msgCode = object.value(QStringLiteral("msgCode")).toString().trimmed();
     const int code = object.value(QStringLiteral("code")).toInt(0);
 
@@ -39,25 +36,20 @@ QString extractApiError(const QJsonObject& object, int httpStatus, const QString
     if (msgCode == QStringLiteral("A0211"))
         return QStringLiteral("MinerU Token 已过期，请到 mineru.net 重新生成后更新设置。");
     if (code == -60005 || code == -60006)
-        return QStringLiteral("文档超出 MinerU 限制（单文件最大 200 MB、600 页）。");
+        return QStringLiteral("文件不符合云端解析限制，请缩小文件或拆分后重试。");
     if (code == -60012)
         return QStringLiteral("MinerU 任务不存在或已过期，请重新提交解析。");
     if (code == -60018)
         return QStringLiteral("今日 MinerU 解析额度已用尽，请稍后再试或改用本地解析。");
-    if (httpStatus == 429)
-        return QStringLiteral("MinerU 请求过于频繁，请稍后重试。");
-
-    if (!message.isEmpty()) {
-        const QString identifier = msgCode.isEmpty()
-                                       ? (code != 0 ? QString::number(code) : QString())
-                                       : msgCode;
-        return identifier.isEmpty()
-                   ? QStringLiteral("MinerU 返回错误：%1").arg(message)
-                   : QStringLiteral("MinerU 返回错误：%1（%2）").arg(message, identifier);
-    }
-    if (!networkError.isEmpty())
-        return networkError;
-    return QStringLiteral("MinerU 请求失败（HTTP %1）").arg(httpStatus);
+    if (code == -60013)
+        return QStringLiteral("当前账号无法访问这项云端任务，请重新开始整理。");
+    if (code == -60010 || code == -60015 || code == -60016)
+        return QStringLiteral("云端未能完成这份文件的解析，请检查文件后重试。");
+    Q_UNUSED(httpStatus)
+    Q_UNUSED(networkError)
+    // 服务端 message / QNetworkReply::errorString() 可能含内部地址、请求细节或
+    // 原始文件信息。它们只进入诊断日志，绝不直接呈现给用户。
+    return QStringLiteral("云端服务暂时不可用，请稍后再试。");
 }
 
 // 判断响应是否为失败。不能只看 HTTP 状态：鉴权失败也可能带 200 而在体里用
@@ -162,7 +154,8 @@ MineruUploadTicket parseUploadUrlResponse(const QByteArray& payload, int httpSta
         return ticket;
     }
     if (!document.isObject()) {
-        ticket.error = QStringLiteral("MinerU 响应不是有效 JSON：%1").arg(parseError.errorString());
+        Q_UNUSED(parseError)
+        ticket.error = QStringLiteral("云端服务返回异常，请稍后再试。");
         return ticket;
     }
     const QJsonObject data = object.value(QStringLiteral("data")).toObject();
@@ -187,7 +180,8 @@ MineruPollResult parsePollResponse(const QByteArray& payload, int httpStatus,
         return result;
     }
     if (!document.isObject()) {
-        result.error = QStringLiteral("MinerU 响应不是有效 JSON：%1").arg(parseError.errorString());
+        Q_UNUSED(parseError)
+        result.error = QStringLiteral("云端服务返回异常，请稍后再试。");
         result.finished = true;
         return result;
     }
@@ -207,9 +201,10 @@ MineruPollResult parsePollResponse(const QByteArray& payload, int httpStatus,
     result.totalPages = extractProgress.value(QStringLiteral("total_pages")).toInt();
 
     if (result.state == QStringLiteral("failed")) {
-        const QString reason = entry.value(QStringLiteral("err_msg")).toString().trimmed();
-        result.error = reason.isEmpty() ? QStringLiteral("MinerU 解析失败")
-                                       : QStringLiteral("MinerU 解析失败：%1").arg(reason);
+        const int code = entry.value(QStringLiteral("err_code")).toInt(0);
+        result.error = code != 0
+            ? extractApiError(QJsonObject{{QStringLiteral("code"), code}}, 200, {})
+            : QStringLiteral("云端未能完成这份文件的解析，请检查文件后重试。");
         result.finished = true;
         return result;
     }
@@ -286,10 +281,11 @@ void MineruExtractionJob::start(const MineruSettings& settings, const QString& s
     batchId_.clear();
     pollAttempts_ = 0;
     transientRetryAttempts_ = 0;
+    weakNetworkAttempts_ = 0;
 
     const QFileInfo info(sourcePath_);
     if (!info.exists() || !info.isFile()) {
-        failWith(QStringLiteral("找不到要解析的文件：%1").arg(sourcePath_));
+        failWith(QStringLiteral("找不到要解析的文件。请确认文件仍在原位置后重试。"));
         return;
     }
     // 诊断日志刻意不记录文件名与 Token：原文属于用户材料，凭据属于机密。
@@ -298,6 +294,29 @@ void MineruExtractionJob::start(const MineruSettings& settings, const QString& s
                        {QStringLiteral("isOcr"), settings_.isOcr},
                        {QStringLiteral("fileBytes"), info.size()}});
     requestUploadUrl();
+}
+
+void MineruExtractionJob::resume(const MineruSettings& settings, const QString& batchId,
+                                 const QString& outputZipPath) {
+    clearReply();
+    ++generation_;
+    settings_ = settings;
+    outputZipPath_ = outputZipPath;
+    sourcePath_.clear();
+    batchId_ = batchId.trimmed();
+    pollAttempts_ = 0;
+    transientRetryAttempts_ = 0;
+    weakNetworkAttempts_ = 0;
+    if (settings_.token.trimmed().isEmpty()) {
+        failWith(QStringLiteral("请先在设置中填写 MinerU Token"));
+        return;
+    }
+    if (batchId_.isEmpty()) {
+        failWith(QStringLiteral("未找到可恢复的云端任务，请重新开始整理。"));
+        return;
+    }
+    setStage(MineruStage::Polling, QStringLiteral("已恢复云端任务，正在查询进度"));
+    poll();
 }
 
 void MineruExtractionJob::requestUploadUrl() {
@@ -342,9 +361,8 @@ void MineruExtractionJob::uploadFile(const MineruUploadTicket& ticket) {
     setStage(MineruStage::Uploading);
     auto* file = new QFile(sourcePath_, this);
     if (!file->open(QIODevice::ReadOnly)) {
-        const QString error = QStringLiteral("无法读取文件：%1").arg(file->errorString());
         file->deleteLater();
-        failWith(error);
+        failWith(QStringLiteral("无法读取文件，请确认文件可访问后重试。"));
         return;
     }
     // 官方要求 PUT 到预签名链接时不要带 Content-Type，否则签名校验失败。
@@ -380,11 +398,13 @@ void MineruExtractionJob::uploadFile(const MineruUploadTicket& ticket) {
                                QStringLiteral("上传暂时中断"),
                                [this] { requestUploadUrl(); }))
                 return;
-            failWith(QStringLiteral("上传文档失败（HTTP %1）：%2").arg(status).arg(networkError));
+            Q_UNUSED(networkError)
+            failWith(QStringLiteral("文件没有上传完成，请检查网络后重新开始整理。"));
             return;
         }
         transientRetryAttempts_ = 0;
         // 上传完成即自动开始解析，无需再调提交接口。
+        emit taskSubmitted(batchId_);
         setStage(MineruStage::Polling);
         schedulePoll();
     });
@@ -403,10 +423,7 @@ void MineruExtractionJob::schedulePoll() {
 }
 
 void MineruExtractionJob::poll() {
-    if (++pollAttempts_ > kMaxPollAttempts) {
-        failWith(QStringLiteral("MinerU 解析超时，请稍后重试或改用本地解析。"));
-        return;
-    }
+    ++pollAttempts_;
     QString error;
     const QNetworkRequest request = buildMineruRequest(
         settings_, QStringLiteral("/api/v4/extract-results/batch/") + batchId_, &error);
@@ -428,10 +445,22 @@ void MineruExtractionJob::poll() {
         const MineruPollResult result = parsePollResponse(current->readAll(), status, networkError);
         current->deleteLater();
 
-        if (retryTransient(MineruStage::Polling, status, networkErrorCode, retryAfter,
-                           QStringLiteral("查询解析进度暂时失败"), [this] { poll(); }))
+        // 轮询是可恢复任务的生命线：弱网下的偶发超时、限流和 5xx 只提示并延后
+        // 重试，绝不能把本地流程判定为失败。真正 state=failed 才结束任务。
+        if (isTransientMineruFailure(status, networkErrorCode)) {
+            const int delay = mineruRetryDelayMs(++weakNetworkAttempts_, retryAfter);
+            setStage(MineruStage::Polling,
+                     QStringLiteral("网络不稳定，%1 秒后继续查询（不会丢失任务）")
+                         .arg((delay + 999) / 1000));
+            const quint64 generation = generation_;
+            QTimer::singleShot(delay, this, [this, generation] {
+                if (generation == generation_ && stage_ == MineruStage::Polling)
+                    poll();
+            });
             return;
+        }
         transientRetryAttempts_ = 0;
+        weakNetworkAttempts_ = 0;
         if (result.totalPages > 0)
             emit progress(result.extractedPages, result.totalPages);
         if (!result.error.isEmpty()) {
@@ -481,7 +510,8 @@ void MineruExtractionJob::download(const QString& zipUrl) {
                                // 同一个地址重试；重新轮询会拿到新的签名地址，再发起下载。
                                [this] { poll(); }))
                 return;
-            failWith(QStringLiteral("下载解析结果失败（HTTP %1）：%2").arg(status).arg(networkError));
+            Q_UNUSED(networkError)
+            failWith(QStringLiteral("解析结果暂时无法下载，请稍后重新打开任务继续等待。"));
             return;
         }
         transientRetryAttempts_ = 0;
@@ -496,7 +526,7 @@ void MineruExtractionJob::download(const QString& zipUrl) {
         QDir().mkpath(QFileInfo(outputZipPath_).absolutePath());
         QFile output(outputZipPath_);
         if (!output.open(QIODevice::WriteOnly) || output.write(payload) != payload.size()) {
-            failWith(QStringLiteral("无法写出解析结果：%1").arg(output.errorString()));
+            failWith(QStringLiteral("无法保存解析结果，请检查本机存储空间后重试。"));
             return;
         }
         output.close();

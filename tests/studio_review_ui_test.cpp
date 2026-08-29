@@ -36,10 +36,33 @@ public:
         StudioWindow window;
         if (!window.parseModeCard_ || !window.ruleModeCard_ || !window.smartModeCard_ ||
             !window.smartModeCard_->text().contains(QStringLiteral("智能解析")) ||
+            !window.mineruConfigButton_ || !window.mineruConfigSummary_ ||
+            !window.mineruConfigSummary_->text().contains(QStringLiteral("准确识别")) ||
             !window.parseStatusChip_ || !window.parseStatusText_ ||
             window.parseStatusText_->text() != QStringLiteral("智能模式") ||
             !window.progressBar_ || !window.progressStatus_ ||
             window.progressStatus_->text() != QStringLiteral("准备中")) return 19;
+        // 已提交云端任务的恢复状态只落非敏感信息；Token 不在 QSettings 内。
+        QTemporaryDir cloudCache;
+        if (!cloudCache.isValid()) return 22;
+        window.cloudSessionId_ = QStringLiteral("resume-test");
+        window.cloudCacheDir_ = cloudCache.path();
+        window.cloudBatchId_ = QStringLiteral("batch-test");
+        window.pendingGroups_ = {{QStringLiteral("/tmp/question.pdf"), {}, true,
+                                  QStringLiteral("/tmp/result.zip"), {}}};
+        window.cloudIndex_ = 0;
+        window.cloudParsingAnswer_ = false;
+        window.persistCloudTask();
+        QSettings taskSettings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+        taskSettings.beginGroup(QStringLiteral("question-maker/mineru/pending-cloud-task"));
+        const bool persisted = taskSettings.value(QStringLiteral("sessionId")).toString() ==
+                                   QStringLiteral("resume-test") &&
+            taskSettings.value(QStringLiteral("batchId")).toString() == QStringLiteral("batch-test") &&
+            taskSettings.beginReadArray(QStringLiteral("groups")) == 1;
+        taskSettings.endArray();
+        taskSettings.endGroup();
+        if (!persisted) return 23;
+        window.clearPersistedCloudTask(false);
         QTemporaryDir sourceDir;
         const QString sourcePath = sourceDir.filePath(QStringLiteral("题目.txt"));
         QFile sourceFile(sourcePath);
