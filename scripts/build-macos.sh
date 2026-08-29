@@ -116,6 +116,17 @@ if [[ -n "$QT5COMPAT_PREFIX" ]]; then
   CMAKE_QT_COMPONENT_ARGS+=("-DQt6Core5Compat_DIR=$QT5COMPAT_PREFIX/lib/cmake/Qt6Core5Compat")
 fi
 
+# 开发机已有成功构建时优先复用 FetchContent 源码缓存。干净打包仍会重建全部
+# 目标，但不必再次依赖 GitHub；CI 或首次构建没有缓存时继续走正常下载流程。
+FETCHCONTENT_ARGS=()
+for dependency in qrcodegen_source miniz_source; do
+  cached_source="$ROOT/build/release/_deps/${dependency}-src"
+  if [[ -d "$cached_source" ]]; then
+    cache_key="$(printf '%s' "$dependency" | tr '[:lower:]' '[:upper:]')"
+    FETCHCONTENT_ARGS+=("-DFETCHCONTENT_SOURCE_DIR_${cache_key}=$cached_source")
+  fi
+done
+
 BUILD_TYPE="Release"
 DIAGNOSTIC_LOGGING="OFF"
 PACKAGE_SUFFIX=""
@@ -145,6 +156,7 @@ cmake --preset release -S "$ROOT" -B "$BUILD_DIR" \
   -DQUIZPANE_ENABLE_DIAGNOSTIC_LOGGING="$DIAGNOSTIC_LOGGING" \
   -DQUIZPANE_ENABLE_VERBOSE_DIAGNOSTICS="$VERBOSE_DIAGNOSTICS" \
   -DQUIZPANE_BUILD_TESTS=ON \
+  "${FETCHCONTENT_ARGS[@]}" \
   "${CMAKE_QT_COMPONENT_ARGS[@]}"
 cmake --build "$BUILD_DIR" --parallel
 ctest --test-dir "$BUILD_DIR" --output-on-failure

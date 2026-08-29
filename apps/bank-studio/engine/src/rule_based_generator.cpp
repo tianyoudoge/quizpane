@@ -1096,6 +1096,36 @@ struct MaterialTextWithDecorations {
     QJsonArray underlines;
 };
 
+void recoverTrailingMineruBlank(MaterialTextWithDecorations* stem) {
+    if (!stem || stem->body.contains(QStringLiteral("〔填空〕")) ||
+        !stem->underlines.isEmpty())
+        return;
+    static const QRegularExpression instruction(QStringLiteral(
+        R"((?:\n|^)?\s*(?:依次)?填入[^\n]{0,20}(?:横线|划横线|画横线)[^\n]*$)"));
+    const auto cue = instruction.match(stem->body);
+    if (!cue.hasMatch())
+        return;
+    int boundary = cue.capturedStart();
+    while (boundary > 0 && stem->body.at(boundary - 1).isSpace())
+        --boundary;
+    if (boundary <= 0)
+        return;
+
+    // 仅处理 MinerU 已知的三种窄形态：句尾横线被彻底删掉、被幻读成单个
+    // ASCII 字符，或引号内横线被幻读成逗号。必须紧邻“填入横线”提示，绝不
+    // 在普通正文中凭语义猜测空白位置。
+    const QChar last = stem->body.at(boundary - 1);
+    if ((last == u',' || last == u'，') && boundary >= 2 &&
+        (stem->body.at(boundary - 2) == u'“' || stem->body.at(boundary - 2) == u'\"')) {
+        stem->body.replace(boundary - 1, 1, QStringLiteral("〔填空〕”"));
+    } else if (last == u',' || last == u'，') {
+        stem->body.insert(boundary, QStringLiteral("〔填空〕"));
+    } else if (last.isLetterOrNumber() && last.unicode() < 128 && boundary >= 2 &&
+               stem->body.at(boundary - 2).script() == QChar::Script_Han) {
+        stem->body.replace(boundary - 1, 1, QStringLiteral("〔填空〕"));
+    }
+}
+
 MaterialTextWithDecorations buildMaterialText(const ExtractedDocument& document,
                                               const QList<SourceLine>& lines,
                                               const QList<int>& sourceIndices,
@@ -1450,6 +1480,7 @@ QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefi
     // 选项字母大小写都接受（A-F / a-f）。
     static const QRegularExpression marker(QStringLiteral(
         R"((?<![A-Za-z0-9])([A-Fa-f])\s*[\.．、:：\)）]\s*)"            // 字母 + 分隔（分隔必需）
+        R"(|(?<![A-Za-z0-9])([A-Fa-f])\s+(?=[^\s]))"                  // 字母 + 空格（无标点题库）
         R"(|([①②③④⑤⑥⑦⑧⑨⑩])\s*[:：\.．、\)）\]」』]?\s*)"          // 圈码 + 可选分隔
         R"(|([①②③④⑤⑥⑦⑧⑨⑩])\s+)"                                  // 圈码 + 空格分隔
         R"(|[（(\[{「『]\s*([1-9])\s*[)）\]}」』]\s*)"                  // (1) 形式（各种括号）
@@ -1472,13 +1503,18 @@ QList<QPair<QString, QString>> optionsOnLine(const QString& line, QString* prefi
     if (markers.isEmpty())
         return {};
     const QString lead = line.left(markers.first().capturedStart());
-    const bool hasLeadText = !lead.trimmed().isEmpty();
+    QString normalizedLead = lead.trimmed();
+    // Markdown 的无序列表会把纯选项行写成 “- A 选项”。这个短横线只是版式，
+    // 不能被当成题干前缀；其他非空前缀仍按原规则保护，避免误切正文中的字母。
+    if (normalizedLead == QStringLiteral("-") || normalizedLead == QStringLiteral("•"))
+        normalizedLead.clear();
+    const bool hasLeadText = !normalizedLead.isEmpty();
     // 单 marker 且前面有文字 → 视为题干，不当选项切。
     if (markers.size() == 1 && hasLeadText)
         return {};
     // ≥2 marker → 切分；若有 lead 文本则作为题干前缀回传。
     if (prefix && hasLeadText)
-        *prefix = lead.trimmed();
+        *prefix = normalizedLead;
     QList<QPair<QString, QString>> result;
     for (int index = 0; index < markers.size(); ++index) {
         const auto& m = markers.at(index);
@@ -1712,6 +1748,10 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
 
     const QString visualText = stemLines.join(QChar('\n'));
     const bool hasLayoutCue = visualText.contains(QRegularExpression(QStringLiteral("划线|画线|横线|下划线|空白处")));
+    if (hasLayoutCue && document.extractionBackend.startsWith(QStringLiteral("mineru"))) {
+        recoverTrailingMineruBlank(&decoratedStem);
+        stemLines = decoratedStem.body.split(QChar('\n'));
+    }
     // 判断题：题干以空括号“（ ）”结尾且没有列 A/B 选项。合成“正确/不正确”两个
     // 选项走现有 true_false 通道（schema、校验器、前端 RadioButton 全兼容），答案
     // 由 对/错/√/× 归一化到合成选项。rawAnswer 优先，其次全局答案区。
@@ -2506,6 +2546,20 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                                                  allowMultipleAnswers,
                                                  isInsideGraphicalReasoningPart(lines, anchor.line),
                                                  hasAnswerKey);
+            // 正式题图只在题目确实依赖图片时随题库发布；校对页则应始终能看到
+            // 原卷。普通文字题在这里额外生成一张 review-only 裁图，避免复核者
+            // 只能对照转写文本，也避免把数百张校对图塞进最终题库安装包。
+            QJsonObject sourcePreview = question.value(QStringLiteral("stemImage")).toObject();
+            if (sourcePreview.isEmpty()) {
+                sourcePreview = captureSourceBlock(
+                    &document, lines, anchor.line, blockEnd, id, &result.reviewAssets);
+                if (!sourcePreview.isEmpty())
+                    sourcePreview.insert(QStringLiteral("reviewOnly"), true);
+            }
+            if (!sourcePreview.isEmpty()) {
+                sourcePreview.insert(QStringLiteral("alt"), QStringLiteral("原卷题目"));
+                result.reviewSourceImages.insert(id, sourcePreview);
+            }
             if (anchor.inferredNumber) {
                 const QString reason = QStringLiteral("原卷缺失题号，已根据相邻题号与完整选项补为第 %1 题；请核对题目边界")
                     .arg(anchor.number);

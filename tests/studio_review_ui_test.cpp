@@ -3,7 +3,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QButtonGroup>
-#include <QCheckBox>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QHeaderView>
@@ -14,6 +14,7 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QTextEdit>
 #include <QTreeWidget>
 
 namespace quizpane::studio {
@@ -76,9 +77,27 @@ public:
         if (!sourceFile.open(QIODevice::WriteOnly) || sourceFile.write("1. 测试题\nA. 对\nB. 错\n") < 1) return 20;
         sourceFile.close();
         window.appendSources({sourcePath});
-        if (window.sourceRows_.size() != 1 ||
-            window.findChildren<QCheckBox*>().isEmpty() ||
-            window.findChildren<QCheckBox*>().first()->text() != QStringLiteral("本文件含答案/解析")) return 21;
+        auto* answerLocation = window.findChild<QComboBox*>(QStringLiteral("answerLocation"));
+        if (window.sourceRows_.size() != 1 || !answerLocation ||
+            answerLocation->currentText() != QStringLiteral("含答案")) return 21;
+        if (!window.nextButton_->text().contains(QStringLiteral("开始智能解析")) ||
+            window.nextButton_->objectName() != QStringLiteral("primaryButton") ||
+            !window.sourceModeHint_->text().contains(QStringLiteral("上传到 MinerU"))) return 26;
+
+        window.mineruConfig_.cloudEnabled = false;
+        window.mineruConfig_.modeSelectedByUser = true;
+        window.updateNavigation();
+        if (window.nextButton_->text() != QStringLiteral("开始规则解析  →") ||
+            window.parseStatusText_->text() != QStringLiteral("规则模式") ||
+            !window.sourceModeHint_->text().contains(QStringLiteral("不会上传"))) return 28;
+        window.mineruConfig_.cloudEnabled = true;
+        window.mineruConfig_.modeSelectedByUser = true;
+        window.updateNavigation();
+        if (window.nextButton_->text() != QStringLiteral("开始智能解析  →") ||
+            window.parseStatusText_->text() != QStringLiteral("智能模式")) return 29;
+        answerLocation->setCurrentIndex(1);
+        if (window.hasAnswerKeyByQuestion_.value(sourcePath, true)) return 27;
+        answerLocation->setCurrentIndex(0);
         GeneratedBankCandidate candidate;
         candidate.hasAnswerKey = true;
         candidate.questions = {question("q1"), question("q2", "soft", "image-content"),
@@ -119,20 +138,22 @@ public:
                 ++selectedAfterSingleEdit;
         if (selectedAfterSingleEdit != 4 ||
             group->child(1)->checkState(0) != Qt::Checked ||
-            group->child(2)->checkState(0) != Qt::Checked) return 25;
+            group->child(2)->checkState(0) != Qt::Checked ||
+            window.currentReviewItem_ != group->child(4) ||
+            window.confirmReviewButton_->text() != QStringLiteral("保存并收录")) return 25;
 
         bool hasSimpleSummary = false;
         for (auto* label : window.riskCategoryPanel_->findChildren<QLabel*>())
-            if (label->text().contains(QStringLiteral("还有 2 项需要决定")) && label->wordWrap())
+            if (label->text().contains(QStringLiteral("还有 1 题需要决定")) && label->wordWrap())
                 hasSimpleSummary = true;
-        if (!hasSimpleSummary || window.nextButton_->text() != QStringLiteral("继续设置题库  →") ||
+        if (!hasSimpleSummary || window.nextButton_->text() != QStringLiteral("继续生成（收录 4 题） →") ||
             window.nextButton_->objectName() != QStringLiteral("primaryButton")) return 8;
 
         // Optional real-widget screenshots, without adding user fixtures to the repository.
         const QString previewDir = qEnvironmentVariable("QUIZPANE_UI_PREVIEW_DIR");
         if (!previewDir.isEmpty()) {
             window.allReviewButton_->click();
-            window.reviewTree_->setCurrentItem(group->child(3));
+            window.reviewTree_->setCurrentItem(group->child(4));
             for (const QString& theme : {QStringLiteral("dark"), QStringLiteral("light")}) {
                 QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
                 settings.setValue(QStringLiteral("ui/colorTheme"), theme);
@@ -141,6 +162,10 @@ public:
                 if (!window.grab().save(QDir(previewDir).filePath(theme + ".png"))) return 9;
             }
         }
+        window.excludeCurrentReviewQuestion();
+        if (!window.allQuestionsButton_->isChecked() ||
+            window.allReviewButton_->text() != QStringLiteral("需要处理  0") ||
+            window.nextButton_->text() != QStringLiteral("继续生成（收录 4 题） →")) return 30;
         // Rebuilding must delete old nested rows/buttons and their group membership.
         window.populateReview(candidate);
         if (!window.findChildren<QPushButton*>(QStringLiteral("reviewCategoryChip")).isEmpty() ||
@@ -190,6 +215,21 @@ public:
         removeButtons.first()->click();
         app.processEvents();
         if (window.reviewOptionEditors_.size() != 1) return 6;
+
+        // 内部填空标记在校对页必须显示为真实横线，且未编辑直接保存时仍写回
+        // 稳定的 schema 标记，不能把“〔填空〕”文案直接暴露给用户。
+        auto fill = question(QStringLiteral("q6"));
+        fill.insert(QStringLiteral("stem"), QStringLiteral("青色文化〔填空〕，又显得〔填空〕了。"));
+        candidate.questions = {fill};
+        candidate.needsReviewQuestions = {};
+        window.populateReview(candidate);
+        auto* fillItem = window.reviewTree_->topLevelItem(0)->child(0);
+        window.showReviewQuestion(fillItem);
+        if (window.reviewStemEditor_->toPlainText().contains(QStringLiteral("〔填空〕")) ||
+            window.reviewStemEditor_->toPlainText().count(QStringLiteral("＿＿＿＿")) != 2 ||
+            window.reviewQuestionIsDirty() || !window.saveCurrentReviewQuestion() ||
+            fillItem->data(0, Qt::UserRole).toJsonObject().value(QStringLiteral("stem"))
+                .toString().count(QStringLiteral("〔填空〕")) != 2) return 32;
         return 0;
     }
 };

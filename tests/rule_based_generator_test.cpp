@@ -143,6 +143,26 @@ int main(int argc, char** argv) {
     if (answerlessResult.hasAnswerKey || answerlessResult.questions.size() != 1 ||
         !answerlessResult.needsReviewQuestions.isEmpty()) return 115;
     const QJsonObject answerlessQuestion = answerlessResult.questions.first().toObject();
+
+    // 部分 WPS 题库省略 A/B/C/D 后的点号，只保留空格；MinerU 的 Markdown
+    // 还可能在独立选项行前加 “-”。这些是明确的行首/多标记选项，不能退化成
+    // 整题截图，更不能把括号里的内嵌答案留在题干中。
+    ExtractedDocument bareOptionLabels;
+    bareOptionLabels.sourcePath = QStringLiteral("bare-option-labels.pdf");
+    bareOptionLabels.plainText = QStringLiteral(
+        "180.秦统一后，韩非学说的贯彻以秦相李斯的（A ）最为彻底。\n"
+        "- A “禁言纲领”\n- B “民治”\n- C “神谕”\n- D “法治”\n"
+        "181.（ A ）叙写了尧选贤能的情况，是原始社会政治生活的真实记录\n"
+        "A 《尧典》 B 《尚书》 C 《孟子》 D 《道德经》\n");
+    const auto bareOptionResult = RuleBasedBankGenerator{}.generate({bareOptionLabels});
+    if (bareOptionResult.questions.size() != 2 ||
+        !bareOptionResult.needsReviewQuestions.isEmpty()) return 161;
+    for (const QJsonValue& value : bareOptionResult.questions) {
+        const QJsonObject question = value.toObject();
+        if (question.value("options").toArray().size() != 4 ||
+            question.value("answer").toObject().value("optionIds").toArray() != QJsonArray{"a"} ||
+            question.value("stem").toString().contains(QStringLiteral("（A ）"))) return 162;
+    }
     if (answerlessQuestion.contains("answer") || answerlessQuestion.contains("solution") ||
         answerlessQuestion.value("source").toObject().value("questionNumber").toInt() != 76)
         return 116;
@@ -207,6 +227,30 @@ int main(int argc, char** argv) {
         .value("start").toInt(-1) != 5 || detectedUnderlines.first().toObject()
         .value("length").toInt() != 2)
         return 120;
+
+    // 普通 PDF 文字题也必须有独立的原卷校对图；它不属于正式题库附件，
+    // 否则大题本会因为每题一张预览而显著膨胀。
+    ExtractedDocument plainPdfPreview;
+    plainPdfPreview.sourcePath = QStringLiteral("plain-preview.pdf");
+    plainPdfPreview.hasPageBoundaries = true;
+    plainPdfPreview.plainText = QStringLiteral(
+        "1. 普通文字题？\nA. 甲\nB. 乙\n答案：A\n");
+    plainPdfPreview.lineAnchors.insert(1, {
+        {QStringLiteral("1. 普通文字题？"), QRectF(0.1, 0.20, 0.35, 0.03)},
+        {QStringLiteral("A. 甲"), QRectF(0.1, 0.25, 0.12, 0.03)},
+        {QStringLiteral("B. 乙"), QRectF(0.1, 0.30, 0.12, 0.03)},
+        {QStringLiteral("答案：A"), QRectF(0.1, 0.35, 0.16, 0.03)}});
+    plainPdfPreview.questionAnchors.insert(1, {
+        {QStringLiteral("1"), QRectF(0.1, 0.20, 0.02, 0.02)}});
+    plainPdfPreview.pageImages.insert(1, fillPng);
+    const auto plainPreviewResult = RuleBasedBankGenerator{}.generate({plainPdfPreview});
+    if (plainPreviewResult.questions.size() != 1 ||
+        plainPreviewResult.reviewSourceImages.size() != 1 ||
+        plainPreviewResult.reviewAssets.size() != 1 ||
+        !plainPreviewResult.assets.isEmpty() ||
+        !plainPreviewResult.reviewSourceImages.cbegin().value()
+             .value(QStringLiteral("reviewOnly")).toBool())
+        return 163;
 
     // PDF 的文字 API 常把每一条视觉行都输出成一行；材料正文要根据行坐标和
     // OCR 保留下来的空行还原自然段，而不是在复核页显示成每行一个段落。
@@ -1195,6 +1239,28 @@ int main(int argc, char** argv) {
     if (perQuestionResult.questions.size() != 2 ||
         !perQuestionResult.needsReviewQuestions.isEmpty())
         return 65;
+
+    // MinerU 可能把句尾横线完全删掉，或幻读成 C/0/逗号并把提示语粘在同一
+    // 行。只有明确存在“填入横线”提示且几何检测仍无结果时，才修复紧邻提示
+    // 的这一处；普通正文中的 ASCII 字符不能受影响。
+    ExtractedDocument mineruTrailingBlanks;
+    mineruTrailingBlanks.sourcePath = QStringLiteral("mineru-trailing-blanks.pdf");
+    mineruTrailingBlanks.extractionBackend = QStringLiteral("mineru-hybrid");
+    mineruTrailingBlanks.plainText = QStringLiteral(
+        "1. 一批装备加速走向战场，填入横线处最恰当的句子是（ ）。\nA. 甲\nB. 乙\n"
+        "2. 这种现象可简单理解为“,\n填入画横线部分最恰当的一项是：\nA. 丙\nB. 丁\n"
+        "3. 新情况也令人0填入画横线部分最恰当的一项是（ ）。\nA. 戊\nB. 己\n");
+    const auto mineruTrailingResult =
+        RuleBasedBankGenerator{}.generate({mineruTrailingBlanks}, false);
+    if (mineruTrailingResult.questions.size() != 3 ||
+        !mineruTrailingResult.needsReviewQuestions.isEmpty())
+        return 70;
+    for (const QJsonValue& value : mineruTrailingResult.questions) {
+        const QString stem = value.toObject().value(QStringLiteral("stem")).toString();
+        if (stem.count(QStringLiteral("〔填空〕")) != 1 ||
+            stem.contains(QStringLiteral("令人0")) || stem.contains(QStringLiteral("理解为“,")))
+            return 71;
+    }
 
     return 0;
 }

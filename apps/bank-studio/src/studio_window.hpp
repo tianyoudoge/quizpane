@@ -70,6 +70,8 @@ private:
     void pairAnswer(const QString& question, const QString& answer);
     void removeSource(const QString& question);
     void updateNavigation();
+    void startFromSources();
+    void handleBackNavigation();
     void movePage(int delta);
     void beginPreflight();
     void startCloudParseThenGenerate(const QList<SourceMaterialGroup>& groups);
@@ -88,6 +90,8 @@ private:
     bool commitOpenReviewQuestion(const QString& consequence);
     void confirmCurrentReviewQuestion();
     void excludeCurrentReviewQuestion();
+    void refreshReviewDecisionState();
+    void advanceToNextReviewIssue();
     void addManualMaterialUnderline();
     void displayReviewAssets(const QList<QJsonObject>& assets);
     void recropReviewAsset(const QJsonObject& asset);
@@ -118,6 +122,7 @@ private:
     QPushButton* smartModeCard_ = nullptr;
     QPushButton* mineruConfigButton_ = nullptr;
     QLabel* mineruConfigSummary_ = nullptr;
+    QLabel* sourceModeHint_ = nullptr;
     QFrame* parseStatusChip_ = nullptr;
     QLabel* parseStatusText_ = nullptr;
     QLabel* phaseLabel_ = nullptr;
@@ -143,7 +148,6 @@ private:
     QPlainTextEdit* reviewSolutionEditor_ = nullptr;
     QWidget* reviewVisualPanel_ = nullptr;
     QVBoxLayout* reviewVisualLayout_ = nullptr;
-    QPushButton* saveReviewButton_ = nullptr;
     QPushButton* confirmReviewButton_ = nullptr;
     QPushButton* excludeReviewButton_ = nullptr;
     QTreeWidgetItem* currentReviewItem_ = nullptr;
@@ -162,6 +166,7 @@ private:
     // 重建；数量、按钮和信号 key 一一对应，用于点击后批量勾选同类题目。
     QVBoxLayout* riskCategoryLayout_ = nullptr;
     QWidget* riskCategoryPanel_ = nullptr;
+    QLabel* reviewSummary_ = nullptr;
     QLabel* finishPath_ = nullptr;
     QLineEdit* bankName_ = nullptr;
     StyledDropdown* questionCount_ = nullptr;
@@ -191,7 +196,10 @@ private:
     QJsonArray generatedQuestions_;
     QJsonArray reviewQuestions_;
     QHash<QString, QByteArray> generatedAssets_;
+    QHash<QString, QJsonObject> reviewSourceImages_;
+    QHash<QString, QByteArray> reviewAssets_;
     bool generatedHasAnswerKey_ = true;
+    bool closePreservingCloudTask_ = false;
 };
 
 }  // namespace quizpane::studio

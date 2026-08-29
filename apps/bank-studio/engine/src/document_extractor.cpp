@@ -644,14 +644,153 @@ void detectPdfUnderlinesForCandidateLines(
         const int page = pageNumber - 1;
         if (page < 0 || page >= document.pageCount())
             continue;
-        QSet<QString> candidates;
+        // MinerU 会规范化空白，例如把 PDF 文字层中的四个空格压成一个，或删掉
+        // 数字前后的空格。若继续要求整行 simplified() 完全一致，恰好承载填空
+        // 横线的行反而最容易匹配失败。匹配时忽略空白，检测完成后再把坐标映射
+        // 回 MinerU 的原始行，保证后续生成器使用同一套 UTF-16 偏移。
+        const auto matchKey = [](const QString& value) {
+            QString key;
+            key.reserve(value.size());
+            for (const QChar character : value)
+                if (!character.isSpace()) key.append(character);
+            return key;
+        };
+        QHash<QString, QStringList> candidates;
         for (const QString& line : pageIt.value()) {
-            const QString simplified = line.simplified();
-            if (!simplified.isEmpty())
-                candidates.insert(simplified);
+            const QString candidate = line.trimmed();
+            const QString key = matchKey(candidate);
+            if (!key.isEmpty() && !candidates[key].contains(candidate))
+                candidates[key].append(candidate);
         }
         if (candidates.isEmpty())
             continue;
+
+        const auto remapDecoration = [&matchKey](const PdfUnderlineDecoration& source,
+                                                  const QString& target) {
+            PdfUnderlineDecoration mapped;
+            mapped.text = target;
+            mapped.bounds = source.bounds;
+            const QString sourceKey = matchKey(source.text);
+            const QString targetKey = matchKey(target);
+            QList<int> sourceCharacters;
+            QList<int> targetCharacters;
+            for (int i = 0; i < source.text.size(); ++i)
+                if (!source.text.at(i).isSpace()) sourceCharacters.append(i);
+            for (int i = 0; i < target.size(); ++i)
+                if (!target.at(i).isSpace()) targetCharacters.append(i);
+
+            // 带下划线文字必须保持逐字完全一致才转交范围。仅凭“去空白后相等”
+            // 映射文字范围会在页眉/页脚附近产生错误偏移；空白横线没有文字，
+            // 才需要下面按相邻字符序号映射。
+            for (const auto& range : source.text == target
+                    ? source.ranges : QList<QPair<int, int>>{}) {
+                int first = -1;
+                int last = -1;
+                const int end = range.first + range.second;
+                for (int ordinal = 0; ordinal < sourceCharacters.size(); ++ordinal) {
+                    const int position = sourceCharacters.at(ordinal);
+                    if (position >= range.first && position < end) {
+                        if (first < 0) first = ordinal;
+                        last = ordinal;
+                    }
+                }
+                if (first >= 0 && last >= first) {
+                    const int start = targetCharacters.at(first);
+                    mapped.ranges.append({start, targetCharacters.at(last) + 1 - start});
+                }
+            }
+            for (const auto& blank : source.blanks) {
+                const int end = blank.first + blank.second;
+                if (sourceKey == targetKey &&
+                    sourceCharacters.size() == targetCharacters.size()) {
+                    int previous = -1;
+                    int next = sourceCharacters.size();
+                    for (int ordinal = 0; ordinal < sourceCharacters.size(); ++ordinal) {
+                        const int position = sourceCharacters.at(ordinal);
+                        if (position < blank.first) previous = ordinal;
+                        if (position >= end) { next = ordinal; break; }
+                    }
+                    const int start = previous >= 0 ? targetCharacters.at(previous) + 1 : 0;
+                    const int targetEnd = next < targetCharacters.size()
+                        ? targetCharacters.at(next) : target.size();
+                    if (targetEnd >= start)
+                        mapped.blanks.append({start, targetEnd - start});
+                    continue;
+                }
+
+                // MinerU 偶尔会在横线上幻读出单个 C/0/逗号，或把下一行“填入
+                // 横线……”粘到题干末尾。用横线前后最多 10 个真实字符作上下文，
+                // 只在前文唯一命中且后文命中（或横线本来就在行末）时替换该段。
+                int beforeOrdinal = 0;
+                while (beforeOrdinal < sourceCharacters.size() &&
+                       sourceCharacters.at(beforeOrdinal) < blank.first)
+                    ++beforeOrdinal;
+                int afterOrdinal = beforeOrdinal;
+                while (afterOrdinal < sourceCharacters.size() &&
+                       sourceCharacters.at(afterOrdinal) < end)
+                    ++afterOrdinal;
+                const int contextStart = qMax(0, beforeOrdinal - 10);
+                const QString before = sourceKey.mid(contextStart, beforeOrdinal - contextStart);
+                const QString after = sourceKey.mid(afterOrdinal, 10);
+                if (before.size() < 4)
+                    continue;
+                const int beforeAt = targetKey.lastIndexOf(before);
+                if (beforeAt < 0 || targetKey.indexOf(before) != beforeAt)
+                    continue;
+                const int startOrdinal = beforeAt + before.size();
+                int endOrdinal = -1;
+                if (!after.isEmpty())
+                    endOrdinal = targetKey.indexOf(after, startOrdinal);
+                const bool sourceBlankAtEnd = afterOrdinal >= sourceKey.size() - 1;
+                if (endOrdinal < 0 && !sourceBlankAtEnd)
+                    continue;
+                const int start = startOrdinal > 0 && startOrdinal <= targetCharacters.size()
+                    ? targetCharacters.at(startOrdinal - 1) + 1 : 0;
+                int targetEnd = endOrdinal >= 0 && endOrdinal < targetCharacters.size()
+                    ? targetCharacters.at(endOrdinal) : target.size();
+                static const QRegularExpression instruction(
+                    QStringLiteral(R"((?:依次)?填入[^\n]{0,16}(?:横线|划横线|画横线))"));
+                const auto instructionMatch = instruction.match(target, start);
+                if (instructionMatch.hasMatch())
+                    targetEnd = qMin(targetEnd, instructionMatch.capturedStart());
+                if (targetEnd >= start)
+                    mapped.blanks.append({start, targetEnd - start});
+            }
+            return mapped;
+        };
+
+        const auto matchingCandidates = [&candidates](const QString& key) {
+            if (candidates.contains(key))
+                return candidates.value(key);
+            QString bestKey;
+            int bestRun = 0;
+            for (auto it = candidates.cbegin(); it != candidates.cend(); ++it) {
+                int run = 0;
+                int compared = 0;
+                for (int start = 0; start + 8 <= key.size(); ++start) {
+                    const QString seed = key.mid(start, 8);
+                    const int targetStart = it.key().indexOf(seed);
+                    if (targetStart < 0 || it.key().indexOf(seed, targetStart + 1) >= 0)
+                        continue;
+                    const int limit = qMin(key.size() - start, it.key().size() - targetStart);
+                    int current = 0;
+                    while (current < limit &&
+                           key.at(start + current) == it.key().at(targetStart + current))
+                        ++current;
+                    if (current > run) {
+                        run = current;
+                        compared = limit;
+                    }
+                }
+                // 8 个连续字符足以排除同页不同题，60% 覆盖率允许分行位置略有
+                // 差异、末尾一个幻读字符，或下一行提示语被粘到题干后面。
+                if (run >= 8 && run * 10 >= compared * 6 && run > bestRun) {
+                    bestRun = run;
+                    bestKey = it.key();
+                }
+            }
+            return bestKey.isEmpty() ? QStringList{} : candidates.value(bestKey);
+        };
 
         const QString text = document.getAllText(page).text();
         QImage pageImage;
@@ -667,31 +806,158 @@ void detectPdfUnderlinesForCandidateLines(
         if (grayPage.isNull())
             continue;
 
+        QSet<QString> decoratedCandidates;
         int lineStart = 0;
         while (lineStart < text.size()) {
             const int lineEnd = text.indexOf(u'\n', lineStart);
             const int end = lineEnd < 0 ? text.size() : lineEnd;
             const QString rawLine = text.mid(lineStart, end - lineStart);
             const QString line = rawLine.trimmed();
-            if (!line.isEmpty() && candidates.contains(line.simplified())) {
+            const QString key = matchKey(line);
+            QStringList targets = matchingCandidates(key);
+            if (!line.isEmpty()) {
                 const int leading = rawLine.indexOf(line);
                 const int textStart = lineStart + qMax(0, leading);
                 const QRectF bounds = normalizedSelectionBounds(
                     &document, page, textStart, line.size());
                 if (!bounds.isEmpty()) {
+                    // 文本已经被 MinerU 幻读或粘行时，文字相似度可能不足；两条
+                    // 链路的页面坐标仍指向同一视觉行。只在纵向中心几乎重合且该
+                    // MinerU 行确实属于候选题干时采用，避免跨题误配。
+                    if (targets.isEmpty()) {
+                        qreal bestDistance = std::numeric_limits<qreal>::max();
+                        QString bestKey;
+                        for (const PdfTextAnchor& anchor :
+                             extracted->lineAnchors.value(pageNumber)) {
+                            const QString anchorKey = matchKey(anchor.text);
+                            if (!candidates.contains(anchorKey) || anchor.bounds.isEmpty())
+                                continue;
+                            const qreal distance = qAbs(anchor.bounds.center().y() -
+                                                        bounds.center().y());
+                            const qreal tolerance = qMax(anchor.bounds.height(), bounds.height()) * 0.8;
+                            if (distance <= tolerance && distance < bestDistance) {
+                                bestDistance = distance;
+                                bestKey = anchorKey;
+                            }
+                        }
+                        if (!bestKey.isEmpty())
+                            targets = candidates.value(bestKey);
+                    }
+                    if (targets.isEmpty()) {
+                        if (lineEnd < 0) break;
+                        lineStart = lineEnd + 1;
+                        continue;
+                    }
                     QList<QRectF> characters;
                     for (int offset = 0; offset < line.size(); ++offset) {
                         characters.append(normalizedSelectionBounds(
                             &document, page, textStart + offset, 1));
                     }
                     const auto decoration = detectRenderedLineDecorations(grayPage, line, characters);
-                    if (!decoration.ranges.isEmpty() || !decoration.blanks.isEmpty())
-                        extracted->underlineDecorations[pageNumber].append(decoration);
+                    if (!decoration.ranges.isEmpty() || !decoration.blanks.isEmpty()) {
+                        for (const QString& candidate : targets) {
+                            const auto mapped = remapDecoration(decoration, candidate);
+                            if (!mapped.ranges.isEmpty() || !mapped.blanks.isEmpty()) {
+                                extracted->underlineDecorations[pageNumber].append(mapped);
+                                decoratedCandidates.insert(candidate);
+                            }
+                        }
+                    }
                 }
             }
             if (lineEnd < 0)
                 break;
             lineStart = lineEnd + 1;
+        }
+
+        // 云端分行和 QPdfDocument 的本地分行并不总是一致，尤其是“因此，____”
+        // 这种句尾横线：MinerU 行锚点只到逗号，本地文字层则可能把前后两行合并。
+        // 对仍未获得装饰的候选行，直接使用 MinerU 已验证的行 bbox，在原 PDF
+        // 渲染图上补做几何检测。字符宽度以真实像素行高估算；MinerU 压缩掉的
+        // 空白宽度会分配回空格字符，因此不会再把长横线误贴到后面的文字上。
+        const auto estimatedCharacterBounds = [&grayPage](const QRectF& normalized,
+                                                           const QString& value) {
+            QList<QRectF> result;
+            if (normalized.isEmpty() || value.isEmpty()) return result;
+            const QRectF pixels(normalized.x() * grayPage.width(),
+                                normalized.y() * grayPage.height(),
+                                normalized.width() * grayPage.width(),
+                                normalized.height() * grayPage.height());
+            QList<qreal> widths;
+            widths.reserve(value.size());
+            int spaces = 0;
+            qreal fixedWidth = 0.0;
+            for (const QChar character : value) {
+                if (character.isSpace()) {
+                    widths.append(0.0);
+                    ++spaces;
+                    continue;
+                }
+                const ushort unicode = character.unicode();
+                const bool ascii = unicode < 128;
+                const bool punctuation = character.category() == QChar::Punctuation_Connector ||
+                    character.category() == QChar::Punctuation_Dash ||
+                    character.category() == QChar::Punctuation_Open ||
+                    character.category() == QChar::Punctuation_Close ||
+                    character.category() == QChar::Punctuation_InitialQuote ||
+                    character.category() == QChar::Punctuation_FinalQuote ||
+                    character.category() == QChar::Punctuation_Other;
+                const qreal width = pixels.height() * (ascii ? 0.52 : punctuation ? 0.58 : 0.88);
+                widths.append(width);
+                fixedWidth += width;
+            }
+            qreal scale = 1.0;
+            qreal spaceWidth = 0.0;
+            if (spaces > 0 && pixels.width() > fixedWidth)
+                spaceWidth = (pixels.width() - fixedWidth) / spaces;
+            else if (fixedWidth > 0.0)
+                scale = pixels.width() / fixedWidth;
+            qreal x = pixels.left();
+            for (int i = 0; i < value.size(); ++i) {
+                const qreal width = value.at(i).isSpace() ? spaceWidth : widths.at(i) * scale;
+                result.append(QRectF(x / grayPage.width(), pixels.top() / grayPage.height(),
+                                     width / grayPage.width(), pixels.height() / grayPage.height()));
+                x += width;
+            }
+            return result;
+        };
+        for (auto candidateIt = candidates.cbegin(); candidateIt != candidates.cend(); ++candidateIt) {
+            for (const QString& candidate : candidateIt.value()) {
+                if (decoratedCandidates.contains(candidate)) continue;
+                QRectF bounds;
+                for (const PdfTextAnchor& anchor : extracted->lineAnchors.value(pageNumber))
+                    if (matchKey(anchor.text) == candidateIt.key()) {
+                        bounds = anchor.bounds;
+                        break;
+                    }
+                if (bounds.isEmpty()) continue;
+                const auto characters = estimatedCharacterBounds(bounds, candidate);
+                if (characters.size() != candidate.size()) continue;
+                const auto decoration =
+                    detectRenderedLineDecorations(grayPage, candidate, characters);
+                // 估算字符宽度足以定位“文字之间/句尾”的空白横线，但不足以把
+                // 一条细线精确归属到某几个字。文字下划线只采用上面的 QPdf
+                // 逐字符选择框结果，避免将字形横画或页脚边框误报为下划线。
+                QRegularExpression instructionAtGap(
+                    QStringLiteral(R"((?:依次)?填入[^\n]{0,16}(?:横线|划横线|画横线))"));
+                QList<QPair<int, int>> reliableBlanks;
+                for (const auto& blank : decoration.blanks) {
+                    const QString gap = candidate.mid(blank.first, blank.second);
+                    const auto cue = instructionAtGap.match(candidate, blank.first);
+                    const bool whitespaceGap = blank.second > 0 && gap.trimmed().isEmpty();
+                    const bool atLineEnd = blank.first >= candidate.size();
+                    const bool beforeInstruction = cue.hasMatch() &&
+                        cue.capturedStart() <= blank.first + blank.second + 2;
+                    if (whitespaceGap || atLineEnd || beforeInstruction)
+                        reliableBlanks.append(blank);
+                }
+                if (!reliableBlanks.isEmpty()) {
+                    PdfUnderlineDecoration blanksOnly = decoration;
+                    blanksOnly.ranges.clear();
+                    blanksOnly.blanks = reliableBlanks;
+                    extracted->underlineDecorations[pageNumber].append(blanksOnly);
+                }
+            }
         }
     }
 #endif

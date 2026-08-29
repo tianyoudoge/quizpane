@@ -3,7 +3,7 @@
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
-#include <QCheckBox>
+#include <QComboBox>
 #include <QFileIconProvider>
 #include <QFileInfo>
 #include <QFontMetrics>
@@ -47,16 +47,17 @@ SourceRowWidget::SourceRowWidget(const QString& questionPath, QWidget* parent)
     layout->addWidget(name, 0);
     layout->addStretch(1);
 
-    hasAnswerKeyCheck_ = new QCheckBox(QStringLiteral("本文件含答案/解析"));
-    hasAnswerKeyCheck_->setChecked(true);
-    hasAnswerKeyCheck_->setToolTip(QStringLiteral(
-        "勾选：从本文件或配对的答案文件中整理答案与解析；\n"
-        "取消：按无答案资料处理。"));
-    connect(hasAnswerKeyCheck_, &QCheckBox::toggled,
-            this, &SourceRowWidget::hasAnswerKeyChanged);
-    layout->addWidget(hasAnswerKeyCheck_, 0);
+    answerLocation_ = new QComboBox;
+    answerLocation_->setObjectName(QStringLiteral("answerLocation"));
+    answerLocation_->addItem(QStringLiteral("含答案"), true);
+    answerLocation_->addItem(QStringLiteral("无答案"), false);
+    answerLocation_->setToolTip(QStringLiteral(
+        "答案在另一份文档时，请使用右侧“添加单独答案”。"));
+    connect(answerLocation_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) { emit hasAnswerKeyChanged(hasAnswerKey()); });
+    layout->addWidget(answerLocation_, 0);
 
-    addAnswerButton_ = new QPushButton(QStringLiteral("添加答案（可选）"));
+    addAnswerButton_ = new QPushButton(QStringLiteral("添加单独答案"));
     addAnswerButton_->setObjectName(QStringLiteral("textButton"));
     addAnswerButton_->setToolTip(QStringLiteral(
         "如果答案在另一个文档里，可点击添加或直接把文档拖到这一行；\n"
@@ -83,11 +84,13 @@ SourceRowWidget::SourceRowWidget(const QString& questionPath, QWidget* parent)
 }
 
 bool SourceRowWidget::hasAnswerKey() const {
-    return hasAnswerKeyCheck_->isChecked();
+    return answerLocation_->currentData().toBool();
 }
 
 void SourceRowWidget::setHasAnswerKey(bool hasAnswerKey) {
-    hasAnswerKeyCheck_->setChecked(hasAnswerKey);
+    const int index = answerLocation_->findData(hasAnswerKey);
+    if (index >= 0)
+        answerLocation_->setCurrentIndex(index);
 }
 
 void SourceRowWidget::setPairedAnswer(const QString& answerPath) {

@@ -5,7 +5,7 @@
 // 单元测试用 tests/fixtures/mineru-layout-fixture.json 这份合成夹具覆盖结构。
 //
 // 用法：
-//   mineru_regression_harness <layout.json 或 result.zip> <output-dir> [source.pdf]
+//   mineru_regression_harness <layout.json 或 result.zip> <output-dir> [source.pdf] [--no-answers]
 //
 // 它把 MinerU 输出适配成 ExtractedDocument 后直接喂给现有规则引擎，打印锚点
 // 数量与生成结果，并把题库 JSON 落到 output-dir，供人工比对与 golden 归档。
@@ -41,14 +41,16 @@ bool writeFile(const QString& path, const QByteArray& bytes) {
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
-    if (app.arguments().size() < 3 || app.arguments().size() > 4) {
-        qCritical("usage: mineru_regression_harness <layout.json|result.zip> <output-dir> [source.pdf]");
+    if (app.arguments().size() < 3 || app.arguments().size() > 5) {
+        qCritical("usage: mineru_regression_harness <layout.json|result.zip> <output-dir> [source.pdf] [--no-answers]");
         return 2;
     }
 
+    const bool hasAnswers = !app.arguments().contains(QStringLiteral("--no-answers"));
     const QString input = app.arguments().at(1);
     const QString outputDir = app.arguments().at(2);
-    const QString sourcePath = app.arguments().size() == 4
+    const QString sourcePath = app.arguments().size() >= 4 &&
+        app.arguments().at(3) != QStringLiteral("--no-answers")
         ? QFileInfo(app.arguments().at(3)).absoluteFilePath()
         : QFileInfo(input).absolutePath() + QStringLiteral("/source.pdf");
 
@@ -83,7 +85,7 @@ int main(int argc, char** argv) {
         qInfo().noquote() << QStringLiteral("warning: ") + warning;
 
     RuleBasedBankGenerator generator;
-    const RuleBasedGenerationResult result = generator.generate({document}, true);
+    const RuleBasedGenerationResult result = generator.generate({document}, hasAnswers);
     qInfo().noquote() << QStringLiteral("generated: questions=%1 needsReview=%2 materials=%3")
                              .arg(result.questions.size())
                              .arg(result.needsReviewQuestions.size())

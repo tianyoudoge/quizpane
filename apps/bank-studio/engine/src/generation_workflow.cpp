@@ -140,9 +140,7 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
             const QString detail = QStringLiteral("规则解析完成：%1 道可直接使用，%2 道待复核")
                 .arg(result.questions.size()).arg(result.needsReviewQuestions.size());
             self->publish(WorkflowStage::Done, detail);
-            emit self->questionsReady({result.materials, result.questions,
-                                       result.needsReviewQuestions, result.warnings,
-                                       result.assets, result.hasAnswerKey});
+            emit self->questionsReady(result);
             emit self->finished();
         }, Qt::QueuedConnection);
     });

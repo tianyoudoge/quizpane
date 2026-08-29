@@ -4,7 +4,7 @@
 #include <QString>
 
 class QLabel;
-class QCheckBox;
+class QComboBox;
 class QPushButton;
 class QWidget;
 
@@ -39,7 +39,7 @@ protected:
 
 private:
     QString questionPath_;
-    QCheckBox* hasAnswerKeyCheck_ = nullptr;
+    QComboBox* answerLocation_ = nullptr;
     QLabel* pairedAnswerLabel_ = nullptr;
     QPushButton* addAnswerButton_ = nullptr;
     QPushButton* clearAnswerButton_ = nullptr;

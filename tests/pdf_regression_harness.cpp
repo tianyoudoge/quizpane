@@ -125,7 +125,9 @@ int main(int argc, char** argv) {
         qCritical().noquote() << validationError;
         return 7;
     }
-    qInfo().noquote() << QStringLiteral("generated %1 questions, %2 materials, %3 assets")
-        .arg(result.questions.size()).arg(result.materials.size()).arg(result.assets.size());
+    qInfo().noquote() << QStringLiteral(
+        "generated %1 questions, %2 materials, %3 packaged assets, %4 review previews")
+        .arg(result.questions.size()).arg(result.materials.size()).arg(result.assets.size())
+        .arg(result.reviewSourceImages.size());
     return 0;
 }

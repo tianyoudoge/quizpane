@@ -82,6 +82,7 @@
 #include <QSettings>
 #include <QProcess>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QUuid>
 
 #include <algorithm>
@@ -207,6 +208,19 @@ QString materialPreviewHtml(const QString& text, const QJsonArray& underlines) {
     html.replace(blank, QStringLiteral("<span style=\"text-decoration:underline; letter-spacing:2px;\">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"));
     html.replace(QStringLiteral("\n"), QStringLiteral("<br/>"));
     return html;
+}
+
+QString stemForReviewEditor(QString stem) {
+    // 内部用稳定标记保存无文字横线；校对页只展示原卷形态。四个全角下划线与
+    // “〔填空〕”同为 4 个 UTF-16 单元，因而不会破坏已有文字下划线的偏移。
+    stem.replace(QStringLiteral("〔填空〕"), QStringLiteral("＿＿＿＿"));
+    return stem;
+}
+
+QString stemFromReviewEditor(QString stem) {
+    stem.replace(QRegularExpression(QStringLiteral("(?:_{2,}|＿{2,})")),
+                 QStringLiteral("〔填空〕"));
+    return stem;
 }
 
 QFrame* metricCard(const QString& name, QLabel** value) {
@@ -669,12 +683,17 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     contentLayout->addLayout(navigation);
     rootLayout->addWidget(content, 1);
 
-    connect(backButton_, &QPushButton::clicked, this, [this] { movePage(-1); });
-    connect(nextButton_, &QPushButton::clicked, this, [this] { movePage(1); });
+    connect(backButton_, &QPushButton::clicked, this, &StudioWindow::handleBackNavigation);
+    connect(nextButton_, &QPushButton::clicked, this, [this] {
+        if (pages_->currentIndex() == 0)
+            startFromSources();
+        else
+            movePage(1);
+    });
     connect(startButton_, &QPushButton::clicked, this, &StudioWindow::beginPreflight);
     connect(pages_, &QStackedWidget::currentChanged, this, &StudioWindow::updateNavigation);
     mineruConfig_ = loadStoredMineruConfig();
-    updateParseModeSummary();
+    updateNavigation();
     networkManager_ = new QNetworkAccessManager(this);
     auto* settingsMenu = menuBar()->addMenu(QStringLiteral("设置"));
 #ifdef QUIZPANE_HAS_QT_PDF
@@ -789,7 +808,6 @@ void StudioWindow::offerCloudTaskResume() {
     pages_->setCurrentIndex(1);
     phaseLabel_->setText(QStringLiteral("恢复云端解析"));
     phaseDetail_->setText(QStringLiteral("正在连接上次提交的任务。"));
-    startButton_->setText(QStringLiteral("停止等待"));
     activitySpinner_->show();
     activityTimer_->start(120);
     processNextCloudSource();
@@ -822,9 +840,14 @@ void StudioWindow::updateParseModeSummary() {
     }
     if (parseModeSummary_) {
         parseModeSummary_->setText(cloudThisRun
-            ? QStringLiteral("当前方式：云端增强解析 · PDF 与图片会上传处理，其余资料仍在本机整理")
+            ? QStringLiteral("当前方式：智能解析 · PDF 会上传处理，其余资料仍在本机整理")
             : (cloud ? QStringLiteral("本次资料无需智能增强，会按规则在本机整理")
                      : QStringLiteral("规则解析 · 资料不会离开这台电脑")));
+    }
+    if (sourceModeHint_) {
+        sourceModeHint_->setText(cloud
+            ? QStringLiteral("PDF 将上传到 MinerU；TXT、Markdown 和 DOCX 仍在本机整理。")
+            : QStringLiteral("所有资料都在本机整理，不会上传。扫描版 PDF 处理时间可能较长。"));
     }
     updateMineruConfigSummary();
 }
@@ -834,8 +857,12 @@ void StudioWindow::updateMineruConfigSummary() {
         return;
     const QString model = mineruConfig_.modelVersion == QStringLiteral("pipeline")
         ? QStringLiteral("兼容识别") : QStringLiteral("准确识别（推荐）");
+    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    const int submitted = settings.value(
+        QStringLiteral("question-maker/mineru/usage/%1/submittedFiles")
+            .arg(QDate::currentDate().toString(Qt::ISODate)), 0).toInt();
     mineruConfigSummary_->setText(mineruConfig_.cloudEnabled
-        ? QStringLiteral("当前：%1").arg(model)
+        ? QStringLiteral("已配置 · %1 · 今日提交 %2 个文件").arg(model).arg(submitted)
         : QStringLiteral("智能解析未启用"));
     mineruConfigButton_->setVisible(mineruConfig_.cloudEnabled);
 }
@@ -855,7 +882,7 @@ void StudioWindow::selectParseMode(bool cloud) {
     persisted.token = loadMineruToken();
     QString error;
     storeMineruConfig(persisted, &error);
-    updateParseModeSummary();
+    updateNavigation();
 }
 
 // 菜单里的备用入口；首屏卡片用于快速切换，这里保留两个方式的完整说明。
@@ -874,7 +901,7 @@ void StudioWindow::editParseModeSettings() {
     auto* cloudRadio = new QRadioButton(QStringLiteral("智能解析（推荐）"));
     auto* cloudHint = mutedLabel(QStringLiteral(
         "扫描件、统计图表、图形选项等复杂版面交给云端识别版面，识别率更高；"
-        "所选 PDF 与图片会上传到云端服务处理。需要先配置访问凭据。"));
+        "所选 PDF 会上传到 MinerU 处理，首次使用需要填写 Token。"));
     localRadio->setChecked(!mineruConfig_.cloudEnabled);
     cloudRadio->setChecked(mineruConfig_.cloudEnabled);
     layout->addWidget(localRadio);
@@ -894,9 +921,15 @@ void StudioWindow::editParseModeSettings() {
 
     auto* buttons = new QDialogButtonBox;
     auto* cancel = buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
-    auto* confirm = buttons->addButton(QStringLiteral("使用此方式"), QDialogButtonBox::AcceptRole);
+    auto* confirm = buttons->addButton(QString(), QDialogButtonBox::AcceptRole);
     cancel->setObjectName(QStringLiteral("dialogCancelButton"));
     confirm->setObjectName(QStringLiteral("primaryButton"));
+    const auto updateConfirmText = [cloudRadio, confirm] {
+        confirm->setText(cloudRadio->isChecked() ? QStringLiteral("启用智能解析")
+                                                  : QStringLiteral("使用规则解析"));
+    };
+    updateConfirmText();
+    QObject::connect(cloudRadio, &QRadioButton::toggled, &dialog, updateConfirmText);
     layout->addWidget(buttons);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -907,7 +940,7 @@ void StudioWindow::editParseModeSettings() {
     if (wantCloud && loadMineruToken().trimmed().isEmpty()) {
         // 没有凭据时不能假装已启用，否则整理时才失败会更让人困惑。
         const auto choice = QMessageBox::question(this, QStringLiteral("还需要配置访问凭据"),
-            QStringLiteral("云端增强解析需要先配置访问凭据。现在去配置吗？"),
+            QStringLiteral("智能解析需要先填写 MinerU Token。现在去配置吗？"),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
         if (choice == QMessageBox::Yes)
             editMineruSettings();
@@ -921,7 +954,7 @@ void StudioWindow::editParseModeSettings() {
     persisted.token = loadMineruToken();
     QString error;
     storeMineruConfig(persisted, &error);
-    updateParseModeSummary();
+    updateNavigation();
 }
 
 bool StudioWindow::editMineruSettings(const QString& notice) {
@@ -939,12 +972,7 @@ bool StudioWindow::editMineruSettings(const QString& notice) {
     mineruConfig_ = *updated;
     // Token 只保留在钥匙串里；成员只留非敏感配置，避免它随窗口对象长期驻留内存。
     mineruConfig_.token.clear();
-    updateParseModeSummary();
-    const QString summary = updated->token.isEmpty()
-        ? QStringLiteral("已清除访问凭据，之后只使用本机解析。")
-        : QStringLiteral("已保存 Token，智能解析已启用。");
-    QMessageBox::information(this, QStringLiteral("智能解析设置已保存"),
-                             error.isEmpty() ? summary : summary + QStringLiteral("\n") + error);
+    updateNavigation();
     return true;
 }
 
@@ -1128,7 +1156,7 @@ QWidget* StudioWindow::buildSourcePage() {
     auto* modeHeader = new QHBoxLayout;
     auto* modeTitle = new QLabel(QStringLiteral("选择解析方式"));
     modeTitle->setObjectName(QStringLiteral("parseModeTitle"));
-    auto* modeHint = new QLabel(QStringLiteral("点击整张卡片即可切换"));
+    auto* modeHint = new QLabel(QStringLiteral("选择适合资料的方式"));
     modeHint->setObjectName(QStringLiteral("parseModeHint"));
     modeHeader->addWidget(modeTitle);
     modeHeader->addStretch();
@@ -1185,10 +1213,9 @@ QWidget* StudioWindow::buildSourcePage() {
     addButton->setFixedWidth(120);
     dropLayout->addWidget(dropTitle);
 #ifdef QUIZPANE_HAS_QT_PDF
-    auto* ocrHint = mutedLabel(QStringLiteral(
-        "扫描版 PDF 会在本机识别文字，处理时间可能稍长。"));
-    ocrHint->setAlignment(Qt::AlignCenter);
-    dropLayout->addWidget(ocrHint);
+    sourceModeHint_ = mutedLabel(QString());
+    sourceModeHint_->setAlignment(Qt::AlignCenter);
+    dropLayout->addWidget(sourceModeHint_);
 #endif
     dropLayout->addWidget(addButton, 0, Qt::AlignHCenter);
     layout->addWidget(drop);
@@ -1414,15 +1441,12 @@ QWidget* StudioWindow::buildReviewPage() {
     reviewSolutionEditor_->setMinimumHeight(80);
     questionEditorLayout->addWidget(reviewSolutionEditor_);
     auto* actions = new QHBoxLayout;
-    saveReviewButton_ = new QPushButton(QStringLiteral("保存修改"));
-    saveReviewButton_->setObjectName(QStringLiteral("secondaryButton"));
-    confirmReviewButton_ = new QPushButton(QStringLiteral("确认本题"));
+    confirmReviewButton_ = new QPushButton(QStringLiteral("保存并收录"));
     confirmReviewButton_->setObjectName(QStringLiteral("primaryButton"));
     excludeReviewButton_ = new QPushButton(QStringLiteral("不收录本题"));
     excludeReviewButton_->setObjectName(QStringLiteral("dangerTextButton"));
     actions->addWidget(excludeReviewButton_);
     actions->addStretch();
-    actions->addWidget(saveReviewButton_);
     actions->addWidget(confirmReviewButton_);
     questionEditorLayout->addLayout(actions);
     detailLayout->addWidget(reviewQuestionEditorPanel_);
@@ -1449,8 +1473,6 @@ QWidget* StudioWindow::buildReviewPage() {
                 }
                 showReviewQuestion(current);
             });
-    connect(saveReviewButton_, &QPushButton::clicked, this,
-            &StudioWindow::saveCurrentReviewQuestion);
     connect(confirmReviewButton_, &QPushButton::clicked, this,
             &StudioWindow::confirmCurrentReviewQuestion);
     connect(excludeReviewButton_, &QPushButton::clicked, this,
@@ -1460,7 +1482,6 @@ QWidget* StudioWindow::buildReviewPage() {
             this, &StudioWindow::updateReviewStemHeight);
     connect(manualMaterialUnderlineButton_, &QPushButton::clicked, this,
             &StudioWindow::addManualMaterialUnderline);
-    saveReviewButton_->setEnabled(false);
     confirmReviewButton_->setEnabled(false);
     excludeReviewButton_->setEnabled(false);
     return page;
@@ -1580,21 +1601,78 @@ void StudioWindow::movePage(int delta) {
     pages_->setCurrentIndex(qBound(0, pages_->currentIndex() + delta, pages_->count() - 1));
 }
 
+void StudioWindow::startFromSources() {
+    if (sourcePaths_.isEmpty())
+        return;
+    if (mineruConfig_.cloudEnabled && loadMineruToken().trimmed().isEmpty()) {
+        if (!editMineruSettings() || !mineruConfig_.cloudEnabled ||
+            loadMineruToken().trimmed().isEmpty())
+            return;
+    }
+    pages_->setCurrentIndex(1);
+    beginPreflight();
+}
+
+void StudioWindow::handleBackNavigation() {
+    const bool cloudActive = mineruJob_ &&
+        mineruJob_->stage() != MineruStage::Idle &&
+        mineruJob_->stage() != MineruStage::Done &&
+        mineruJob_->stage() != MineruStage::Failed &&
+        mineruJob_->stage() != MineruStage::Cancelled;
+    if (pages_->currentIndex() == 1 && cloudActive && !cloudBatchId_.isEmpty()) {
+        persistCloudTask();
+        closePreservingCloudTask_ = true;
+        close();
+        return;
+    }
+    movePage(-1);
+}
+
 void StudioWindow::updateNavigation() {
     updateParseModeSummary();
     const int page = pages_->currentIndex();
-    backButton_->setVisible(page > 0);
+    const bool cloudActive = mineruJob_ &&
+        mineruJob_->stage() != MineruStage::Idle &&
+        mineruJob_->stage() != MineruStage::Done &&
+        mineruJob_->stage() != MineruStage::Failed &&
+        mineruJob_->stage() != MineruStage::Cancelled;
+    const bool workflowActive = workflow_ && workflow_->isActive();
+    const bool resumableCloud = page == 1 && cloudActive && !cloudBatchId_.isEmpty();
+    backButton_->setVisible(page > 0 && (!cloudActive && !workflowActive || resumableCloud));
+    backButton_->setText(resumableCloud ? QStringLiteral("后台等待并关闭")
+                                        : QStringLiteral("上一步"));
     nextButton_->setVisible(page == 0 || page == 2);
     startButton_->setVisible(page == 1 || page == 3);
     nextButton_->setEnabled(page != 0 || !sourcePaths_.isEmpty());
-    nextButton_->setText(page == 2 ? QStringLiteral("继续设置题库  →")
-                                   : QStringLiteral("下一步"));
-    nextButton_->setObjectName(page == 2 ? QStringLiteral("primaryButton") : QString());
+    if (page == 0) {
+        nextButton_->setText(mineruConfig_.cloudEnabled
+            ? QStringLiteral("开始智能解析  →") : QStringLiteral("开始规则解析  →"));
+    } else if (page == 2) {
+        int selected = 0;
+        for (QTreeWidgetItemIterator it(reviewTree_); *it; ++it)
+            if (!(*it)->data(0, Qt::UserRole).toJsonObject().isEmpty() &&
+                !(*it)->data(0, Qt::UserRole).toJsonObject().contains(QStringLiteral("body")) &&
+                (*it)->checkState(0) == Qt::Checked)
+                ++selected;
+        nextButton_->setText(QStringLiteral("继续生成（收录 %1 题） →").arg(selected));
+    }
+    nextButton_->setObjectName(page == 0 || page == 2
+        ? QStringLiteral("primaryButton") : QString());
     nextButton_->style()->unpolish(nextButton_);
     nextButton_->style()->polish(nextButton_);
     startButton_->setEnabled(true);
-    startButton_->setText(page == 3 ? QStringLiteral("生成题库安装包")
-                                    : QStringLiteral("开始整理"));
+    if (page == 3)
+        startButton_->setText(QStringLiteral("生成并打开题库"));
+    else if (cloudActive && !cloudBatchId_.isEmpty())
+        startButton_->setText(QStringLiteral("放弃此任务"));
+    else if (cloudActive || workflowActive)
+        startButton_->setText(QStringLiteral("取消整理"));
+    else
+        startButton_->setText(QStringLiteral("重新开始整理"));
+    startButton_->setObjectName(cloudActive && !cloudBatchId_.isEmpty()
+        ? QStringLiteral("dangerButton") : QStringLiteral("primaryButton"));
+    startButton_->style()->unpolish(startButton_);
+    startButton_->style()->polish(startButton_);
     const auto steps = findChildren<QLabel*>(QStringLiteral("sideStep"));
     for (QLabel* step : steps) {
         step->setProperty("active", step->property("stepIndex").toInt() == page);
@@ -1613,6 +1691,11 @@ void StudioWindow::beginPreflight() {
         mineruJob_->stage() != MineruStage::Failed &&
         mineruJob_->stage() != MineruStage::Cancelled;
     if (cloudActive || (workflow_ && workflow_->isActive())) {
+        if (cloudActive && !cloudBatchId_.isEmpty() &&
+            QMessageBox::warning(this, QStringLiteral("放弃云端任务？"),
+                QStringLiteral("放弃后将清除本机任务记录和已下载缓存；云端已经提交的任务可能仍会完成。"),
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+            return;
         if (cloudActive)
             mineruJob_->cancel();
         if (workflow_ && workflow_->isActive()) {
@@ -1683,8 +1766,8 @@ void StudioWindow::beginPreflight() {
     for (const QString& question : sourcePaths_) {
         if (hasAnswerKeyByQuestion_.value(question, true) != hasAnswerKey) {
             QMessageBox::warning(this, QStringLiteral("请统一答案设置"),
-                                 QStringLiteral("同一题库暂不能混合“含答案/解析”和“无答案”资料。"
-                                                "请在文件列表中统一勾选状态后再整理。"));
+                                 QStringLiteral("同一题库暂不能混合“有答案”和“无答案”资料。"
+                                                "请在文件列表中统一选择答案位置后再整理。"));
             activityTimer_->stop();
             activitySpinner_->hide();
             updateNavigation();
@@ -1805,6 +1888,7 @@ void StudioWindow::processNextCloudSource() {
             .arg(QDate::currentDate().toString(Qt::ISODate));
         settings.setValue(key, settings.value(key, 0).toInt() + 1);
         settings.sync();
+        updateNavigation();
     });
     connect(mineruJob_, &MineruExtractionJob::stageChanged, this,
             [this, sourcePath](MineruStage stage, const QString& detail) {
@@ -1907,6 +1991,8 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     generatedQuestions_ = candidate.questions;
     reviewQuestions_ = candidate.needsReviewQuestions;
     generatedAssets_ = candidate.assets;
+    reviewSourceImages_ = candidate.reviewSourceImages;
+    reviewAssets_ = candidate.reviewAssets;
     generatedHasAnswerKey_ = candidate.hasAnswerKey;
     generatedCount_->setText(QString::number(generatedQuestions_.size()));
     reviewCount_->setText(QString::number(reviewQuestions_.size()));
@@ -2019,18 +2105,18 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
 
     // 单行结果说明替代原来的风险分类、批量按钮和多段操作说明。
     clearLayout(riskCategoryLayout_);
-    auto* reviewSummary = new QLabel;
-    reviewSummary->setObjectName(QStringLiteral("reviewSummary"));
-    reviewSummary->setWordWrap(true);
+    reviewSummary_ = new QLabel;
+    reviewSummary_->setObjectName(QStringLiteral("reviewSummary"));
+    reviewSummary_->setWordWrap(true);
     if (hardReviewCount == 0) {
-        reviewSummary->setText(QStringLiteral("✓ 已自动收录 %1 项，没有必须处理的问题，可直接继续。")
+        reviewSummary_->setText(QStringLiteral("✓ 已自动收录 %1 项，没有必须处理的问题，可直接继续。")
             .arg(automaticallyIncludedCount));
     } else {
-        reviewSummary->setText(QStringLiteral(
+        reviewSummary_->setText(QStringLiteral(
             "已自动收录 %1 项；还有 %2 项需要决定。未处理的题不会收录，不影响继续。")
             .arg(automaticallyIncludedCount).arg(hardReviewCount));
     }
-    riskCategoryLayout_->addWidget(reviewSummary);
+    riskCategoryLayout_->addWidget(reviewSummary_);
     riskCategoryPanel_->setVisible(true);
     missingAnswerButton_->setVisible(false);
     duplicateButton_->setVisible(false);
@@ -2045,7 +2131,8 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
     QList<QJsonObject> validAssets;
     for (const QJsonObject& asset : assets) {
         const QString path = asset.value(QStringLiteral("path")).toString();
-        const QByteArray bytes = generatedAssets_.value(path);
+        const QByteArray bytes = reviewAssets_.contains(path)
+            ? reviewAssets_.value(path) : generatedAssets_.value(path);
         QPixmap pixmap;
         if (path.isEmpty() || bytes.isEmpty() || !pixmap.loadFromData(bytes, "PNG"))
             continue;
@@ -2086,12 +2173,17 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
     const auto showAsset = [this, validAssets, title, image, recrop](int index) {
         const QJsonObject asset = validAssets.at(index);
         QPixmap pixmap;
-        pixmap.loadFromData(generatedAssets_.value(asset.value(QStringLiteral("path")).toString()), "PNG");
+        const QString path = asset.value(QStringLiteral("path")).toString();
+        const QByteArray bytes = reviewAssets_.contains(path)
+            ? reviewAssets_.value(path) : generatedAssets_.value(path);
+        pixmap.loadFromData(bytes, "PNG");
         image->setPixmap(pixmap.scaledToWidth(520, Qt::SmoothTransformation));
         image->setToolTip(asset.value(QStringLiteral("path")).toString());
         title->setText(asset.value(QStringLiteral("alt")).toString());
-        const bool canRecrop = asset.value(QStringLiteral("sourcePage")).toInt() > 0 &&
+        const bool canRecrop = !asset.value(QStringLiteral("reviewOnly")).toBool() &&
+            asset.value(QStringLiteral("sourcePage")).toInt() > 0 &&
             !asset.value(QStringLiteral("sourceDocument")).toString().isEmpty();
+        recrop->setVisible(canRecrop);
         recrop->setEnabled(canRecrop);
     };
     showAsset(0);
@@ -2271,7 +2363,6 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
     currentReviewItem_ = entry.isEmpty() || isMaterial ? nullptr : item;
     currentMaterialItem_ = isMaterial ? item : nullptr;
     const bool available = currentReviewItem_ != nullptr;
-    saveReviewButton_->setEnabled(available);
     confirmReviewButton_->setEnabled(available);
     excludeReviewButton_->setEnabled(available);
     if (!available) {
@@ -2343,7 +2434,9 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
     else
         status = QStringLiteral("已自动收录，可直接继续。");
     reviewDetailStatus_->setText(status);
-    reviewStemEditor_->setPlainText(question.value("stem").toString());
+    confirmReviewButton_->setText(hardRisk ? QStringLiteral("保存并收录")
+                                           : QStringLiteral("保存修改"));
+    reviewStemEditor_->setPlainText(stemForReviewEditor(question.value("stem").toString()));
     QList<QTextEdit::ExtraSelection> underlineSelections;
     for (const auto& value : question.value("stemUnderlines").toArray()) {
         const auto range = value.toObject();
@@ -2368,13 +2461,19 @@ void StudioWindow::showReviewQuestion(QTreeWidgetItem* item) {
         reviewSolutionEditor_->clear();
     }
     QList<QJsonObject> images;
+    QSet<QString> imagePaths;
+    const auto appendImage = [&images, &imagePaths](const QJsonObject& image) {
+        const QString path = image.value(QStringLiteral("path")).toString();
+        if (image.isEmpty() || path.isEmpty() || imagePaths.contains(path)) return;
+        imagePaths.insert(path);
+        images.append(image);
+    };
+    appendImage(reviewSourceImages_.value(question.value(QStringLiteral("id")).toString()));
     const QJsonObject stemImage = question.value(QStringLiteral("stemImage")).toObject();
-    if (!stemImage.isEmpty())
-        images.append(stemImage);
+    appendImage(stemImage);
     for (const QJsonValue& value : question.value(QStringLiteral("options")).toArray()) {
         const QJsonObject image = value.toObject().value(QStringLiteral("image")).toObject();
-        if (!image.isEmpty())
-            images.append(image);
+        appendImage(image);
     }
     displayReviewAssets(images);
 }
@@ -2479,7 +2578,7 @@ bool StudioWindow::saveCurrentReviewQuestion() {
     if (!currentReviewItem_)
         return false;
     QJsonObject question = currentReviewItem_->data(0, Qt::UserRole).toJsonObject();
-    const QString stem = reviewStemEditor_->toPlainText().trimmed();
+    const QString stem = stemFromReviewEditor(reviewStemEditor_->toPlainText()).trimmed();
     if (stem.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("无法保存草稿"), QStringLiteral("题干不能为空。"));
         return false;
@@ -2557,7 +2656,8 @@ bool StudioWindow::reviewQuestionIsDirty() const {
         return false;
     // 与 saveCurrentReviewQuestion 的写入口径对齐：只比较保存后会发生变化的字段，
     // 没动过编辑器的题不因格式差异（如题干尾部空白）被误判为脏。
-    if (reviewStemEditor_->toPlainText().trimmed() != question.value("stem").toString())
+    if (stemFromReviewEditor(reviewStemEditor_->toPlainText()).trimmed() !=
+        question.value("stem").toString())
         return true;
     const QJsonArray options = reviewOptions();
     const QJsonArray savedOptions = question.value("options").toArray();
@@ -2601,6 +2701,8 @@ bool StudioWindow::commitOpenReviewQuestion(const QString& consequence) {
 }
 
 void StudioWindow::confirmCurrentReviewQuestion() {
+    const bool wasHardRisk = currentReviewItem_ &&
+        currentReviewItem_->data(0, Qt::UserRole + 2).toBool();
     if (!saveCurrentReviewQuestion())
         return;
     QJsonObject question = currentReviewItem_->data(0, Qt::UserRole).toJsonObject();
@@ -2616,17 +2718,72 @@ void StudioWindow::confirmCurrentReviewQuestion() {
     reviewDetailStatus_->setText(QStringLiteral("已确认；它会进入最终题库。"));
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("review-question-confirmed"),
         {{QStringLiteral("questionId"), question.value("id").toString()}});
+    refreshReviewDecisionState();
+    if (wasHardRisk)
+        advanceToNextReviewIssue();
 }
 
 void StudioWindow::excludeCurrentReviewQuestion() {
     if (!currentReviewItem_)
         return;
     currentReviewItem_->setCheckState(0, Qt::Unchecked);
+    currentReviewItem_->setData(0, Qt::UserRole + 2, false);
+    currentReviewItem_->setData(0, Qt::UserRole + 3, false);
     currentReviewItem_->setText(1, QStringLiteral("暂不采用"));
     reviewDetailStatus_->setText(QStringLiteral("本题不会进入最终题库；重新勾选或确认本题即可恢复。"));
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("review-question-excluded"),
         {{QStringLiteral("questionId"), currentReviewItem_->data(0, Qt::UserRole)
             .toJsonObject().value("id").toString()}});
+    refreshReviewDecisionState();
+    advanceToNextReviewIssue();
+}
+
+void StudioWindow::refreshReviewDecisionState() {
+    int included = 0;
+    int remaining = 0;
+    for (QTreeWidgetItemIterator it(reviewTree_); *it; ++it) {
+        QTreeWidgetItem* item = *it;
+        const QJsonObject entry = item->data(0, Qt::UserRole).toJsonObject();
+        if (entry.isEmpty() || entry.contains(QStringLiteral("body")))
+            continue;
+        if (item->data(0, Qt::UserRole + 2).toBool())
+            ++remaining;
+        else if (item->checkState(0) == Qt::Checked)
+            ++included;
+    }
+    allReviewButton_->setText(QStringLiteral("需要处理  %1").arg(remaining));
+    reviewCount_->setText(QString::number(remaining));
+    if (reviewSummary_) {
+        reviewSummary_->setText(remaining == 0
+            ? QStringLiteral("✓ 已收录 %1 题，没有待处理问题，可以继续生成题库。").arg(included)
+            : QStringLiteral("已收录 %1 题；还有 %2 题需要决定。未处理的题不会收录。")
+                  .arg(included).arg(remaining));
+    }
+    if (remaining == 0) {
+        activeReviewFilter_.clear();
+        allQuestionsButton_->setChecked(true);
+    }
+    applyReviewFilter();
+    updateNavigation();
+}
+
+void StudioWindow::advanceToNextReviewIssue() {
+    for (QTreeWidgetItemIterator it(reviewTree_); *it; ++it) {
+        QTreeWidgetItem* item = *it;
+        if (!item->isHidden() && item->data(0, Qt::UserRole + 2).toBool()) {
+            reviewTree_->blockSignals(true);
+            reviewTree_->setCurrentItem(item);
+            reviewTree_->blockSignals(false);
+            showReviewQuestion(item);
+            return;
+        }
+    }
+    if (currentReviewItem_) {
+        reviewTree_->blockSignals(true);
+        reviewTree_->setCurrentItem(currentReviewItem_);
+        reviewTree_->blockSignals(false);
+        showReviewQuestion(currentReviewItem_);
+    }
 }
 
 
@@ -2873,6 +3030,11 @@ void StudioWindow::closeEvent(QCloseEvent* event) {
         mineruJob_->stage() != MineruStage::Failed &&
         mineruJob_->stage() != MineruStage::Cancelled;
     const bool workflowActive = workflow_ && workflow_->isActive();
+    if (closePreservingCloudTask_ && cloudActive && !cloudBatchId_.isEmpty()) {
+        persistCloudTask();
+        event->accept();
+        return;
+    }
     if (!cloudActive && !workflowActive) {
         event->accept();
         return;
