@@ -19,6 +19,7 @@ QPushButton#ruleModeCard[active="true"] { background: #e7f6ed; color: #216b40; b
 QPushButton#smartModeCard { background: #f9fbff; color: #37618d; border: 1px solid #c9dbf3; }
 QPushButton#smartModeCard:hover { background: #f0f6ff; border-color: #75a4de; }
 QPushButton#smartModeCard[active="true"] { background: #eaf3ff; color: #205c9d; border: 2px solid #4a88d9; padding: 11px 13px; }
+QLabel#smartModeBadge { background: #347fc1; color: #ffffff; border: 1px solid #ffffff; border-radius: 9px; padding: 2px 7px; margin: 7px 8px 0 0; font-size: 10px; font-weight: 700; }
 QFrame#parseStatusChip { background: #ffffff; border: 1px solid #dbe2e9; border-radius: 8px; }
 QLabel#parseStatusLight { font-size: 15px; color: #48a46a; }
 QLabel#parseStatusText { color: #3d6950; font-size: 13px; font-weight: 650; }

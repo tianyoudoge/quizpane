@@ -40,6 +40,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -968,14 +969,23 @@ QWidget* StudioWindow::buildSourcePage() {
     ruleModeCard_->setIconSize(QSize(28, 28));
     ruleModeCard_->setCursor(Qt::PointingHandCursor);
     ruleModeCard_->setToolTip(QStringLiteral("规则解析：资料只在本机处理。"));
-    smartModeCard_ = new QPushButton(QStringLiteral("智能解析  推荐\n扫描件、图表、复杂版面"));
+    auto* smartModeWrapper = new QFrame;
+    smartModeWrapper->setObjectName(QStringLiteral("smartModeWrapper"));
+    auto* smartModeLayout = new QGridLayout(smartModeWrapper);
+    smartModeLayout->setContentsMargins(0, 0, 0, 0);
+    smartModeCard_ = new QPushButton(QStringLiteral("智能解析\n扫描件、图表、复杂版面"));
     smartModeCard_->setObjectName(QStringLiteral("smartModeCard"));
     smartModeCard_->setIcon(QIcon(QStringLiteral(":/icons/mineru-spark.svg")));
     smartModeCard_->setIconSize(QSize(30, 30));
     smartModeCard_->setCursor(Qt::PointingHandCursor);
     smartModeCard_->setToolTip(QStringLiteral("智能解析：由 MinerU 识别复杂版面。"));
+    auto* smartModeBadge = new QLabel(QStringLiteral("推荐"), smartModeWrapper);
+    smartModeBadge->setObjectName(QStringLiteral("smartModeBadge"));
+    smartModeBadge->setAttribute(Qt::WA_TransparentForMouseEvents);
+    smartModeLayout->addWidget(smartModeCard_, 0, 0);
+    smartModeLayout->addWidget(smartModeBadge, 0, 0, Qt::AlignTop | Qt::AlignRight);
     modeCards->addWidget(ruleModeCard_);
-    modeCards->addWidget(smartModeCard_);
+    modeCards->addWidget(smartModeWrapper);
     modeLayout->addLayout(modeCards);
     connect(ruleModeCard_, &QPushButton::clicked, this, [this] { selectParseMode(false); });
     connect(smartModeCard_, &QPushButton::clicked, this, [this] { selectParseMode(true); });
