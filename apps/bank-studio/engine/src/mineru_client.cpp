@@ -13,6 +13,7 @@
 #include <QNetworkReply>
 #include <QTimer>
 #include <QUrl>
+#include <QtGlobal>
 
 namespace quizpane::studio {
 namespace {
@@ -348,6 +349,14 @@ void MineruExtractionJob::uploadFile(const MineruUploadTicket& ticket) {
     }
     // 官方要求 PUT 到预签名链接时不要带 Content-Type，否则签名校验失败。
     QNetworkRequest request(QUrl(ticket.uploadUrl));
+#if QT_VERSION >= QT_VERSION_CHECK(5, 9, 0)
+    // MinerU 返回的是 OSS 预签名地址。实际环境中 HTTP/2 连接会偶发被边缘节点
+    // 主动关闭（HTTP 0 / Connection closed）；改用兼容性更好的 HTTP/1.1，并允许
+    // HTTPS 间的安全跳转。与官方 curl 示例及本机端到端实测保持一致。
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+#endif
     request.setTransferTimeout(600000);
     reply_ = manager_->put(request, file);
     QNetworkReply* current = reply_;
@@ -445,6 +454,12 @@ void MineruExtractionJob::download(const QString& zipUrl) {
         return;
     }
     QNetworkRequest request(url);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 9, 0)
+    // 结果 ZIP 也走预签名 OSS 地址，必须与上传保持相同的传输兼容策略。
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+#endif
     request.setTransferTimeout(600000);
     reply_ = manager_->get(request);
     QNetworkReply* current = reply_;

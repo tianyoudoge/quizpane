@@ -34,7 +34,7 @@ std::optional<MineruConfig> editMineruSettings(QWidget* parent, const MineruConf
         "适合扫描件、图表和复杂版面。需要识别的文件会上传到 MinerU。")));
     if (!notice.trimmed().isEmpty()) {
         auto* problem = new QLabel(notice);
-        problem->setObjectName(QStringLiteral("notice"));
+        problem->setObjectName(QStringLiteral("mineruTokenNotice"));
         problem->setWordWrap(true);
         layout->addWidget(problem);
     }
@@ -79,8 +79,10 @@ std::optional<MineruConfig> editMineruSettings(QWidget* parent, const MineruConf
 
     auto* buttons = new QDialogButtonBox;
     auto* cancel = buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
+    auto* useRules = buttons->addButton(QStringLiteral("改用规则解析"), QDialogButtonBox::ActionRole);
     auto* save = buttons->addButton(QStringLiteral("保存设置"), QDialogButtonBox::AcceptRole);
     cancel->setObjectName(QStringLiteral("dialogCancelButton"));
+    useRules->setObjectName(QStringLiteral("secondaryButton"));
     save->setObjectName(QStringLiteral("primaryButton"));
     // Token 是智能模式真正开始工作的前提。空值不能被当作“保存后改用规则模式”，
     // 否则用户刚选择智能模式就会被静默改回去。
@@ -89,13 +91,24 @@ std::optional<MineruConfig> editMineruSettings(QWidget* parent, const MineruConf
         save->setEnabled(!token->text().trimmed().isEmpty());
     });
     layout->addWidget(buttons);
+    bool choseRules = false;
     QObject::connect(save, &QPushButton::clicked, &dialog, &QDialog::accept);
+    QObject::connect(useRules, &QPushButton::clicked, &dialog, [&dialog, &choseRules] {
+        choseRules = true;
+        dialog.accept();
+    });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
     if (dialog.exec() != QDialog::Accepted)
         return std::nullopt;
 
     MineruConfig result = current;
+    if (choseRules) {
+        result.token.clear();
+        result.cloudEnabled = false;
+        result.modeSelectedByUser = true;
+        return result;
+    }
     result.token = token->text().trimmed();
     result.modelVersion = modelVersion->currentData().toString();
     // 是否扫描件由 MinerU 自动判断；不再让用户为每一批资料做全局选择。

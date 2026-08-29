@@ -35,6 +35,8 @@ QLabel#sectionTitle, QLabel#phaseTitle, QLabel#sourceRowTitle { color: #e0e3e7; 
 QLabel#metricValue, QLabel#pairedAnswerBadge { color: #b7bec7; font-weight: 650; }
 QLabel#notice { background: #20252b; color: #cfd4da; padding: 12px; border-radius: 8px; border: 1px solid #343a42; }
 QLabel#activitySpinner { color: #77bdf2; font-weight: 650; padding: 3px 0; }
+QLabel#progressStatus { color: #9ca9b6; font-size: 11px; min-width: 64px; }
+QLabel#mineruTokenNotice { color: #f09a9a; font-size: 11px; padding: 2px 0; }
 QFrame#dropZone { background: #15191e; border: 1px dashed #59616b; border-radius: 10px; }
 QFrame#panel, QFrame#metricCard, QFrame#sourceRow { background: #15191e; border: 1px solid #252a31; border-radius: 9px; }
 QFrame#reviewOptionRow { background: #111419; border: 1px solid #2d333b; border-radius: 7px; }

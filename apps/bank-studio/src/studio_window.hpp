@@ -123,6 +123,7 @@ private:
     QLabel* generatedCount_ = nullptr;
     QLabel* reviewCount_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
+    QLabel* progressStatus_ = nullptr;
     QTreeWidget* reviewTree_ = nullptr;
     QLabel* reviewDetailTitle_ = nullptr;
     QLabel* reviewDetailStatus_ = nullptr;

@@ -37,7 +37,9 @@ public:
         if (!window.parseModeCard_ || !window.ruleModeCard_ || !window.smartModeCard_ ||
             !window.smartModeCard_->text().contains(QStringLiteral("智能解析")) ||
             !window.parseStatusChip_ || !window.parseStatusText_ ||
-            window.parseStatusText_->text() != QStringLiteral("智能模式")) return 19;
+            window.parseStatusText_->text() != QStringLiteral("智能模式") ||
+            !window.progressBar_ || !window.progressStatus_ ||
+            window.progressStatus_->text() != QStringLiteral("准备中")) return 19;
         QTemporaryDir sourceDir;
         const QString sourcePath = sourceDir.filePath(QStringLiteral("题目.txt"));
         QFile sourceFile(sourcePath);

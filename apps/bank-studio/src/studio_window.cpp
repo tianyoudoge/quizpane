@@ -1074,10 +1074,16 @@ QWidget* StudioWindow::buildProgressPage() {
     progressBar_->setRange(0, 100);
     progressBar_->setValue(0);
     progressBar_->setTextVisible(false);
+    progressStatus_ = mutedLabel(QStringLiteral("准备中"));
+    progressStatus_->setObjectName(QStringLiteral("progressStatus"));
     layout->addWidget(phaseLabel_);
     layout->addWidget(phaseDetail_);
     layout->addWidget(activitySpinner_);
-    layout->addWidget(progressBar_);
+    auto* progressRow = new QHBoxLayout;
+    progressRow->setSpacing(10);
+    progressRow->addWidget(progressBar_, 1);
+    progressRow->addWidget(progressStatus_);
+    layout->addLayout(progressRow);
     auto* metrics = new QHBoxLayout;
     metrics->addWidget(metricCard(QStringLiteral("已读取资料"), &sourceCount_));
     metrics->addWidget(metricCard(QStringLiteral("已整理题目"), &generatedCount_));
@@ -1471,6 +1477,7 @@ void StudioWindow::beginPreflight() {
     });
     updateParseModeSummary();
     progressBar_->setValue(0);
+    progressStatus_->setText(QStringLiteral("准备中"));
     sourceCount_->setText(QString::number(sourcePaths_.size()));
     generatedCount_->setText(QStringLiteral("0"));
     reviewCount_->setText(QStringLiteral("0"));
@@ -1596,14 +1603,17 @@ void StudioWindow::processNextCloudSource() {
         mineruJob_->deleteLater();
     mineruJob_ = new MineruExtractionJob(networkManager_, this);
     connect(mineruJob_, &MineruExtractionJob::stageChanged, this,
-            [this, sourcePath](MineruStage, const QString& detail) {
+            [this, sourcePath](MineruStage stage, const QString& detail) {
                 phaseLabel_->setText(QStringLiteral("云端解析"));
                 phaseDetail_->setText(QStringLiteral("%1：%2")
                                           .arg(QFileInfo(sourcePath).fileName(), detail));
+                progressStatus_->setText(describeMineruStage(stage));
             });
     connect(mineruJob_, &MineruExtractionJob::progress, this, [this](int extracted, int total) {
-        if (total > 0)
+        if (total > 0) {
             progressBar_->setValue(qBound(0, 20 * extracted / total, 20));
+            progressStatus_->setText(QStringLiteral("%1 / %2 页").arg(extracted).arg(total));
+        }
     });
     connect(mineruJob_, &MineruExtractionJob::finished, this,
             [this](bool ok, const QString& zipPath, const QString& error) {
@@ -1661,7 +1671,9 @@ void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
     }
     const int within = progress.totalSourceBlocks > 0
         ? span * progress.completedSourceBlocks / progress.totalSourceBlocks : 0;
-    progressBar_->setValue(qBound(0, base + within, 100));
+    const int value = qBound(0, base + within, 100);
+    progressBar_->setValue(value);
+    progressStatus_->setText(QStringLiteral("%1%").arg(value));
     phaseLabel_->setText(phase);
     phaseDetail_->setText(progress.detail);
     sourceCount_->setText(QString::number(progress.completedSourceBlocks));
