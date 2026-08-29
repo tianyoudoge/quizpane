@@ -292,6 +292,28 @@ bundle_missing_helper_dependencies() {
   done < <(find "$STAGED_STUDIO" -type f -print0)
 }
 bundle_missing_helper_dependencies
+# macdeployqt 与 dylibbundler 都会为 Helper 写入 Frameworks 搜索路径。部分 Qt
+# 版本不会检查既有 LC_RPATH，因而可写入多条完全相同的记录；macOS 26 的 dyld
+# 会在加载前以 duplicate LC_RPATH 直接终止进程。保留第一条，删除后续重复项。
+dedupe_macho_rpaths() {
+  local binary rpath seen
+  while IFS= read -r -d '' binary; do
+    file "$binary" | grep -q 'Mach-O' || continue
+    seen=$'\n'
+    while IFS= read -r rpath; do
+      [[ -n "$rpath" ]] || continue
+      if [[ "$seen" == *$'\n'"$rpath"$'\n'* ]]; then
+        install_name_tool -delete_rpath "$rpath" "$binary"
+      else
+        seen+="$rpath"$'\n'
+      fi
+    done < <(otool -l "$binary" | awk '
+      $1 == "cmd" && $2 == "LC_RPATH" { expect_path = 1; next }
+      expect_path && $1 == "path" { print $2; expect_path = 0 }
+    ')
+  done < <(find "$STAGED_APP" "$STAGED_STUDIO" -type f -print0)
+}
+dedupe_macho_rpaths
 # dylibbundler 在 macdeployqt 之后加入的第三方库尚未剥离符号。签名前统一处理，
 # 减少安装后体积，也让 ZIP 更容易压缩。
 if [[ "$DEBUG_BUILD" != "1" ]]; then

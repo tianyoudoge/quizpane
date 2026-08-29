@@ -18,5 +18,7 @@
   <qresource prefix="/icons">
     <file alias="checkmark-white.svg">icons/checkmark-white.svg</file>
     <file alias="radio-dot-white.svg">icons/radio-dot-white.svg</file>
+    <file alias="rule-parse.svg">icons/rule-parse.svg</file>
+    <file alias="mineru-spark.svg">icons/mineru-spark.svg</file>
   </qresource>
 </RCC>

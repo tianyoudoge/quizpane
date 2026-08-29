@@ -10,10 +10,22 @@ QLabel#eyebrow { color: #aeb5bd; font-size: 11px; font-weight: 600; }
 QLabel#muted { color: #9ca3ab; }
 QLabel#sideStep { color: #aeb5bd; padding: 9px 10px; border-radius: 7px; }
 QLabel#sideStep[active="true"] { color: #ffffff; background: #252a31; }
-QPushButton#parseModeChip { background: #16191e; color: #9aa3ad; border: 1px solid #2b3138; border-radius: 8px; padding: 8px 10px; text-align: left; font-size: 12px; }
-QPushButton#parseModeChip:hover { border-color: #3c444d; color: #c8ced5; }
-QPushButton#parseModeChip[mode="local"] { color: #7fb98a; }
-QPushButton#parseModeChip[mode="cloud"] { color: #79a9d8; }
+QFrame#parseModeCard { background: #15191e; border: 1px solid #2b3138; border-radius: 12px; }
+QLabel#parseModeTitle { color: #e0e3e7; font-size: 15px; font-weight: 700; }
+QLabel#parseModeHint { color: #87919c; font-size: 11px; }
+QPushButton#ruleModeCard, QPushButton#smartModeCard { min-height: 58px; text-align: left; border-radius: 9px; padding: 12px 14px; font-size: 13px; font-weight: 650; }
+QPushButton#ruleModeCard { background: #152019; color: #9bcaa9; border: 1px solid #315943; }
+QPushButton#ruleModeCard:hover { background: #1b2a21; border-color: #68a87c; }
+QPushButton#ruleModeCard[active="true"] { background: #1b3425; color: #c0efcd; border: 2px solid #55aa71; padding: 11px 13px; }
+QPushButton#smartModeCard { background: #16202b; color: #a7c9f3; border: 1px solid #315375; }
+QPushButton#smartModeCard:hover { background: #1b2b3b; border-color: #6b9bd3; }
+QPushButton#smartModeCard[active="true"] { background: #1c3550; color: #d3e8ff; border: 2px solid #5e9ee9; padding: 11px 13px; }
+QFrame#parseStatusChip { background: #15191e; border: 1px solid #2b3138; border-radius: 8px; }
+QLabel#parseStatusLight { font-size: 15px; color: #62bb7b; }
+QLabel#parseStatusText { color: #a4cfb0; font-size: 13px; font-weight: 650; }
+QFrame#parseStatusChip[mode="cloud"] { background: #16202b; border-color: #315375; }
+QFrame#parseStatusChip[mode="cloud"] QLabel#parseStatusLight { color: #75b0f4; }
+QFrame#parseStatusChip[mode="cloud"] QLabel#parseStatusText { color: #acd0f9; }
 QFrame#sidebarSupport { background: #1d1813; border: 1px solid #58432e; border-radius: 8px; }
 QPushButton#sidebarSupportButton { background: transparent; color: #f1bd77; border: none; padding: 2px 0; text-align: left; font-weight: 650; }
 QPushButton#sidebarSupportButton:hover { color: #ffd5a0; background: transparent; }
@@ -31,6 +43,8 @@ QPushButton:hover { background: #2a3037; border-color: #59616b; }
 QPushButton#primaryButton { background: #347fb9; color: #ffffff; border-color: #347fb9; font-weight: 600; }
 QPushButton#primaryButton:hover { background: #468fc7; border-color: #468fc7; }
 QPushButton#secondaryButton, QPushButton#textButton { background: transparent; color: #b7bec7; border-color: transparent; }
+QPushButton#dialogCancelButton { background: #20191b; color: #e4b7b7; border-color: #65464a; }
+QPushButton#dialogCancelButton:hover { background: #302024; border-color: #a1666d; }
 /* 分类采用连续标签栏，动作保留独立按钮；原生 Qt 5/6 均支持这些状态。 */
 QFrame#reviewFilterBar { border: none; border-bottom: 1px solid #343a42; }
 QPushButton#reviewFilterTab { background: transparent; color: #aeb5bd; border: none; border-bottom: 3px solid transparent; border-radius: 0; padding: 9px 12px; }

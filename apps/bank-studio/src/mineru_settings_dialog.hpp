@@ -15,13 +15,13 @@ namespace quizpane::studio {
 // （扫描件、图表、图片选项）的识别率会下降。
 struct MineruConfig {
     QString token;
-    // 官方推荐 vlm；pipeline 作为对照与降级选项。
+    // 默认选用 MinerU 推荐的准确识别；兼容模式只在识别异常时使用。
     QString modelVersion = QStringLiteral("vlm");
-    // 扫描件需要 OCR。文字型 PDF 保持关闭，避免不必要的识别误差。
+    // 保留给协议层；界面不再把 OCR 作为全局开关，由智能解析自动判断。
     bool isOcr = false;
-    // 是否允许把文档上传到 MinerU 云服务。默认关闭：上传属于把用户材料交给
-    // 第三方，必须由用户显式同意，不能靠"填了 Token"隐式推断。
-    bool cloudEnabled = false;
+    // 智能解析是新用户的推荐方式。没有 Token 时会在实际整理前提示配置，
+    // 不会静默上传任何文件。
+    bool cloudEnabled = true;
 };
 
 // 创建并同步执行 MinerU 设置对话框。

@@ -19,6 +19,7 @@
 class QLabel;
 class QButtonGroup;
 class QCheckBox;
+class QFrame;
 class QLineEdit;
 class QPlainTextEdit;
 class QTextEdit;
@@ -93,9 +94,11 @@ private:
     void setReviewOptions(const QJsonArray& options);
     QJsonArray reviewOptions() const;
     void addReviewOption(const QString& id = {}, const QString& text = {});
-    void editMineruSettings();
+    // 返回 true 仅表示用户确认并成功保存了配置；取消或保存失败都不改变调用方流程。
+    bool editMineruSettings();
     void updateParseModeSummary();
     void editParseModeSettings();
+    void selectParseMode(bool cloud);
     void showDonationDialog();
     void showFeedbackDialog();
     void updateReviewStemHeight();
@@ -107,11 +110,12 @@ private:
     QVBoxLayout* sourceListLayout_ = nullptr;
     QWidget* sourcePanel_ = nullptr;
     QLabel* sourceSummary_ = nullptr;
-    QCheckBox* hasAnswerKeyCheck_ = nullptr;
     QLabel* parseModeSummary_ = nullptr;
-    QLabel* parseModeTitle_ = nullptr;
-    QLabel* parseModeHint_ = nullptr;
-    QPushButton* parseModeChip_ = nullptr;
+    QFrame* parseModeCard_ = nullptr;
+    QPushButton* ruleModeCard_ = nullptr;
+    QPushButton* smartModeCard_ = nullptr;
+    QFrame* parseStatusChip_ = nullptr;
+    QLabel* parseStatusText_ = nullptr;
     QLabel* phaseLabel_ = nullptr;
     QLabel* phaseDetail_ = nullptr;
     QLabel* activitySpinner_ = nullptr;
@@ -174,6 +178,7 @@ private:
     int spinnerFrame_ = 0;
     QStringList sourcePaths_;
     QHash<QString, QString> answerPathsByQuestion_;
+    QHash<QString, bool> hasAnswerKeyByQuestion_;
     QHash<QString, SourceRowWidget*> sourceRows_;
     QJsonArray generatedMaterials_;
     QJsonArray generatedQuestions_;

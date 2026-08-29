@@ -4,6 +4,7 @@
 #include <QString>
 
 class QLabel;
+class QCheckBox;
 class QPushButton;
 class QWidget;
 
@@ -20,10 +21,13 @@ public:
 
     QString questionPath() const { return questionPath_; }
 
+    bool hasAnswerKey() const;
+    void setHasAnswerKey(bool hasAnswerKey);
     void setPairedAnswer(const QString& answerPath);
     void clearPairedAnswer();
 
 signals:
+    void hasAnswerKeyChanged(bool hasAnswerKey);
     void answerRequested();
     void answerDropped(const QString& answerPath);
     void answerCleared();
@@ -35,6 +39,7 @@ protected:
 
 private:
     QString questionPath_;
+    QCheckBox* hasAnswerKeyCheck_ = nullptr;
     QLabel* pairedAnswerLabel_ = nullptr;
     QPushButton* addAnswerButton_ = nullptr;
     QPushButton* clearAnswerButton_ = nullptr;

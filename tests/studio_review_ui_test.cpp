@@ -2,7 +2,9 @@
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QDir>
+#include <QFile>
 #include <QHeaderView>
 #include <QJsonObject>
 #include <QLabel>
@@ -32,6 +34,19 @@ public:
 
     static int run(QApplication& app) {
         StudioWindow window;
+        if (!window.parseModeCard_ || !window.ruleModeCard_ || !window.smartModeCard_ ||
+            !window.smartModeCard_->text().contains(QStringLiteral("智能解析")) ||
+            !window.parseStatusChip_ || !window.parseStatusText_ ||
+            window.parseStatusText_->text() != QStringLiteral("智能模式")) return 19;
+        QTemporaryDir sourceDir;
+        const QString sourcePath = sourceDir.filePath(QStringLiteral("题目.txt"));
+        QFile sourceFile(sourcePath);
+        if (!sourceFile.open(QIODevice::WriteOnly) || sourceFile.write("1. 测试题\nA. 对\nB. 错\n") < 1) return 20;
+        sourceFile.close();
+        window.appendSources({sourcePath});
+        if (window.sourceRows_.size() != 1 ||
+            window.findChildren<QCheckBox*>().isEmpty() ||
+            window.findChildren<QCheckBox*>().first()->text() != QStringLiteral("本文件含答案/解析")) return 21;
         GeneratedBankCandidate candidate;
         candidate.hasAnswerKey = true;
         candidate.questions = {question("q1"), question("q2", "soft", "image-content"),

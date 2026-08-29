@@ -56,6 +56,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QImage>
+#include <QIcon>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
@@ -75,6 +76,7 @@
 #include <QStandardPaths>
 #include <QStyle>
 #include <QSet>
+#include <QSize>
 #include <QTimer>
 #include <QSettings>
 #include <QProcess>
@@ -516,20 +518,20 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
         sideLayout->addWidget(step);
     }
     sideLayout->addStretch();
-    // 解析模式是贯穿整个流程的全局状态，因此放在侧栏而不是某一步的表单里。
-    // 做成可点击的指示灯：一眼看出当前会不会联网，点一下就能改。
-    //
-    // Win7 兼容构建不含 Qt PDF，只能导入 TXT/Markdown/DOCX，云端版面识别对这些
-    // 格式没有收益。此时完全不展示指示灯与解析方式入口——给出一个永远不生效的
-    // 开关比没有这个开关更让人困惑。
-#ifdef QUIZPANE_HAS_QT_PDF
-    parseModeChip_ = new QPushButton;
-    parseModeChip_->setObjectName(QStringLiteral("parseModeChip"));
-    parseModeChip_->setCursor(Qt::PointingHandCursor);
-    connect(parseModeChip_, &QPushButton::clicked, this, &StudioWindow::editParseModeSettings);
-    sideLayout->addWidget(parseModeChip_);
+    parseStatusChip_ = new QFrame;
+    parseStatusChip_->setObjectName(QStringLiteral("parseStatusChip"));
+    auto* parseStatusLayout = new QHBoxLayout(parseStatusChip_);
+    parseStatusLayout->setContentsMargins(12, 9, 12, 9);
+    parseStatusLayout->setSpacing(7);
+    auto* parseStatusLight = new QLabel(QStringLiteral("●"));
+    parseStatusLight->setObjectName(QStringLiteral("parseStatusLight"));
+    parseStatusText_ = new QLabel;
+    parseStatusText_->setObjectName(QStringLiteral("parseStatusText"));
+    parseStatusLayout->addWidget(parseStatusLight);
+    parseStatusLayout->addWidget(parseStatusText_);
+    parseStatusLayout->addStretch();
+    sideLayout->addWidget(parseStatusChip_);
     sideLayout->addSpacing(8);
-#endif
     auto* support = new QFrame;
     support->setObjectName(QStringLiteral("sidebarSupport"));
     auto* supportLayout = new QVBoxLayout(support);
@@ -630,42 +632,51 @@ void StudioWindow::updateParseModeSummary() {
     // 以为文档会被上传。
     const bool cloudThisRun = cloud && shouldUseCloudParse();
 
-    if (parseModeChip_) {
-        // 指示灯只讲"本机/云端"，不出现服务商名称：对用户有意义的是资料会不会
-        // 离开这台电脑，用哪家服务是配置页的实现细节。
-        parseModeChip_->setText(cloud ? QStringLiteral("◉  云端增强解析")
-                                      : QStringLiteral("◉  本机解析"));
-        parseModeChip_->setProperty("mode", cloud ? QStringLiteral("cloud")
-                                                  : QStringLiteral("local"));
-        parseModeChip_->setToolTip(cloud
-            ? QStringLiteral("复杂版面（扫描件、统计图表、图形选项）会上传到云端识别，"
-                             "其余资料仍在本机处理。点击可切换或查看详情。")
-            : QStringLiteral("资料全程只在这台电脑上处理，不联网。点击可开启云端增强解析。"));
-        parseModeChip_->style()->unpolish(parseModeChip_);
-        parseModeChip_->style()->polish(parseModeChip_);
+    if (parseModeCard_) {
+        parseModeCard_->setProperty("mode", cloud ? QStringLiteral("cloud")
+                                                   : QStringLiteral("local"));
+        for (QPushButton* card : {ruleModeCard_, smartModeCard_}) {
+            if (!card) continue;
+            const bool active = (card == smartModeCard_) == cloud;
+            card->setProperty("active", active);
+            card->style()->unpolish(card);
+            card->style()->polish(card);
+        }
     }
-    // 无 PDF 构建下 cloudThisRun 恒为 false，这里用它而不是 cloud：Win7 版即使
-    // 配置过云端凭据也不会上传任何东西，文案不能说"会上传"。
-    if (parseModeTitle_) {
-        parseModeTitle_->setText(cloudThisRun ? QStringLiteral("整理方式：云端增强解析")
-                                              : QStringLiteral("整理方式：本机解析"));
-    }
-    if (parseModeHint_) {
-        parseModeHint_->setText(cloudThisRun
-            ? QStringLiteral("扫描件、统计图表等复杂版面会上传到云端识别版面，其余资料在本机处理；"
-                             "题目结构、答案与复核全部在本机完成。涉密材料请切回本机解析。")
-            : QStringLiteral("资料全程只在本机读取和处理，不会上传，适合题号、选项和答案比较规范的文档。"));
+    if (parseStatusChip_ && parseStatusText_) {
+        parseStatusChip_->setProperty("mode", cloud ? QStringLiteral("cloud")
+                                                      : QStringLiteral("local"));
+        parseStatusText_->setText(cloud ? QStringLiteral("智能模式")
+                                         : QStringLiteral("规则模式"));
+        parseStatusChip_->style()->unpolish(parseStatusChip_);
+        parseStatusChip_->style()->polish(parseStatusChip_);
     }
     if (parseModeSummary_) {
         parseModeSummary_->setText(cloudThisRun
             ? QStringLiteral("当前方式：云端增强解析 · PDF 与图片会上传处理，其余资料仍在本机整理")
-            : (cloud ? QStringLiteral("当前方式：本机解析 · 本次资料无需云端增强，不会离开这台电脑")
-                     : QStringLiteral("当前方式：本机解析 · 资料不会离开这台电脑")));
+            : (cloud ? QStringLiteral("本次资料无需智能增强，会按规则在本机整理")
+                     : QStringLiteral("规则解析 · 资料不会离开这台电脑")));
     }
 }
 
-// 点击侧栏指示灯后的模式选择。这里也只谈"本机/云端"，服务商信息留在
-// 云端设置对话框里。
+void StudioWindow::selectParseMode(bool cloud) {
+    // 智能解析需要 Token。没有凭据时，直接带用户去配置，而不是把看似选中的
+    // 智能模式又悄悄切回规则模式。
+    if (cloud && loadMineruToken().trimmed().isEmpty()) {
+        editMineruSettings();
+        return;
+    }
+    if (cloud == mineruConfig_.cloudEnabled)
+        return;
+    mineruConfig_.cloudEnabled = cloud;
+    MineruConfig persisted = mineruConfig_;
+    persisted.token = loadMineruToken();
+    QString error;
+    storeMineruConfig(persisted, &error);
+    updateParseModeSummary();
+}
+
+// 菜单里的备用入口；首屏卡片用于快速切换，这里保留两个方式的完整说明。
 void StudioWindow::editParseModeSettings() {
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("解析方式"));
@@ -675,10 +686,10 @@ void StudioWindow::editParseModeSettings() {
     title->setObjectName(QStringLiteral("pageTitle"));
     layout->addWidget(title);
 
-    auto* localRadio = new QRadioButton(QStringLiteral("本机解析（默认）"));
+    auto* localRadio = new QRadioButton(QStringLiteral("规则解析（本机）"));
     auto* localHint = mutedLabel(QStringLiteral(
-        "资料全程只在这台电脑上处理，不联网。题号、选项、答案比较规范的文档用它就够了。"));
-    auto* cloudRadio = new QRadioButton(QStringLiteral("云端增强解析"));
+        "适合文字清晰、题号和选项规整的文档；资料全程留在这台电脑。"));
+    auto* cloudRadio = new QRadioButton(QStringLiteral("智能解析（推荐）"));
     auto* cloudHint = mutedLabel(QStringLiteral(
         "扫描件、统计图表、图形选项等复杂版面交给云端识别版面，识别率更高；"
         "所选 PDF 与图片会上传到云端服务处理。需要先配置访问凭据。"));
@@ -699,7 +710,11 @@ void StudioWindow::editParseModeSettings() {
         cloudRadio->setEnabled(true);
     });
 
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    auto* buttons = new QDialogButtonBox;
+    auto* cancel = buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
+    auto* confirm = buttons->addButton(QStringLiteral("使用此方式"), QDialogButtonBox::AcceptRole);
+    cancel->setObjectName(QStringLiteral("dialogCancelButton"));
+    confirm->setObjectName(QStringLiteral("primaryButton"));
     layout->addWidget(buttons);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -726,17 +741,17 @@ void StudioWindow::editParseModeSettings() {
     updateParseModeSummary();
 }
 
-void StudioWindow::editMineruSettings() {
+bool StudioWindow::editMineruSettings() {
     MineruConfig configForEditor = mineruConfig_;
     configForEditor.token = loadMineruToken();
     const std::optional<MineruConfig> updated =
         quizpane::studio::editMineruSettings(this, configForEditor);
     if (!updated)
-        return;
+        return false;
     QString error;
     if (!storeMineruConfig(*updated, &error)) {
         QMessageBox::warning(this, QStringLiteral("云端解析配置未保存"), error);
-        return;
+        return false;
     }
     mineruConfig_ = *updated;
     // Token 只保留在钥匙串里；成员只留非敏感配置，避免它随窗口对象长期驻留内存。
@@ -744,13 +759,10 @@ void StudioWindow::editMineruSettings() {
     updateParseModeSummary();
     const QString summary = updated->token.isEmpty()
         ? QStringLiteral("已清除访问凭据，之后只使用本机解析。")
-        : (updated->cloudEnabled
-               ? QStringLiteral("已保存访问凭据（写入系统凭据库）。"
-                                "整理复杂版面文档时可以选择云端增强解析。")
-               : QStringLiteral("已保存访问凭据，但尚未允许上传。"
-                                "需要云端解析时请勾选“允许把文档上传到云端解析”。"));
-    QMessageBox::information(this, QStringLiteral("云端解析配置已保存"),
+        : QStringLiteral("已保存 Token，智能解析已启用。");
+    QMessageBox::information(this, QStringLiteral("智能解析设置已保存"),
                              error.isEmpty() ? summary : summary + QStringLiteral("\n") + error);
+    return true;
 }
 
 void StudioWindow::showDonationDialog() {
@@ -925,24 +937,40 @@ QWidget* StudioWindow::buildSourcePage() {
 #else
         QStringLiteral("Win7 兼容版支持 TXT、Markdown 和 DOCX。题目和答案分在两个文件里也可以一起整理。")));
 #endif
-    auto* modePanel = new QFrame;
-    modePanel->setObjectName(QStringLiteral("panel"));
-    auto* modeLayout = new QVBoxLayout(modePanel);
-    modeLayout->setContentsMargins(16, 12, 16, 12);
-    // 解析方式与隐私声明必须反映真实状态，因此这两行由 updateParseModeSummary()
-    // 按当前设置刷新，而不是写死"不会上传"。产品界面只说"本机/云端"，
-    // 不出现具体服务商名称——那属于配置页的实现细节。
-    parseModeTitle_ = new QLabel;
-    modeLayout->addWidget(parseModeTitle_);
-    parseModeHint_ = mutedLabel(QString());
-    modeLayout->addWidget(parseModeHint_);
-    layout->addWidget(modePanel);
-    hasAnswerKeyCheck_ = new QCheckBox(QStringLiteral("题目资料包含答案与解析"));
-    hasAnswerKeyCheck_->setChecked(true);
-    hasAnswerKeyCheck_->setToolTip(QStringLiteral(
-        "取消勾选会生成无答案练习题库：只保存题干、选项、材料与图片，"
-        "答题后只查看和导出自己的作答结果。"));
-    modeLayout->addWidget(hasAnswerKeyCheck_);
+    parseModeCard_ = new QFrame;
+    parseModeCard_->setObjectName(QStringLiteral("parseModeCard"));
+    auto* modeLayout = new QVBoxLayout(parseModeCard_);
+    modeLayout->setContentsMargins(16, 14, 16, 16);
+    modeLayout->setSpacing(10);
+    auto* modeHeader = new QHBoxLayout;
+    auto* modeTitle = new QLabel(QStringLiteral("选择解析方式"));
+    modeTitle->setObjectName(QStringLiteral("parseModeTitle"));
+    auto* modeHint = new QLabel(QStringLiteral("点击整张卡片即可切换"));
+    modeHint->setObjectName(QStringLiteral("parseModeHint"));
+    modeHeader->addWidget(modeTitle);
+    modeHeader->addStretch();
+    modeHeader->addWidget(modeHint);
+    modeLayout->addLayout(modeHeader);
+    auto* modeCards = new QHBoxLayout;
+    modeCards->setSpacing(10);
+    ruleModeCard_ = new QPushButton(QStringLiteral("规则解析\n文字清晰、版式规整"));
+    ruleModeCard_->setObjectName(QStringLiteral("ruleModeCard"));
+    ruleModeCard_->setIcon(QIcon(QStringLiteral(":/icons/rule-parse.svg")));
+    ruleModeCard_->setIconSize(QSize(28, 28));
+    ruleModeCard_->setCursor(Qt::PointingHandCursor);
+    ruleModeCard_->setToolTip(QStringLiteral("规则解析：资料只在本机处理。"));
+    smartModeCard_ = new QPushButton(QStringLiteral("智能解析  推荐\n扫描件、图表、复杂版面"));
+    smartModeCard_->setObjectName(QStringLiteral("smartModeCard"));
+    smartModeCard_->setIcon(QIcon(QStringLiteral(":/icons/mineru-spark.svg")));
+    smartModeCard_->setIconSize(QSize(30, 30));
+    smartModeCard_->setCursor(Qt::PointingHandCursor);
+    smartModeCard_->setToolTip(QStringLiteral("智能解析：由 MinerU 识别复杂版面。"));
+    modeCards->addWidget(ruleModeCard_);
+    modeCards->addWidget(smartModeCard_);
+    modeLayout->addLayout(modeCards);
+    connect(ruleModeCard_, &QPushButton::clicked, this, [this] { selectParseMode(false); });
+    connect(smartModeCard_, &QPushButton::clicked, this, [this] { selectParseMode(true); });
+    layout->addWidget(parseModeCard_);
     auto* drop = new QFrame;
     drop->setObjectName(QStringLiteral("dropZone"));
     auto* dropLayout = new QVBoxLayout(drop);
@@ -1274,11 +1302,16 @@ void StudioWindow::appendSources(const QStringList& paths) {
         const QString absolute = QFileInfo(path).absoluteFilePath();
         if (!acceptedSource(absolute) || sourcePaths_.contains(absolute)) continue;
         sourcePaths_.append(absolute);
+        hasAnswerKeyByQuestion_.insert(absolute, true);
         ++added;
         auto* row = new SourceRowWidget(absolute);
         sourceRows_.insert(absolute, row);
         // 插入到末尾的拉伸占位之前，保持新行始终追加在列表最下方。
         sourceListLayout_->insertWidget(sourceListLayout_->count() - 1, row);
+        connect(row, &SourceRowWidget::hasAnswerKeyChanged, this,
+                [this, absolute](bool hasAnswerKey) {
+            hasAnswerKeyByQuestion_.insert(absolute, hasAnswerKey);
+        });
         connect(row, &SourceRowWidget::answerRequested, this, [this, absolute] {
             const QString answer = QFileDialog::getOpenFileName(
                 this, QStringLiteral("添加答案或解析"), {},
@@ -1296,7 +1329,6 @@ void StudioWindow::appendSources(const QStringList& paths) {
         connect(row, &SourceRowWidget::answerCleared, this, [this, absolute] {
             answerPathsByQuestion_.remove(absolute);
             if (auto* r = sourceRows_.value(absolute)) r->clearPairedAnswer();
-            if (answerPathsByQuestion_.isEmpty()) hasAnswerKeyCheck_->setEnabled(true);
         });
         connect(row, &SourceRowWidget::removeRequested, this, [this, absolute] {
             removeSource(absolute);
@@ -1315,15 +1347,14 @@ void StudioWindow::appendSources(const QStringList& paths) {
 void StudioWindow::pairAnswer(const QString& question, const QString& answer) {
     if (answer == question || !acceptedSource(answer)) return;
     answerPathsByQuestion_.insert(question, answer);
-    hasAnswerKeyCheck_->setChecked(true);
-    hasAnswerKeyCheck_->setEnabled(false);
+    hasAnswerKeyByQuestion_.insert(question, true);
     if (auto* row = sourceRows_.value(question)) row->setPairedAnswer(answer);
 }
 
 void StudioWindow::removeSource(const QString& question) {
     sourcePaths_.removeAll(question);
     answerPathsByQuestion_.remove(question);
-    if (answerPathsByQuestion_.isEmpty()) hasAnswerKeyCheck_->setEnabled(true);
+    hasAnswerKeyByQuestion_.remove(question);
     if (auto* row = sourceRows_.take(question)) {
         sourceListLayout_->removeWidget(row);
         row->deleteLater();
@@ -1382,8 +1413,19 @@ void StudioWindow::beginPreflight() {
         return;
     }
     if (sourcePaths_.isEmpty()) return;
+    // 智能解析被选中且本批存在 PDF / 图片时，Token 是开始整理的必要条件。
+    // 过去这里会继续进入 processNextCloudSource()，再悄悄降级为规则解析；
+    // 这既违背用户选择，也让首次使用者不知道 Token 应该在哪里填。
+    if (mineruConfig_.cloudEnabled && shouldUseCloudParse() &&
+        loadMineruToken().trimmed().isEmpty()) {
+        if (!editMineruSettings() || !mineruConfig_.cloudEnabled ||
+            loadMineruToken().trimmed().isEmpty()) {
+            return;
+        }
+    }
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("generation-start"),
-        {{QStringLiteral("mode"), QStringLiteral("rules")},
+        {{QStringLiteral("mode"), mineruConfig_.cloudEnabled
+            ? QStringLiteral("smart") : QStringLiteral("rules")},
          {QStringLiteral("sources"), sourcePaths_.size()}});
     if (workflow_) workflow_->deleteLater();
     workflow_ = new GenerationWorkflow(this);
@@ -1420,9 +1462,19 @@ void StudioWindow::beginPreflight() {
     activitySpinner_->show();
     activityTimer_->start(120);
     QList<SourceMaterialGroup> groups;
-    const bool hasAnswerKey = hasAnswerKeyCheck_->isChecked();
-    for (const QString& question : sourcePaths_)
+    const bool hasAnswerKey = hasAnswerKeyByQuestion_.value(sourcePaths_.first(), true);
+    for (const QString& question : sourcePaths_) {
+        if (hasAnswerKeyByQuestion_.value(question, true) != hasAnswerKey) {
+            QMessageBox::warning(this, QStringLiteral("请统一答案设置"),
+                                 QStringLiteral("同一题库暂不能混合“含答案/解析”和“无答案”资料。"
+                                                "请在文件列表中统一勾选状态后再整理。"));
+            activityTimer_->stop();
+            activitySpinner_->hide();
+            updateNavigation();
+            return;
+        }
         groups.append({question, answerPathsByQuestion_.value(question), hasAnswerKey, {}, {}});
+    }
     startCloudParseThenGenerate(groups);
 }
 
@@ -1505,10 +1557,15 @@ void StudioWindow::processNextCloudSource() {
     settings.modelVersion = mineruConfig_.modelVersion;
     settings.isOcr = mineruConfig_.isOcr;
     if (settings.token.trimmed().isEmpty()) {
-        // Token 读不到（例如用户拒绝了钥匙串授权）时退回本机解析，而不是中断整理。
-        QMessageBox::warning(this, QStringLiteral("未能读取访问凭据"),
-                             QStringLiteral("本次改用本机解析。可在“设置 → 解析方式…”重新配置。"));
-        workflow_->startRuleBased(pendingGroups_);
+        // 这通常只会发生在用户拒绝钥匙串授权等运行时情形；绝不暗自换模式。
+        activityTimer_->stop();
+        activitySpinner_->hide();
+        progressBar_->setValue(0);
+        pages_->setCurrentIndex(0);
+        updateNavigation();
+        QMessageBox::warning(this, QStringLiteral("需要配置 MinerU Token"),
+                             QStringLiteral("无法读取 MinerU Token。请重新配置后再开始整理。"));
+        editMineruSettings();
         return;
     }
 

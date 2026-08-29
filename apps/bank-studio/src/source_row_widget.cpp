@@ -3,6 +3,7 @@
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QCheckBox>
 #include <QFileIconProvider>
 #include <QFileInfo>
 #include <QFontMetrics>
@@ -46,6 +47,15 @@ SourceRowWidget::SourceRowWidget(const QString& questionPath, QWidget* parent)
     layout->addWidget(name, 0);
     layout->addStretch(1);
 
+    hasAnswerKeyCheck_ = new QCheckBox(QStringLiteral("本文件含答案/解析"));
+    hasAnswerKeyCheck_->setChecked(true);
+    hasAnswerKeyCheck_->setToolTip(QStringLiteral(
+        "勾选：从本文件或配对的答案文件中整理答案与解析；\n"
+        "取消：按无答案资料处理。"));
+    connect(hasAnswerKeyCheck_, &QCheckBox::toggled,
+            this, &SourceRowWidget::hasAnswerKeyChanged);
+    layout->addWidget(hasAnswerKeyCheck_, 0);
+
     addAnswerButton_ = new QPushButton(QStringLiteral("添加答案（可选）"));
     addAnswerButton_->setObjectName(QStringLiteral("textButton"));
     addAnswerButton_->setToolTip(QStringLiteral(
@@ -72,6 +82,14 @@ SourceRowWidget::SourceRowWidget(const QString& questionPath, QWidget* parent)
     layout->addWidget(removeButton, 0);
 }
 
+bool SourceRowWidget::hasAnswerKey() const {
+    return hasAnswerKeyCheck_->isChecked();
+}
+
+void SourceRowWidget::setHasAnswerKey(bool hasAnswerKey) {
+    hasAnswerKeyCheck_->setChecked(hasAnswerKey);
+}
+
 void SourceRowWidget::setPairedAnswer(const QString& answerPath) {
     pairedAnswerLabel_->setText(
         pairedAnswerLabel_->fontMetrics().elidedText(
@@ -80,6 +98,7 @@ void SourceRowWidget::setPairedAnswer(const QString& answerPath) {
     addAnswerButton_->setVisible(false);
     pairedAnswerLabel_->setVisible(true);
     clearAnswerButton_->setVisible(true);
+    setHasAnswerKey(true);
 }
 
 void SourceRowWidget::clearPairedAnswer() {
