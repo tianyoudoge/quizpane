@@ -100,7 +100,8 @@
 - **现状**：`build-windows7-openssl.ps1` 从 OpenSSL 官方源码按 x64/x86 构建固定的 1.1.1w
   运行库并校验 SHA-256；`build-windows.ps1` 将对应 `libcrypto`/`libssl` DLL 和许可证写入绿色包。
   打包阶段从最终部署目录运行 `windows_tls_runtime_probe`，同时校验 `QSslSocket::supportsSsl()`
-  与实际加载版本，缺 DLL、架构不符或 ABI 不符都会在生成 ZIP 前失败。
+  与实际加载版本，缺 DLL、架构不符或 ABI 不符都会在生成 ZIP 前失败；缓存命中会显式清零
+  PowerShell 的原生命令退出码，避免把上一步无关的失败码误判成 TLS 运行库准备失败。
 
 ### A13. Windows 绿色包依赖构建机运行时 — 已解决（2026-08-31）
 - **原现象**：常规 Win10/11 ZIP 只有 `vc_redist.x64.exe`，没有与 EXE 同级的

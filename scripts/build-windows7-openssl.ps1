@@ -20,6 +20,10 @@ foreach ($Name in $RuntimeNames) {
 }
 if ($RuntimeReady -and (Test-Path (Join-Path $OutputDir "LICENSE.txt"))) {
     Write-Host "Using cached OpenSSL $Version runtime: $OutputDir"
+    # PowerShell does not reset LASTEXITCODE when a script returns without
+    # invoking a native command. Do not leak an unrelated earlier exit code to
+    # build-windows7.ps1 on a cache hit.
+    $global:LASTEXITCODE = 0
     return
 }
 
@@ -69,3 +73,4 @@ foreach ($Name in $RuntimeNames) {
 }
 Copy-Item (Join-Path $SourceDir "LICENSE") (Join-Path $OutputDir "LICENSE.txt") -Force
 Write-Host "Prepared OpenSSL $Version Win7 runtime: $OutputDir"
+$global:LASTEXITCODE = 0

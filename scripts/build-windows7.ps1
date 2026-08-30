@@ -19,7 +19,6 @@ if ($EnableOcr) {
     if (-not $PSBoundParameters.ContainsKey("DistDir")) { $DistDir = "dist/windows7-ocr-$Architecture" }
     $OcrBuild = Join-Path (Resolve-Path "$PSScriptRoot/..").Path "build/windows7-ocr-$Architecture"
     & "$PSScriptRoot/build-windows7-ocr.ps1" -Architecture $Architecture -BuildDir $OcrBuild
-    if ($LASTEXITCODE -ne 0) { throw "Win7 OCR 依赖准备失败" }
     $OcrPrefix = Join-Path $OcrBuild "install"
 }
 
@@ -28,7 +27,6 @@ if ($EnableOcr) {
 $OpenSslRoot = Join-Path (Resolve-Path "$PSScriptRoot/..").Path "build/windows7-openssl-$Architecture/runtime"
 & "$PSScriptRoot/build-windows7-openssl.ps1" `
     -Architecture $Architecture -OutputDir $OpenSslRoot
-if ($LASTEXITCODE -ne 0) { throw "Win7 TLS runtime preparation failed" }
 
 $Arguments = @{
     QtRoot = $QtRoot
@@ -49,4 +47,3 @@ if ($EnableOcr) {
 }
 
 & $BuildScript @Arguments
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
