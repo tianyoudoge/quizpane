@@ -190,8 +190,10 @@ const QRegularExpression& solutionPattern() {
 }
 
 bool isAnswerSectionHeader(const QString& text) {
+    // “答案对照表”与“参考答案”同为整卷答案区的固定标题（常见于按题号区间
+    // 分组的答案页），必须识别，否则区间答案会被当成普通正文漏掉。
     static const QRegularExpression pattern(
-        QStringLiteral(R"(^\s*【?\s*(?:答案|参考答案|答案汇总|答案及解析|参考答案及解析)\s*】?\s*[:：]?\s*$)"));
+        QStringLiteral(R"(^\s*【?\s*(?:答案|参考答案|答案对照表|答案汇总|答案及解析|参考答案及解析)\s*】?\s*[:：]?\s*$)"));
     return pattern.match(text).hasMatch();
 }
 
@@ -938,32 +940,93 @@ QList<SourceLine> sourceLines(const ExtractedDocument& document) {
 }
 
 // 只有明确标题后跟第一题才分套；目录标题和没有依据的重号不生成新作用域。
+// 裸章节标题（“实战演练一”“第一部分”这类整行短标题）额外要求证据才肯切分：
+// 标题后到下一标题之间的第一道题必须是第 1 题（题号重启），且同页靠前不能
+// 出现“目录”（目录条目）。误切会把题目切碎，比不切更有害，因此宁缺毋滥。
 QList<ExtractedDocument> splitBookletSections(const ExtractedDocument& document) {
     if (!document.sectionId.isEmpty()) return {document};
-    static const QRegularExpression title(QStringLiteral(
-        R"((?:^|(?<=\f))[ \t]*(专项刷题[一二三四五六七八九十百\d]+|第[一二三四五六七八九十百\d]+套(?:试题|试卷|练习题)?|(?:试卷|套题)[一二三四五六七八九十百\d]+)[ \t]*\r?$)"),
-        QRegularExpression::MultilineOption);
-    QList<QRegularExpressionMatch> headings;
-    auto matches = title.globalMatch(document.plainText);
-    while (matches.hasNext()) headings.append(matches.next());
-    QList<QRegularExpressionMatch> boundaries;
-    for (int i = 0; i < headings.size(); ++i) {
-        const int start = headings.at(i).capturedEnd();
-        const int end = i + 1 < headings.size() ? headings.at(i + 1).capturedStart()
-                                               : document.plainText.size();
-        const QStringList lines = document.plainText.mid(start, end - start)
-            .split(QRegularExpression(QStringLiteral("[\\r\\n\\f]+")));
-        for (const auto& line : lines) {
-            const auto question = questionPattern().match(line);
-            if (!question.hasMatch()) continue;
-            if (question.captured(1).toInt() == 1) boundaries.append(headings.at(i));
-            break;
+    static const QRegularExpression strongTitle(QStringLiteral(
+        R"(专项刷题[一二三四五六七八九十百\d]+|第[一二三四五六七八九十百\d]+套(?:试题|试卷|练习题)?|(?:试卷|套题)[一二三四五六七八九十百\d]+)"));
+    // 关键词只收高信号复合词，且必须带编号（“实战演练一”）：单独的
+    // “练习/演练/测试”可能出现在题干里。“第X部分/章”允许跟一个题型名
+    // （“第一部分 片段阅读”）；句子状语（“第一部分规定了……”）因后面还有
+    // 其它文字而不会整行命中。
+    static const QRegularExpression bareChapter(QStringLiteral(
+        R"chapter((?:实战|模拟|专项|强化|基础|巩固|综合|同步|真题|单元)(?:演练|练习|训练|测试|刷题)(?:[一二三四五六七八九十]{1,3}|\d{1,2})|[一二三四五六七八九十]{1,3}(?:部分|章|节|卷|篇|组|单元)(?:\s+\S{1,12})?|第[一二三四五六七八九十百\d]{1,3}(?:部分|章|节|卷|篇|组|单元)(?:\s+\S{1,12})?)chapter"));
+    const QStringList lines = document.plainText.split(QRegularExpression(QStringLiteral("[\\r\\n\\f]+")));
+    // 一行可含多组答案对（“1.A 2.B”），整行是答案对时不算题号锚点。
+    static const QRegularExpression answerPairLine(QStringLiteral(
+        R"(^\s*(?:(?:第\s*)?\d{1,4}\s*(?:题|[\.．、:：\)）])\s*(?:【?答案】?\s*[:：]?)?\s*[A-Fa-f]{1,6}\s*)+\s*$)"));
+    const auto questionNumberOn = [&lines](int index) {
+        if (answerPairLine.match(lines.at(index).trimmed()).hasMatch())
+            return 0;
+        const auto match = questionPattern().match(lines.at(index));
+        return match.hasMatch() ? match.captured(1).toInt() : 0;
+    };
+    // 各行起始在原文中的偏移；分隔符是 [\r\n\f]+（CRLF 为双字符），逐字符跳过。
+    QList<int> lineOffsets;
+    lineOffsets.reserve(lines.size());
+    {
+        int textPos = 0;
+        for (int i = 0; i < lines.size(); ++i) {
+            lineOffsets.append(textPos);
+            textPos += lines.at(i).size();
+            if (i + 1 < lines.size()) {
+                while (textPos < document.plainText.size() &&
+                       (document.plainText.at(textPos) == u'\r' ||
+                        document.plainText.at(textPos) == u'\n' ||
+                        document.plainText.at(textPos) == u'\f'))
+                    ++textPos;
+            }
         }
+    }
+    // 同页靠前出现“目录”的行按目录条目处理；换页符是页面的可靠分隔。
+    const auto tocPageBefore = [&document, &lineOffsets](int line) {
+        const int start = lineOffsets.at(line);
+        const int before = document.plainText.left(start).lastIndexOf(QChar('\f'));
+        const int pageStart = before < 0 ? 0 : before + 1;
+        return document.plainText.mid(pageStart, start - pageStart).contains(QStringLiteral("目录"));
+    };
+    struct Candidate { int line = 0; QString text; bool bare = false; };
+    QList<Candidate> form;
+    // 标题必须独占整行：题干里出现“实战演练一”字样（“本题来自实战演练一”）
+    // 绝不能被当成章节边界。
+    const auto isFullLine = [](const QRegularExpression& pattern, const QString& text) {
+        const auto match = pattern.match(text);
+        return match.hasMatch() && match.captured(0) == text;
+    };
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString text = lines.at(i).trimmed();
+        if (text.isEmpty() || text.size() > 24)
+            continue;
+        const bool strong = isFullLine(strongTitle, text);
+        const bool bare = !strong && isFullLine(bareChapter, text);
+        if (strong || bare)
+            form.append({i, text, bare});
+    }
+    QList<Candidate> boundaries;
+    for (int k = 0; k < form.size(); ++k) {
+        const Candidate candidate = form.at(k);
+        const int next = k + 1 < form.size() ? form.at(k + 1).line : lines.size();
+        // 标题后（到下一标题前）的第一道题必须是第 1 题：目录行、题干里的短行
+        // 以及“不重启编号”的分节标题都会在这里被挡掉。
+        int firstAfter = 0;
+        for (int j = candidate.line + 1; j < next; ++j) {
+            firstAfter = questionNumberOn(j);
+            if (firstAfter > 0)
+                break;
+        }
+        if (firstAfter != 1)
+            continue;
+        if (candidate.bare && tocPageBefore(candidate.line))
+            continue;
+        boundaries.append(candidate);
     }
     if (boundaries.isEmpty()) return {document};
     QList<ExtractedDocument> result;
     // 第一份明确标题之前可能还有未命名的试题，不能当成封面/目录丢弃。
-    const QString prefix = document.plainText.left(boundaries.first().capturedStart());
+    const int prefixEnd = lineOffsets.at(boundaries.first().line);
+    const QString prefix = document.plainText.left(prefixEnd);
     bool prefixQuestion = false, prefixOptions = false;
     for (const auto& line : prefix.split(QRegularExpression(QStringLiteral("[\\r\\n\\f]+")))) {
         prefixQuestion |= questionPattern().match(line).hasMatch();
@@ -977,13 +1040,13 @@ QList<ExtractedDocument> splitBookletSections(const ExtractedDocument& document)
         result.append(ungrouped);
     }
     for (int i = 0; i < boundaries.size(); ++i) {
-        const auto& heading = boundaries.at(i);
-        const int start = heading.capturedEnd();
-        const int end = i + 1 < boundaries.size() ? boundaries.at(i + 1).capturedStart()
-                                                : document.plainText.size();
+        const int start = lineOffsets.at(boundaries.at(i).line) + lines.at(boundaries.at(i).line).size();
+        const int end = i + 1 < boundaries.size()
+            ? lineOffsets.at(boundaries.at(i + 1).line)
+            : document.plainText.size();
         ExtractedDocument section = document;
         section.sectionId = QStringLiteral("set-%1").arg(i + 1);
-        section.sectionTitle = heading.captured(1);
+        section.sectionTitle = boundaries.at(i).text;
         section.firstPageNumber += document.plainText.left(start).count(QChar('\f'));
         section.plainText = document.plainText.mid(start, end - start);
         result.append(section);
@@ -1235,14 +1298,19 @@ QString sortedAnswer(QString answer) {
 
 QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionStart, int sectionEnd,
                                   bool includeSectionStartLine,
-                                  QSet<int>* ambiguousNumbers) {
+                                  QSet<int>* ambiguousNumbers,
+                                  QList<QPair<int, QString>>* orderedRecords = nullptr) {
     QHash<int, QString> answers;
     const auto recordAnswer = [&](int number, const QString& answer) {
         if (number <= 0 || answer.isEmpty() || ambiguousNumbers->contains(number)) return;
         if (answers.contains(number) && sortedAnswer(answers.value(number)) != sortedAnswer(answer)) {
             ambiguousNumbers->insert(number);
             answers.remove(number);
-        } else answers.insert(number, answer);
+        } else {
+            answers.insert(number, answer);
+            if (orderedRecords)
+                orderedRecords->append({number, answer});
+        }
     };
     if (sectionStart < 0)
         return answers;
@@ -1320,8 +1388,11 @@ QHash<int, QString> globalAnswers(const QList<SourceLine>& lines, int sectionSta
         const QString line = lines.at(index).text;
         const auto record = answerRecord.match(line);
         if (record.hasMatch()) currentNumber = record.captured(1).toInt();
-        const auto rangeMatch = range.match(line);
-        if (rangeMatch.hasMatch()) {
+        // 一行可含多组区间答案（“1~5: DDCBC  6~10: CBCAD  11~15: DCDCD”），
+        // 逐组展开；只取第一组会丢掉后半卷的答案。
+        auto rangeMatches = range.globalMatch(line);
+        while (rangeMatches.hasNext()) {
+            const auto rangeMatch = rangeMatches.next();
             const int first = rangeMatch.captured(1).toInt();
             const int last = rangeMatch.captured(2).toInt();
             const QString rawValues = rangeMatch.captured(3);
@@ -2168,8 +2239,9 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         // 关键规则：最后一个答案区头之后的候选锚点都属于“末尾答案区”内的解析
         // 文本（如“1. 某选项是第一个”），一律剔除；位于前序答案区头之间的候选
         // 锚点才是阶段二的题目（前一个答案区已结束、下一个答案区未开始）。
+        // 一行可含多组答案对（“1.A 2.B 3.C”），整行都是答案对时都不算题号锚点。
         static const QRegularExpression answerRecordLine(QStringLiteral(
-            R"(^\s*(?:第\s*)?(\d{1,4})\s*(?:题|[\.．、:：\)）])\s*(?:【?答案】?\s*[:：]?)?\s*[A-Fa-f]{1,6}\s*$)"));
+            R"(^\s*(?:(?:第\s*)?\d{1,4}\s*(?:题|[\.．、:：\)）])\s*(?:【?答案】?\s*[:：]?)?\s*[A-Fa-f]{1,6}\s*)+\s*$)"));
         const int lastAnswerSection = answerSections.isEmpty() ? -1 : answerSections.last();
         QList<QuestionAnchor> anchors;
         for (int index = 0; index < lines.size(); ++index) {
@@ -2359,13 +2431,20 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         QHash<int, QString> answers;
         QHash<int, QString> solutions;
         QSet<int> ambiguousAnswerNumbers;
+        // 各答案区段按行序的原始答案记录（题号→答案）。无标题的章节型题库题号
+        // 会重启，按题号的 map 把各章的答案互相冲突掉；兜底 pass 用这里的顺序
+        // 把答案按位置绑回紧邻的题块。
+        QList<QList<QPair<int, QString>>> sectionAnswerRecords;
+        sectionAnswerRecords.reserve(answerSections.size());
         for (int sectionIndex = 0; sectionIndex < answerSections.size(); ++sectionIndex) {
             const int sectionStart = answerSections.at(sectionIndex);
             const int sectionEnd =
                 answerSectionEnd(lines, sectionStart, anchors, materialMarkers);
+            QList<QPair<int, QString>> orderedRecords;
             const auto segmentAnswers = globalAnswers(lines, sectionStart, sectionEnd,
                                                       inlineAnswerSections.contains(sectionStart),
-                                                      &ambiguousAnswerNumbers);
+                                                      &ambiguousAnswerNumbers, &orderedRecords);
+            sectionAnswerRecords.append(orderedRecords);
             for (auto it = segmentAnswers.cbegin(); it != segmentAnswers.cend(); ++it)
                 if (answers.contains(it.key()) && sortedAnswer(answers.value(it.key())) != sortedAnswer(it.value()))
                     ambiguousAnswerNumbers.insert(it.key());
@@ -2378,6 +2457,75 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
         for (int number : ambiguousAnswerNumbers) {
             answers.remove(number);
             solutions.remove(number);
+        }
+
+        // 兜底：章节标题没被识别（形态未知）导致题号重启时，按题号绑定会整体
+        // 失败。答案区紧跟在题块后面，若该段的答案记录恰好是连续题号区间 [a..a+K-1]
+        // （K>=2）、且紧邻其前的 K 个锚点也构成同一段区间、其中至少一个题号在全文
+        // 重号，则按位置一一对应。证据不足时宁可保持 hard 复核——错位写入比不
+        // 写入更有害。
+        QHash<int, QString> positionalAnswersByLine;
+        if (hasAnswerKey && !anchors.isEmpty()) {
+            QHash<int, int> counts;
+            for (const auto& anchor : anchors)
+                ++counts[anchor.number];
+            for (int sectionIndex = 0; sectionIndex < answerSections.size(); ++sectionIndex) {
+                const int sectionStart = answerSections.at(sectionIndex);
+                const QList<QPair<int, QString>>& records = sectionAnswerRecords.at(sectionIndex);
+                if (records.size() < 2)
+                    continue;
+                // 本段答案区之前的所有题号锚点（后面的章节不影响本段）。
+                QList<const QuestionAnchor*> before;
+                for (const auto& anchor : anchors)
+                    if (anchor.line < sectionStart)
+                        before.append(&anchor);
+                const int recordCount = records.size();
+                if (before.size() < recordCount)
+                    continue;
+                const int firstNumber = records.first().first;
+                bool consecutive = true;
+                bool hasRepeated = false;
+                for (int i = 0; i < recordCount && consecutive; ++i) {
+                    if (records.at(i).first != firstNumber + i)
+                        consecutive = false;
+                    else if (counts.value(records.at(i).first, 0) > 1)
+                        hasRepeated = true;
+                }
+                if (!consecutive || !hasRepeated)
+                    continue;
+                // 紧邻其前的 K 个锚点必须构成同样的连续区间。跨章同号产生的
+                // “冲突”（1 对应 A 也对应 B）正是需要按位置绑定的原因，不是
+                // 拒绝条件；真正的歧义（一张表覆盖两章）由下面的多段匹配检查
+                // 拦截。
+                bool anchorsMatch = true;
+                for (int i = 0; i < recordCount && anchorsMatch; ++i)
+                    if (before.at(int(before.size()) - recordCount + i)->number != firstNumber + i)
+                        anchorsMatch = false;
+                if (!anchorsMatch)
+                    continue;
+                // 整卷只有一个答案区、而前面存在多段同形题号区间时，无法判断
+                // 这张表属于哪一章（如两章各 1-6 题、卷末只有一张 1-6 的表）；
+                // 宁可放弃。分章各自带答案区时按“章节顺序、答案紧跟本章”绑定。
+                if (answerSections.size() == 1) {
+                    int matchingRuns = 0;
+                    for (int start = 0; start + recordCount <= int(before.size()); ++start) {
+                        bool run = true;
+                        for (int i = 0; i < recordCount && run; ++i)
+                            if (before.at(start + i)->number != firstNumber + i)
+                                run = false;
+                        if (run)
+                            ++matchingRuns;
+                    }
+                    if (matchingRuns >= 2)
+                        continue;
+                }
+                for (int i = 0; i < recordCount; ++i) {
+                    const QuestionAnchor& anchor = *before.at(int(before.size()) - recordCount + i);
+                    if (counts.value(anchor.number) <= 1)
+                        continue; // 未重号的题已有按题号绑定的答案。
+                    positionalAnswersByLine.insert(anchor.line, records.at(i).second);
+                }
+            }
         }
 
         // 同一类网页导出还会把“正确答案：C”集中排在题干之前，且每行没有题号。
@@ -2540,6 +2688,12 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             if (!leadingAnswers.isEmpty() && !questionAnswers.contains(anchor.number) &&
                 !ambiguousAnswerNumbers.contains(anchor.number))
                 questionAnswers.insert(anchor.number, leadingAnswers.at(index));
+            // 无标题章节型题库的题号重启无法按题号绑定时，用兜底 pass 按答案区
+            // 顺序对位的结果（只写进当前题的副本，不影响其它同号题）。
+            const bool positionallyBound = positionalAnswersByLine.contains(anchor.line) &&
+                !questionAnswers.contains(anchor.number);
+            if (positionallyBound)
+                questionAnswers.insert(anchor.number, positionalAnswersByLine.value(anchor.line));
             QString reviewReason;
             QJsonObject question = parseQuestion(document, lines, anchor, blockEnd, id, materialId,
                                                  questionAnswers, questionSolutions, &result.assets, &reviewReason,
@@ -2572,7 +2726,9 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                 source.insert("questionLabel", QStringLiteral("原第 %1 题 · 同号第 %2 处")
                     .arg(anchor.number).arg(++numberOccurrences[anchor.number]));
                 question.insert("source", source);
-                if (hasAnswerKey && question.value("answer").toObject().value("optionIds").toArray().isEmpty()) {
+                const bool answerResolved =
+                    !question.value("answer").toObject().value("optionIds").toArray().isEmpty();
+                if (hasAnswerKey && !answerResolved) {
                     const QString reason = QStringLiteral("原题号 %1 重复，不能仅按题号确定答案与解析的归属；请对照原卷确认本题答案")
                         .arg(anchor.number);
                     reviewReason = reviewReason.isEmpty() ? reason : reviewReason + QStringLiteral("；") + reason;
@@ -2581,6 +2737,12 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                     review.insert("riskLevel", "hard");
                     review.insert("reason", reviewReason);
                     question.insert("review", review);
+                } else if (positionallyBound) {
+                    // 按位置绑定的答案仍然依赖“题块与答案区紧邻且题号连续”的假设，
+                    // 标记 soft 复核，不遮挡已有的 hard 信号。
+                    question = withReviewSignal(question, QStringLiteral("duplicate-number-positional-answer"),
+                        QStringLiteral("原题号 %1 重复，答案已按本章答案区顺序与本题对应，请核对")
+                            .arg(anchor.number));
                 }
             }
             if (hasAnswerKey && ambiguousAnswerNumbers.contains(anchor.number) &&

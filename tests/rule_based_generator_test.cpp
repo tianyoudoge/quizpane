@@ -1262,5 +1262,241 @@ int main(int argc, char** argv) {
             return 71;
     }
 
+    // 章节型题库：裸标题（“实战演练一”）后题号从 1 重新开始，每章末尾各有一
+    // 组答案。切分后各章独立生成，同号答案互不冲突。
+    const auto chapterAnswers = [](const quizpane::studio::RuleBasedGenerationResult& result) {
+        QStringList list;
+        for (const auto& value : result.questions) {
+            const auto ids = value.toObject().value("answer").toObject().value("optionIds").toArray();
+            QString joined;
+            for (const auto& id : ids)
+                joined += id.toString();
+            list.append(joined);
+        }
+        return list;
+    };
+    {
+        ExtractedDocument chapters;
+        chapters.sourcePath = QStringLiteral("chapters.txt");
+        chapters.plainText = QStringLiteral(
+            "实战演练一\n"
+            "1.第一章第一题\nA.甲\nB.乙\n"
+            "2.第一章第二题\nA.丙\nB.丁\n"
+            "答案对照表\n1.A 2.B\n"
+            "实战演练二\n"
+            "1.第二章第一题\nA.戊\nB.己\n"
+            "2.第二章第二题\nA.庚\nB.辛\n"
+            "答案对照表\n1.B 2.A\n");
+        const auto chapterResult = RuleBasedBankGenerator{}.generate({chapters});
+        if (chapterResult.questions.size() != 4 || !chapterResult.needsReviewQuestions.isEmpty())
+            return 165;
+        if (chapterAnswers(chapterResult) != QStringList{"a", "b", "b", "a"})
+            return 166;
+        const auto firstSource = chapterResult.questions.at(0).toObject().value("source").toObject();
+        const auto secondSource = chapterResult.questions.at(2).toObject().value("source").toObject();
+        if (firstSource.value("sectionId").toString() != QStringLiteral("set-1") ||
+            firstSource.value("sectionTitle").toString() != QStringLiteral("实战演练一") ||
+            secondSource.value("sectionId").toString() != QStringLiteral("set-2") ||
+            secondSource.value("sectionTitle").toString() != QStringLiteral("实战演练二"))
+            return 167;
+        // 章节标题不得流入题干或选项。
+        for (const auto& value : chapterResult.questions) {
+            const auto question = value.toObject();
+            if (question.value("stem").toString().contains(QStringLiteral("实战演练")) ||
+                question.value("options").toArray().first().toObject().value("text").toString()
+                        .contains(QStringLiteral("实战演练")))
+                return 168;
+        }
+    }
+    {
+        // 区间答案串（1~5 AABCC）必须在各自章节内展开。
+        ExtractedDocument rangeChapters;
+        rangeChapters.sourcePath = QStringLiteral("range-chapters.txt");
+        QString body;
+        for (int chapter = 0; chapter < 2; ++chapter) {
+            body += QStringLiteral("实战演练%1\n").arg(chapter ? QStringLiteral("二") : QStringLiteral("一"));
+            for (int number = 1; number <= 5; ++number) {
+                body += QStringLiteral("%1.第%2章第%3题\nA.甲\nB.乙\nC.丙\nD.丁\n")
+                            .arg(number).arg(chapter + 1).arg(number);
+            }
+            body += QStringLiteral("答案对照表\n1~5 %1\n").arg(chapter ? QStringLiteral("CBAAB") : QStringLiteral("AABCC"));
+        }
+        rangeChapters.plainText = body;
+        const auto rangeResult = RuleBasedBankGenerator{}.generate({rangeChapters});
+        if (rangeResult.questions.size() != 10 || !rangeResult.needsReviewQuestions.isEmpty())
+            return 169;
+        const QStringList expected = {QStringLiteral("a"), QStringLiteral("a"), QStringLiteral("b"),
+                                      QStringLiteral("c"), QStringLiteral("c"),
+                                      QStringLiteral("c"), QStringLiteral("b"), QStringLiteral("a"),
+                                      QStringLiteral("a"), QStringLiteral("b")};
+        if (chapterAnswers(rangeResult) != expected)
+            return 170;
+    }
+    {
+        // 题干里出现章节字样不是标题；不重启编号的分节标题也不切分。
+        ExtractedDocument notChapters;
+        notChapters.sourcePath = QStringLiteral("not-chapters.txt");
+        notChapters.plainText = QStringLiteral(
+            "1.第一题\nA.甲\nB.乙\n答案：A\n"
+            "2.本题来自实战演练一的改编\nA.丙\nB.丁\n答案：B\n"
+            "3.第三题\nA.戊\nB.己\n答案：B\n");
+        const auto notResult = RuleBasedBankGenerator{}.generate({notChapters});
+        if (notResult.questions.size() != 3 || !notResult.needsReviewQuestions.isEmpty())
+            return 171;
+        for (const auto& value : notResult.questions) {
+            const auto source = value.toObject().value("source").toObject();
+            if (!source.value("sectionId").toString().isEmpty())
+                return 172;
+        }
+    }
+    {
+        // 目录页里的裸标题行不是边界：真实标题（其后题号从 1 开始）照常切分。
+        ExtractedDocument tocChapters;
+        tocChapters.sourcePath = QStringLiteral("toc-chapters.txt");
+        tocChapters.plainText = QStringLiteral(
+            "目录\n实战演练一\n实战演练二\n"
+            "\f实战演练一\n1.第一题\nA.甲\nB.乙\n答案：A\n"
+            "\f实战演练二\n1.第二题\nA.丙\nB.丁\n答案：B\n");
+        const auto tocResult = RuleBasedBankGenerator{}.generate({tocChapters});
+        if (tocResult.questions.size() != 2 || !tocResult.needsReviewQuestions.isEmpty())
+            return 173;
+        const auto firstSource = tocResult.questions.at(0).toObject().value("source").toObject();
+        if (firstSource.value("sectionId").toString() != QStringLiteral("set-1") ||
+            firstSource.value("sectionTitle").toString() != QStringLiteral("实战演练一"))
+            return 174;
+    }
+    {
+        // “第一部分/第二部分”形态，带页边界；切分后页码保持原始绝对页码。
+        ExtractedDocument partChapters;
+        partChapters.sourcePath = QStringLiteral("part-chapters.txt");
+        partChapters.hasPageBoundaries = true;
+        partChapters.plainText = QStringLiteral(
+            "第一部分 片段阅读\n"
+            "1.第一题\nA.甲\nB.乙\n答案：A\n"
+            "\f第二部分 逻辑判断\n"
+            "1.第二题\nA.丙\nB.丁\n答案：B\n");
+        const auto partResult = RuleBasedBankGenerator{}.generate({partChapters});
+        if (partResult.questions.size() != 2 || !partResult.needsReviewQuestions.isEmpty())
+            return 175;
+        const auto firstSource = partResult.questions.at(0).toObject().value("source").toObject();
+        const auto secondSource = partResult.questions.at(1).toObject().value("source").toObject();
+        if (firstSource.value("page").toInt() != 1 || secondSource.value("page").toInt() != 2 ||
+            firstSource.value("sectionId").toString() != QStringLiteral("set-1") ||
+            secondSource.value("sectionId").toString() != QStringLiteral("set-2"))
+            return 176;
+    }
+    {
+        // 强标题与裸标题混排时不能对同一行重复切分。
+        ExtractedDocument mixedChapters;
+        mixedChapters.sourcePath = QStringLiteral("mixed-chapters.txt");
+        mixedChapters.plainText = QStringLiteral(
+            "专项刷题一\n1.第一题\nA.甲\nB.乙\n答案：A\n"
+            "实战演练二\n1.第二题\nA.丙\nB.丁\n答案：B\n");
+        const auto mixedResult = RuleBasedBankGenerator{}.generate({mixedChapters});
+        if (mixedResult.questions.size() != 2 || !mixedResult.needsReviewQuestions.isEmpty())
+            return 177;
+        const auto firstSource = mixedResult.questions.at(0).toObject().value("source").toObject();
+        const auto secondSource = mixedResult.questions.at(1).toObject().value("source").toObject();
+        if (firstSource.value("sectionId").toString() != QStringLiteral("set-1") ||
+            secondSource.value("sectionId").toString() != QStringLiteral("set-2"))
+            return 178;
+    }
+    {
+        // 兜底：章节标题形态未知（无标题行）导致题号重启时，答案区紧跟题块且
+        // 题号连续，按位置一一对应，重号题得到 soft 复核而不是全红。
+        ExtractedDocument noTitleChapters;
+        noTitleChapters.sourcePath = QStringLiteral("no-title-chapters.txt");
+        noTitleChapters.plainText = QStringLiteral(
+            "1.甲题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "2.乙题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "3.丙题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "4.丁题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "答案对照表\n1.A 2.B 3.C 4.D\n"
+            "1.戊题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "2.己题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "3.庚题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "4.辛题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "答案对照表\n1.B 2.A 3.D 4.C\n");
+        const auto noTitleResult = RuleBasedBankGenerator{}.generate({noTitleChapters});
+        if (noTitleResult.questions.size() != 8 || !noTitleResult.needsReviewQuestions.isEmpty())
+            return 179;
+        const QStringList expected = {QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("c"),
+                                      QStringLiteral("d"),
+                                      QStringLiteral("b"), QStringLiteral("a"), QStringLiteral("d"),
+                                      QStringLiteral("c")};
+        if (chapterAnswers(noTitleResult) != expected)
+            return 180;
+        for (const auto& value : noTitleResult.questions) {
+            const auto review = value.toObject().value("review").toObject();
+            QStringList signalList;
+            for (const auto& signal : review.value(QStringLiteral("signals")).toArray())
+                signalList.append(signal.toString());
+            if (review.value("riskLevel").toString() != QStringLiteral("soft") ||
+                !signalList.contains(QStringLiteral("duplicate-number-positional-answer")) ||
+                !review.value("reason").toString().contains(QStringLiteral("顺序")))
+                return 181;
+        }
+    }
+    {
+        // 单表 + 两章重启：答案表记录本身无重复（每题号只出现一次），keyed 绑定
+        // 直接生效于第一章；兜底按位置绑定因“两段同形 1-4 题块”而拒绝误触发。
+        // 第二章位于最后一个答案区之后，命中既有的“末尾答案区文字”排除规则，
+        // 不生成题目（与无章节结构的线性卷一致）。
+        ExtractedDocument mismatchChapters;
+        mismatchChapters.sourcePath = QStringLiteral("mismatch-chapters.txt");
+        mismatchChapters.plainText = QStringLiteral(
+            "1.甲题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "2.乙题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "3.丙题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "4.丁题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "答案对照表\n1.A 2.B 3.C 4.D\n"
+            "1.戊题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "2.己题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "3.庚题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "4.辛题\nA.甲\nB.乙\nC.丙\nD.丁\n");
+        const auto mismatchResult = RuleBasedBankGenerator{}.generate({mismatchChapters});
+        if (mismatchResult.questions.size() != 4 || !mismatchResult.needsReviewQuestions.isEmpty())
+            return 182;
+        if (chapterAnswers(mismatchResult) != QStringList{QStringLiteral("a"), QStringLiteral("b"),
+                                                          QStringLiteral("c"), QStringLiteral("d")})
+            return 183;
+        for (const auto& value : mismatchResult.questions) {
+            const auto review = value.toObject().value("review").toObject();
+            if (review.value("needsReview").toBool())
+                return 183;
+        }
+    }
+    {
+        // 兜底拒绝：卷末只有一张 1-4 的表，前面存在两段同形的 1-4 题块时无法
+        // 判断表格属于哪一章，一律不绑定，全部保持 hard 复核。
+        ExtractedDocument ambiguousTable;
+        ambiguousTable.sourcePath = QStringLiteral("ambiguous-table.txt");
+        ambiguousTable.plainText = QStringLiteral(
+            "1.甲题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "2.乙题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "3.丙题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "4.丁题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "1.戊题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "2.己题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "3.庚题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "4.辛题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+            "答案对照表\n1.A 2.B 3.C 4.D\n");
+        const auto ambiguousTableResult = RuleBasedBankGenerator{}.generate({ambiguousTable});
+        if (!ambiguousTableResult.questions.isEmpty())
+            return 184;
+        if (ambiguousTableResult.needsReviewQuestions.size() != 8)
+            return 185;
+        for (const auto& value : ambiguousTableResult.needsReviewQuestions) {
+            const auto review = value.toObject().value("review").toObject();
+            QStringList signalList;
+            for (const auto& signal : review.value(QStringLiteral("signals")).toArray())
+                signalList.append(signal.toString());
+            if (review.value("riskLevel").toString() != QStringLiteral("hard") ||
+                signalList.contains(QStringLiteral("duplicate-number-positional-answer")) ||
+                !value.toObject().value("answer").toObject().value("optionIds").toArray().isEmpty())
+                return 186;
+        }
+    }
+
     return 0;
 }

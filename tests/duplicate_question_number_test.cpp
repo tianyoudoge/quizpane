@@ -139,5 +139,38 @@ int main(int argc, char** argv) {
     if (!quizpane::validateBank(bank, &error)) return 25;
     bank.insert("questions", answerless.questions); bank.insert("answerPolicy", "none");
     if (!quizpane::validateBank(bank, &error)) return 26;
+
+    // 兜底：标题形态未知、题号逐章重启时，各章题块后紧跟连续题号答案表 → 按
+    // 位置绑定（soft 复核）；一段同形题块 + 卷末单张表 → 无法归属，一律拒绝。
+    const QString chapterOne = QStringLiteral("1.甲题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+                                              "2.乙题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+                                              "3.丙题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+                                              "4.丁题\nA.甲\nB.乙\nC.丙\nD.丁\n");
+    const QString chapterTwo = QStringLiteral("1.戊题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+                                              "2.己题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+                                              "3.庚题\nA.甲\nB.乙\nC.丙\nD.丁\n"
+                                              "4.辛题\nA.甲\nB.乙\nC.丙\nD.丁\n");
+    const auto positional = generate(chapterOne + QStringLiteral("答案对照表\n1.A 2.B 3.C 4.D\n") +
+                                     chapterTwo + QStringLiteral("答案对照表\n1.B 2.A 3.D 4.C\n"));
+    if (positional.questions.size() != 8 || !positional.needsReviewQuestions.isEmpty()) return 30;
+    QStringList positionalAnswers;
+    for (const auto& q : positional.questions) {
+        positionalAnswers << answer(q);
+        const auto review = q.toObject().value("review").toObject();
+        QStringList signalList;
+        for (const auto& signal : review.value("signals").toArray()) signalList << signal.toString();
+        if (!signalList.contains(QStringLiteral("duplicate-number-positional-answer")) ||
+            !review.value("reason").toString().contains(QStringLiteral("顺序"))) return 31;
+    }
+    if (positionalAnswers != QStringList{"a", "b", "c", "d", "b", "a", "d", "c"}) return 32;
+    const auto ambiguousChapter = generate(chapterOne + chapterTwo +
+                                           QStringLiteral("答案对照表\n1.A 2.B 3.C 4.D\n"));
+    if (!ambiguousChapter.questions.isEmpty() || ambiguousChapter.needsReviewQuestions.size() != 8) return 33;
+    for (const auto& q : ambiguousChapter.needsReviewQuestions) {
+        const auto review = q.toObject().value("review").toObject();
+        QStringList signalList;
+        for (const auto& signal : review.value("signals").toArray()) signalList << signal.toString();
+        if (!answer(q).isEmpty() || signalList.contains(QStringLiteral("duplicate-number-positional-answer"))) return 34;
+    }
     return 0;
 }
