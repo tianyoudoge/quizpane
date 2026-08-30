@@ -6,6 +6,7 @@ param(
     [string]$VcpkgTargetTriplet = "",
     [string]$TessdataDir = $env:TESSDATA_DIR,
     [string]$OcrPrefix = "",
+    [string]$OpenSslRoot = "",
     [ValidateSet("5", "6")]
     [string]$QtMajorVersion = "6",
     [ValidateSet("x64", "x86")]
@@ -126,6 +127,33 @@ if ($Windows7Compat) {
   }
   Copy-Item (Join-Path $V142Redist "*.dll") $Stage -Force
   Copy-Item (Join-Path $UcrtRedist "*.dll") $Stage -Force
+
+  # Qt 5.15.2 uses the OpenSSL 1.1.1 runtime backend on Windows. windeployqt
+  # does not deploy these third-party DLLs, so a portable Win7 package must.
+  if (-not $OpenSslRoot -or -not (Test-Path $OpenSslRoot)) {
+    throw "Win7 package requires an OpenSSL runtime directory"
+  }
+  $OpenSslSuffix = if ($Architecture -eq "x64") { "-x64" } else { "" }
+  foreach ($RuntimeName in @("libcrypto-1_1$OpenSslSuffix.dll", "libssl-1_1$OpenSslSuffix.dll")) {
+    $RuntimePath = Join-Path $OpenSslRoot $RuntimeName
+    if (-not (Test-Path $RuntimePath)) { throw "Missing Win7 TLS runtime: $RuntimePath" }
+    Copy-Item $RuntimePath $Stage -Force
+  }
+  $OpenSslLicense = Join-Path $OpenSslRoot "LICENSE.txt"
+  if (-not (Test-Path $OpenSslLicense)) { throw "Missing OpenSSL license: $OpenSslLicense" }
+  $LicenseDir = Join-Path $Stage "licenses"
+  New-Item -ItemType Directory -Force -Path $LicenseDir | Out-Null
+  Copy-Item $OpenSslLicense (Join-Path $LicenseDir "OpenSSL-1.1.1w.txt") -Force
+
+  # Run QSslSocket from the final deployment directory. This catches missing,
+  # wrong-architecture, or ABI-incompatible TLS DLLs before the ZIP is created.
+  $TlsProbeSource = Join-Path $Build "tests/win7_tls_runtime_probe.exe"
+  if (-not (Test-Path $TlsProbeSource)) { throw "Missing Win7 TLS runtime probe" }
+  $TlsProbe = Join-Path $Stage "win7_tls_runtime_probe.exe"
+  Copy-Item $TlsProbeSource $TlsProbe -Force
+  & $TlsProbe
+  if ($LASTEXITCODE -ne 0) { throw "Packaged Win7 TLS runtime probe failed with exit code $LASTEXITCODE" }
+  Remove-Item $TlsProbe -Force
 }
 if (-not $DisableOcr) {
   if (-not $TessdataDir) { throw "请通过 -TessdataDir 或 TESSDATA_DIR 指定 OCR 语言数据目录" }

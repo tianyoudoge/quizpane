@@ -22,6 +22,14 @@ if ($EnableOcr) {
     if ($LASTEXITCODE -ne 0) { throw "Win7 OCR 依赖准备失败" }
     $OcrPrefix = Join-Path $OcrBuild "install"
 }
+
+# Qt 5.15.2 loads OpenSSL dynamically. windeployqt only deploys Qt libraries,
+# so prepare the matching x86/x64 OpenSSL 1.1.1 runtime explicitly.
+$OpenSslRoot = Join-Path (Resolve-Path "$PSScriptRoot/..").Path "build/windows7-openssl-$Architecture/runtime"
+& "$PSScriptRoot/build-windows7-openssl.ps1" `
+    -Architecture $Architecture -OutputDir $OpenSslRoot
+if ($LASTEXITCODE -ne 0) { throw "Win7 TLS runtime preparation failed" }
+
 $Arguments = @{
     QtRoot = $QtRoot
     BuildDir = $BuildDir
@@ -31,6 +39,7 @@ $Arguments = @{
     Windows7Compat = $true
     DisableOcr = -not $EnableOcr
     OcrPrefix = $OcrPrefix
+    OpenSslRoot = $OpenSslRoot
     DebugBuild = $DebugBuild
     EnableDiagnosticLogging = $EnableDiagnosticLogging
     VerboseLogs = $VerboseLogs

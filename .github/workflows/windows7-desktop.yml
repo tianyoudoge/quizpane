@@ -135,6 +135,12 @@ jobs:
           path: build/windows7-ocr-${{ matrix.arch }}
           key: win7-ocr-v142-${{ matrix.arch }}-${{ hashFiles('cmake/win7-ocr/**', 'scripts/build-windows7-ocr.ps1') }}
 
+      - name: Cache Win7 OpenSSL runtime
+        uses: actions/cache@v4
+        with:
+          path: build/windows7-openssl-${{ matrix.arch }}/runtime
+          key: win7-openssl-1.1.1w-v142-${{ matrix.arch }}-${{ hashFiles('scripts/build-windows7-openssl.ps1') }}
+
       - name: Build, test and package
         shell: pwsh
         env:
@@ -152,6 +158,7 @@ jobs:
           $Inspect = Join-Path $env:RUNNER_TEMP "quizpane-win7-中文路径"
           Expand-Archive -Path $Archive -DestinationPath $Inspect -Force
           $Root = Join-Path $Inspect "QuizPane"
+          $OpenSslSuffix = if ("${{ matrix.arch }}" -eq "x64") { "-x64" } else { "" }
           $Required = @(
             "QuizPane.exe",
             "QuizPaneStudio.exe",
@@ -161,6 +168,9 @@ jobs:
             "Qt5Pdf.dll",
             "Qt5WebSockets.dll",
             "Qt5Widgets.dll",
+            "libcrypto-1_1$OpenSslSuffix.dll",
+            "libssl-1_1$OpenSslSuffix.dll",
+            "licenses/OpenSSL-1.1.1w.txt",
             "MSVCP140.dll",
             "VCRUNTIME140.dll",
             "ucrtbase.dll",

@@ -244,7 +244,8 @@
    `progress`（总进度条 0-20% 区间）、`finished`（成功 → 写回 `mineruZipPath` → 下一份；
    失败 → 停在资料页）。有 batchId 时 `resume()` 否则 `start()`（`:1949-1952`）。
    路由：`shouldUseCloudParse()`（`:1809-1831`）——只有 PDF/图片上云
-   （TXT/MD/DOCX 永不上传，"本机解析已经是无损的"）；Win7 构建无 Qt PDF 恒 false。
+   （TXT/MD/DOCX 永不上传，"本机解析已经是无损的"）。Win7 正式包部署 Qt5Pdf 与
+   OpenSSL 1.1.1w，支持相同的 MinerU 智能解析；只有显式关闭 Qt PDF 的裁剪构建恒 false。
 4. **规则工作流** `startRuleBased`（`generation_workflow.cpp:25-147`）：
    QtConcurrent 工作线程提取 + `RuleBasedBankGenerator::generate`；
    Auto 先按含答案探测，成功绑定到具体题目的答案覆盖率不高于 5% 时以无答案语义重跑；
@@ -267,7 +268,7 @@
 | `full_zip_url` 短时签名：下载失败必须重新轮询拿新 URL，不能重放旧 URL | `mineru_client.cpp:506-512` |
 | 鉴权失败可能带 HTTP 200（`success:false` 信封），不能只看状态码 | `mineru_client.cpp:55-66` |
 | 云端模型会**静默升级** → `extractionBackend="mineru-<backend>"` + versionName 写入 warning/诊断，是回归唯一防线 | `mineru_output_adapter.cpp:450-452` |
-| Win7 构建禁用智能解析；只有 PDF/图片上云 | `studio_window.cpp:1810-1828` |
+| Win7 的 Qt 5.15.2 TLS 后端动态加载 OpenSSL；绿色包必须带架构匹配的 OpenSSL 1.1.1w DLL，并在打包目录运行 TLS 探针 | `scripts/build-windows7-openssl.ps1`、`scripts/build-windows.ps1`、`tests/win7_tls_runtime_probe.cpp` |
 | 云任务可跨进程恢复，但放弃后云端任务仍可能自行完成（消耗额度） | `studio_window.cpp:1694-1698, 778-780` |
 
 ### 5.2 adapter 版面侧

@@ -1819,8 +1819,8 @@ void StudioWindow::startCloudParseThenGenerate(const QList<SourceMaterialGroup>&
 
 bool StudioWindow::shouldUseCloudParse() const {
 #ifndef QUIZPANE_HAS_QT_PDF
-    // Win7 兼容构建不含 Qt PDF，文件选择器也只接受 TXT/Markdown/DOCX，
-    // 这些格式本机解析已经是无损的，云端版面识别没有用武之地。
+    // 不含 Qt PDF 的裁剪构建只接受 TXT/Markdown/DOCX；Win7 正式包会额外
+    // 部署 Qt5Pdf 和 OpenSSL，因而同样支持 PDF/图片的 MinerU 智能解析。
     return false;
 #else
     if (!mineruConfig_.cloudEnabled)

@@ -119,6 +119,14 @@ add_test(
         -DTEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/win7-ocr-patch-test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/win7_ocr_patch_test.cmake)
 
+if(WIN32 AND QUIZPANE_WINDOWS7_COMPAT)
+    # Not registered with CTest: the packaging script runs this executable from
+    # the final deployment directory after copying the OpenSSL runtime DLLs.
+    add_executable(win7_tls_runtime_probe win7_tls_runtime_probe.cpp)
+    target_link_libraries(win7_tls_runtime_probe PRIVATE
+        ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Network)
+endif()
+
 if(TARGET question_maker_engine)
     add_executable(studio_review_ui_test
         studio_review_ui_test.cpp

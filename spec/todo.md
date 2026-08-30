@@ -93,6 +93,15 @@
   `result_image_preview_test` 覆盖长图设置后预览控件必须恢复到图片完整尺寸、结果图宽度上限，以及
   无答案选择按五题分组时题号范围与答案串不丢失。
 
+### A12. Win7 智能解析 TLS 初始化失败 — 已解决（2026-08-31）
+- **原现象**：Win7 Qt 5.15.2 包可选择智能解析，但请求 MinerU 时连续记录
+  `QSslSocket::connectToHostEncrypted: TLS initialization failed`，申请上传链接前即失败。
+  原因是 QtNetwork 动态加载 OpenSSL 1.1.1，而 `windeployqt` 不会自动部署第三方 TLS DLL。
+- **现状**：`build-windows7-openssl.ps1` 从 OpenSSL 官方源码按 x64/x86 构建固定的 1.1.1w
+  运行库并校验 SHA-256；`build-windows.ps1` 将对应 `libcrypto`/`libssl` DLL 和许可证写入绿色包。
+  打包阶段从最终部署目录运行 `win7_tls_runtime_probe`，同时校验 `QSslSocket::supportsSsl()`
+  与实际加载版本，缺 DLL、架构不符或 ABI 不符都会在生成 ZIP 前失败。
+
 ## B. 功能缺口
 
 ### B1. CropDialog 编辑能力弱 — P1
