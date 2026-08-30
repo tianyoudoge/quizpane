@@ -119,11 +119,12 @@ add_test(
         -DTEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/win7-ocr-patch-test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/win7_ocr_patch_test.cmake)
 
-if(WIN32 AND QUIZPANE_WINDOWS7_COMPAT)
+if(WIN32)
     # Not registered with CTest: the packaging script runs this executable from
-    # the final deployment directory after copying the OpenSSL runtime DLLs.
-    add_executable(win7_tls_runtime_probe win7_tls_runtime_probe.cpp)
-    target_link_libraries(win7_tls_runtime_probe PRIVATE
+    # the final deployment directory. Qt 5 validates the bundled OpenSSL DLLs;
+    # Qt 6 validates the deployed Schannel plugin.
+    add_executable(windows_tls_runtime_probe windows_tls_runtime_probe.cpp)
+    target_link_libraries(windows_tls_runtime_probe PRIVATE
         ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Network)
 endif()
 

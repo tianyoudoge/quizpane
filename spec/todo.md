@@ -99,8 +99,17 @@
   原因是 QtNetwork 动态加载 OpenSSL 1.1.1，而 `windeployqt` 不会自动部署第三方 TLS DLL。
 - **现状**：`build-windows7-openssl.ps1` 从 OpenSSL 官方源码按 x64/x86 构建固定的 1.1.1w
   运行库并校验 SHA-256；`build-windows.ps1` 将对应 `libcrypto`/`libssl` DLL 和许可证写入绿色包。
-  打包阶段从最终部署目录运行 `win7_tls_runtime_probe`，同时校验 `QSslSocket::supportsSsl()`
+  打包阶段从最终部署目录运行 `windows_tls_runtime_probe`，同时校验 `QSslSocket::supportsSsl()`
   与实际加载版本，缺 DLL、架构不符或 ABI 不符都会在生成 ZIP 前失败。
+
+### A13. Windows 绿色包依赖构建机运行时 — 已解决（2026-08-31）
+- **原现象**：常规 Win10/11 ZIP 只有 `vc_redist.x64.exe`，没有与 EXE 同级的
+  `MSVCP140.dll` / `VCRUNTIME140.dll`；Actions runner 已安装 VC++ Runtime，会掩盖干净机器
+  在进程加载阶段失败。常规包也只在构建目录跑测试，没有验证解压包的 Schannel 与 OCR 闭包。
+- **现状**：所有 Windows 绿色包都复制匹配工具集/架构的 MSVC CRT DLL；最终部署目录必须通过
+  TLS 探针，启用 OCR 时还必须用合成扫描 PDF 通过 QtPdf + Tesseract + 模型冒烟。Windows x64
+  流水线额外解压 ZIP 检查 Qt 网络/PDF/WebSockets、Schannel、MSVC CRT、平台插件和 OCR 模型，
+  并确认测试专用 EXE 与无用的 `vc_redist` 安装程序没有进入产物。
 
 ## B. 功能缺口
 

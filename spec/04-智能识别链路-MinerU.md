@@ -268,7 +268,8 @@
 | `full_zip_url` 短时签名：下载失败必须重新轮询拿新 URL，不能重放旧 URL | `mineru_client.cpp:506-512` |
 | 鉴权失败可能带 HTTP 200（`success:false` 信封），不能只看状态码 | `mineru_client.cpp:55-66` |
 | 云端模型会**静默升级** → `extractionBackend="mineru-<backend>"` + versionName 写入 warning/诊断，是回归唯一防线 | `mineru_output_adapter.cpp:450-452` |
-| Win7 的 Qt 5.15.2 TLS 后端动态加载 OpenSSL；绿色包必须带架构匹配的 OpenSSL 1.1.1w DLL，并在打包目录运行 TLS 探针 | `scripts/build-windows7-openssl.ps1`、`scripts/build-windows.ps1`、`tests/win7_tls_runtime_probe.cpp` |
+| Win7 的 Qt 5.15.2 TLS 后端动态加载 OpenSSL；绿色包必须带架构匹配的 OpenSSL 1.1.1w DLL | `scripts/build-windows7-openssl.ps1`、`scripts/build-windows.ps1` |
+| 所有 Windows 绿色包都必须从最终部署目录运行 TLS 探针：Qt 5 校验实际加载 OpenSSL 1.1.1w，Qt 6 校验并启用 Schannel 插件 | `tests/windows_tls_runtime_probe.cpp`、`scripts/build-windows.ps1` |
 | 云任务可跨进程恢复，但放弃后云端任务仍可能自行完成（消耗额度） | `studio_window.cpp:1694-1698, 778-780` |
 
 ### 5.2 adapter 版面侧

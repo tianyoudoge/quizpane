@@ -157,6 +157,27 @@ jobs:
               -VcpkgTargetTriplet "x64-windows-static-md"
           }
 
+      - name: Inspect Windows portable ZIP
+        shell: pwsh
+        run: |
+          $Archive = "dist/windows/QuizPane-windows-x64-portable.zip"
+          $Inspect = Join-Path $env:RUNNER_TEMP "quizpane-windows-inspect"
+          Expand-Archive -Path $Archive -DestinationPath $Inspect -Force
+          $Root = Join-Path $Inspect "QuizPane"
+          foreach ($File in @(
+            "小窗刷题.exe", "题库制作器.exe",
+            "Qt6Core.dll", "Qt6Network.dll", "Qt6Pdf.dll", "Qt6WebSockets.dll",
+            "MSVCP140.dll", "MSVCP140_1.dll", "MSVCP140_2.dll",
+            "VCRUNTIME140.dll", "VCRUNTIME140_1.dll",
+            "platforms/qwindows.dll", "tls/qschannelbackend.dll",
+            "tessdata/chi_sim.traineddata", "tessdata/eng.traineddata"
+          )) {
+            if (-not (Test-Path (Join-Path $Root $File))) { throw "Windows ZIP missing $File" }
+          }
+          foreach ($Forbidden in @("windows_tls_runtime_probe.exe", "document_extractor_test.exe", "vc_redist.x64.exe")) {
+            if (Test-Path (Join-Path $Root $Forbidden)) { throw "Windows ZIP contains forbidden executable: $Forbidden" }
+          }
+
       - name: Prepare checksums
         shell: pwsh
         run: |
