@@ -91,6 +91,18 @@ int main(int argc, char** argv) {
         questions[1] = outOfOrder;
         bank.insert("questions", questions);
         if (!quizpane::validateBankDetailed(bank).isEmpty()) return 104;
+        // 新版识别链路允许原题号保留为“1-1”“（一）”等标签；旧版整数仍兼容。
+        source.insert("questionNumber", QStringLiteral("1-1"));
+        source.insert("questionLabel", QStringLiteral("第 1-1 题"));
+        outOfOrder.insert("source", source);
+        questions[1] = outOfOrder;
+        bank.insert("questions", questions);
+        if (!quizpane::validateBankDetailed(bank).isEmpty()) return 108;
+        source.insert("questionNumber", QStringLiteral("   "));
+        outOfOrder.insert("source", source);
+        questions[1] = outOfOrder;
+        bank.insert("questions", questions);
+        if (quizpane::validateBankDetailed(bank).isEmpty()) return 109;
         questions = normalizedQuestions;
         QJsonObject invalidQuestion = questions.first().toObject();
         invalidQuestion.insert("answer", QJsonObject{{"optionIds", QJsonArray{"a"}}});

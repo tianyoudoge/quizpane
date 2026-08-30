@@ -19,9 +19,9 @@ namespace quizpane::studio {
 //     真题里 “A. 甲  B. 乙” 常被排在同一行，段落级坐标无法区分四个选项标签，
 //     而 optionLabelAnchors 恰恰要求每个标签有独立坐标（图片/公式选项的裁切
 //     完全依赖它）。
-//   - layout.json 的 discarded_blocks 已把页眉、页脚、页码从正文中分离出来，
-//     这正是 Day11 第 130 题“页脚粘进选项行”的确定性解法：页眉页脚在结构上
-//     就不在 para_blocks 里，无需靠文案黑名单猜测。
+//   - layout.json 的 discarded_blocks 通常已把页眉、页脚、页码从正文中分离；
+//     若云端偶尔把它们误放进 para_blocks，适配完成后还会用跨页频率 + 边缘 bbox
+//     的共享规则清理，不依赖具体宣传文案黑名单。
 // content_list.json 仅用于诊断与人工比对，不参与锚点构建。
 struct MineruParseOptions {
     // MinerU 页码从 0 开始，ExtractedDocument 统一 1-based。

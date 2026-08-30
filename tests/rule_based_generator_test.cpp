@@ -252,6 +252,28 @@ int main(int argc, char** argv) {
              .value(QStringLiteral("reviewOnly")).toBool())
         return 163;
 
+    // MinerU 偶尔会给出可切题的文本，却缺少能与规范化文本逐行对应的 bbox。
+    // 自动局部裁图失败时仍必须给复核页一张可重新框选的原卷整页，不能让人工
+    // 校正入口凭空消失。
+    ExtractedDocument mineruPreviewFallback;
+    mineruPreviewFallback.sourcePath = QStringLiteral("mineru-preview.pdf");
+    mineruPreviewFallback.hasPageBoundaries = true;
+    mineruPreviewFallback.extractionBackend = QStringLiteral("mineru-vlm");
+    mineruPreviewFallback.plainText = QStringLiteral(
+        "1. 智能解析后的文字题？\nA. 甲\nB. 乙\n");
+    mineruPreviewFallback.pageImages.insert(1, fillPng);
+    const auto mineruPreviewResult = RuleBasedBankGenerator{}.generate({mineruPreviewFallback}, false);
+    if (mineruPreviewResult.questions.size() != 1 ||
+        mineruPreviewResult.reviewSourceImages.size() != 1 ||
+        mineruPreviewResult.reviewAssets.size() != 1) return 164;
+    const QJsonObject mineruPreview = mineruPreviewResult.reviewSourceImages.cbegin().value();
+    if (!mineruPreview.value(QStringLiteral("reviewOnly")).toBool() ||
+        mineruPreview.value(QStringLiteral("sourceDocument")).toString() !=
+            QStringLiteral("mineru-preview.pdf") ||
+        mineruPreview.value(QStringLiteral("sourcePage")).toInt() != 1 ||
+        mineruPreview.value(QStringLiteral("autoCrop")).toObject().value(QStringLiteral("width"))
+            .toDouble() != 1.0) return 165;
+
     // PDF 的文字 API 常把每一条视觉行都输出成一行；材料正文要根据行坐标和
     // OCR 保留下来的空行还原自然段，而不是在复核页显示成每行一个段落。
     ExtractedDocument wrappedMaterial;

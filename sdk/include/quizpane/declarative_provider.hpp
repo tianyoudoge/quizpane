@@ -23,6 +23,9 @@ private:
     QJsonArray hostMaterials() const;
     QJsonObject findCatalog(const QString& id) const;
     QString assetUrl(const QJsonObject& asset) const;
+    // 兼容早期制作器导出的“单 catalog + source.sectionId”多套题库：加载后
+    // 仅在内存中展开成每套一个 catalog，原 bank.json 无需迁移。
+    void expandSectionCatalogs();
     // 按 questions 数组中的相对顺序把某分类下的题目分组：普通题是只含一道题的
     // 单元，共享同一 materialId 的题目合并成一个不可拆分的题组单元，组内顺序
     // 和组出现的位置都取首次出现的位置，不做任何重排。

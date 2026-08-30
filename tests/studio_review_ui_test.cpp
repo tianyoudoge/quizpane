@@ -1,9 +1,14 @@
 #include "studio_window.hpp"
+#include "mineru_settings_dialog.hpp"
+#include "review_image_utils.hpp"
 
 #include <QAction>
 #include <QApplication>
 #include <QButtonGroup>
+#include <QBuffer>
 #include <QComboBox>
+#include <QDebug>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QHeaderView>
@@ -11,10 +16,12 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSettings>
+#include <QScrollArea>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextEdit>
+#include <QTimer>
 #include <QTreeWidget>
 
 namespace quizpane::studio {
@@ -36,6 +43,27 @@ public:
     }
 
     static int run(QApplication& app) {
+        bool creditMatches = false;
+        QTimer::singleShot(0, [&creditMatches] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            QLabel* credit = nullptr;
+            if (dialog) {
+                for (auto* label : dialog->findChildren<QLabel*>()) {
+                    if (label->property("testId").toString() == QStringLiteral("mineruCredit")) {
+                        credit = label;
+                        break;
+                    }
+                }
+            }
+            creditMatches = credit &&
+                credit->text().contains(QStringLiteral("MinerU</a> 免费提供")) &&
+                credit->text().contains(QStringLiteral("鸣谢出品方：上海人工智能实验室"));
+            if (dialog)
+                dialog->reject();
+        });
+        if (editMineruSettings(nullptr, MineruConfig{}).has_value() || !creditMatches)
+            return 39;
+
         StudioWindow window;
         if (!window.parseModeCard_ || !window.ruleModeCard_ || !window.smartModeCard_ ||
             !window.smartModeCard_->text().contains(QStringLiteral("智能解析")) ||
@@ -44,7 +72,18 @@ public:
             !window.parseStatusChip_ || !window.parseStatusText_ ||
             window.parseStatusText_->text() != QStringLiteral("智能模式") ||
             !window.progressBar_ || !window.progressStatus_ ||
-            window.progressStatus_->text() != QStringLiteral("准备中")) return 19;
+            window.progressStatus_->text() != QStringLiteral("准备中")) {
+            qCritical().noquote()
+                << "initial UI mismatch: smart="
+                << (window.smartModeCard_ ? window.smartModeCard_->text() : QStringLiteral("<null>"))
+                << "summary="
+                << (window.mineruConfigSummary_ ? window.mineruConfigSummary_->text() : QStringLiteral("<null>"))
+                << "mode="
+                << (window.parseStatusText_ ? window.parseStatusText_->text() : QStringLiteral("<null>"))
+                << "progress="
+                << (window.progressStatus_ ? window.progressStatus_->text() : QStringLiteral("<null>"));
+            return 19;
+        }
         auto* buildVersion = window.findChild<QAction*>(QStringLiteral("studioBuildVersionAction"));
         auto* about = window.findChild<QAction*>(QStringLiteral("studioAboutAction"));
         if (!buildVersion || buildVersion->isEnabled() ||
@@ -56,12 +95,13 @@ public:
         window.cloudSessionId_ = QStringLiteral("resume-test");
         window.cloudCacheDir_ = cloudCache.path();
         window.cloudBatchId_ = QStringLiteral("batch-test");
-        window.pendingGroups_ = {{QStringLiteral("/tmp/question.pdf"), {}, true,
+        window.pendingGroups_ = {{QStringLiteral("/tmp/question.pdf"), {}, AnswerPolicyHint::Included,
                                   QStringLiteral("/tmp/result.zip"), {}}};
         window.cloudIndex_ = 0;
         window.cloudParsingAnswer_ = false;
         window.persistCloudTask();
-        QSettings taskSettings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+        QSettings taskSettings(QSettings::IniFormat, QSettings::UserScope,
+                               QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
         taskSettings.beginGroup(QStringLiteral("question-maker/mineru/pending-cloud-task"));
         const bool persisted = taskSettings.value(QStringLiteral("sessionId")).toString() ==
                                    QStringLiteral("resume-test") &&
@@ -79,24 +119,33 @@ public:
         window.appendSources({sourcePath});
         auto* answerLocation = window.findChild<QComboBox*>(QStringLiteral("answerLocation"));
         if (window.sourceRows_.size() != 1 || !answerLocation ||
-            answerLocation->currentText() != QStringLiteral("含答案")) return 21;
+            answerLocation->currentText() != QStringLiteral("自动检测")) return 21;
         if (!window.nextButton_->text().contains(QStringLiteral("开始智能解析")) ||
-            window.nextButton_->objectName() != QStringLiteral("primaryButton") ||
+            window.nextButton_->objectName() != QStringLiteral("primaryButton")) return 26;
+#ifdef QUIZPANE_HAS_QT_PDF
+        if (!window.sourceModeHint_ ||
             !window.sourceModeHint_->text().contains(QStringLiteral("上传到 MinerU"))) return 26;
+#else
+        if (window.sourceModeHint_) return 26;
+#endif
 
         window.mineruConfig_.cloudEnabled = false;
         window.mineruConfig_.modeSelectedByUser = true;
         window.updateNavigation();
         if (window.nextButton_->text() != QStringLiteral("开始规则解析  →") ||
-            window.parseStatusText_->text() != QStringLiteral("规则模式") ||
+            window.parseStatusText_->text() != QStringLiteral("规则模式")) return 28;
+#ifdef QUIZPANE_HAS_QT_PDF
+        if (!window.sourceModeHint_ ||
             !window.sourceModeHint_->text().contains(QStringLiteral("不会上传"))) return 28;
+#endif
         window.mineruConfig_.cloudEnabled = true;
         window.mineruConfig_.modeSelectedByUser = true;
         window.updateNavigation();
         if (window.nextButton_->text() != QStringLiteral("开始智能解析  →") ||
             window.parseStatusText_->text() != QStringLiteral("智能模式")) return 29;
-        answerLocation->setCurrentIndex(1);
-        if (window.hasAnswerKeyByQuestion_.value(sourcePath, true)) return 27;
+        answerLocation->setCurrentIndex(2);
+        if (window.answerPolicyByQuestion_.value(sourcePath, AnswerPolicyHint::Auto) !=
+            AnswerPolicyHint::None) return 27;
         answerLocation->setCurrentIndex(0);
         GeneratedBankCandidate candidate;
         candidate.hasAnswerKey = true;
@@ -230,15 +279,59 @@ public:
             window.reviewQuestionIsDirty() || !window.saveCurrentReviewQuestion() ||
             fillItem->data(0, Qt::UserRole).toJsonObject().value(QStringLiteral("stem"))
                 .toString().count(QStringLiteral("〔填空〕")) != 2) return 32;
+
+        // 原卷校对图不是正式附件，但智能解析缺少行级坐标时要靠它让用户重新
+        // 框选题目范围。此前 reviewOnly 会把“手动修正”入口隐藏，导致无法校正。
+        QImage sourcePage(200, 300, QImage::Format_RGB32);
+        sourcePage.fill(Qt::white);
+        QByteArray sourceBytes;
+        QBuffer sourceBuffer(&sourceBytes);
+        if (!sourceBuffer.open(QIODevice::WriteOnly) || !sourcePage.save(&sourceBuffer, "PNG")) return 33;
+        const QString previewPath = QStringLiteral("assets/review-only-reference.png");
+        const QJsonObject preview{{"path", previewPath}, {"alt", QStringLiteral("原卷题目")},
+            {"reviewOnly", true}, {"sourceDocument", QStringLiteral("测试资料.pdf")},
+            {"sourcePage", 1}, {"autoCrop", QJsonObject{{"x", 0.0}, {"y", 0.0},
+                {"width", 1.0}, {"height", 1.0}}}};
+        candidate.questions = {question(QStringLiteral("q7"))};
+        candidate.needsReviewQuestions = {};
+        candidate.reviewSourceImages = {{QStringLiteral("q7"), preview}};
+        candidate.reviewAssets = {{previewPath, sourceBytes}};
+        window.populateReview(candidate);
+        auto* previewItem = window.reviewTree_->topLevelItem(0)->child(0);
+        window.reviewTree_->setCurrentItem(previewItem);
+        window.showReviewQuestion(previewItem);
+        auto* recrop = window.findChild<QPushButton*>(QStringLiteral("reviewActionButton"));
+        if (!recrop || recrop->isHidden() || !recrop->isEnabled() ||
+            recrop->text() != QStringLiteral("调整原卷区域")) return 34;
+        auto* detailScroll = window.findChild<QScrollArea*>(QStringLiteral("reviewDetailScroll"));
+        app.processEvents();
+        if (!detailScroll || recrop->mapTo(detailScroll->viewport(), QPoint()).x() < 0 ||
+            recrop->mapTo(detailScroll->viewport(), QPoint(recrop->width(), 0)).x() >
+                detailScroll->viewport()->width()) return 37;
+        QImage transparentPage(20, 20, QImage::Format_ARGB32_Premultiplied);
+        transparentPage.fill(Qt::transparent);
+        transparentPage.setPixelColor(10, 10, Qt::black);
+        const QImage flattenedPage = flattenReviewPage(transparentPage);
+        if (flattenedPage.hasAlphaChannel() || flattenedPage.pixelColor(0, 0) != QColor(Qt::white) ||
+            flattenedPage.pixelColor(10, 10) != QColor(Qt::black)) return 38;
+        if (!window.commitReviewCrop(preview, sourcePage, QRectF(0.10, 0.10, 0.50, 0.50)) ||
+            window.reviewAssets_.value(previewPath) == sourceBytes ||
+            window.reviewSourceImages_.value(QStringLiteral("q7")).value(QStringLiteral("crop"))
+                .toObject().value(QStringLiteral("width")).toDouble() != 0.50 ||
+            window.generatedAssets_.contains(previewPath)) return 35;
         return 0;
     }
 };
 }  // namespace quizpane::studio
 
 int main(int argc, char** argv) {
+    QTemporaryDir settings;
+    if (!settings.isValid()) return 36;
+    // 题库制作器在测试模式下显式使用这个 Ini 目录，避免 macOS
+    // CFPreferences 读写开发机上真实的解析方式和云任务状态。
+    qputenv("QUIZPANE_TEST_SETTINGS_DIR", settings.path().toUtf8());
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
-    QTemporaryDir settings;
     QStandardPaths::setTestModeEnabled(true);
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());

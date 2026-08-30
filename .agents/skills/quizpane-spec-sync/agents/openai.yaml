@@ -1,0 +1,4 @@
+interface:
+  display_name: "QuizPane Spec Sync"
+  short_description: "Map QuizPane changes through spec and keep docs synchronized"
+  default_prompt: "Use $quizpane-spec-sync to implement this QuizPane change and keep spec synchronized."

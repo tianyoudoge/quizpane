@@ -128,11 +128,13 @@ std::optional<MineruConfig> editMineruSettings(QWidget* parent, const MineruConf
     });
 
     auto* credit = new QLabel(QStringLiteral(
-        "由 <a href=\"https://github.com/opendatalab/MinerU\">MinerU</a> 提供"));
+        "由 <a href=\"https://github.com/opendatalab/MinerU\">MinerU</a> 免费提供"
+        "　·　鸣谢出品方：上海人工智能实验室"));
+    credit->setObjectName(QStringLiteral("muted"));
+    credit->setProperty("testId", QStringLiteral("mineruCredit"));
     credit->setOpenExternalLinks(true);
     credit->setTextInteractionFlags(Qt::TextBrowserInteraction);
     credit->setWordWrap(true);
-    credit->setObjectName(QStringLiteral("muted"));
     layout->addStretch();
     layout->addWidget(credit);
 

@@ -15,6 +15,7 @@
 #include <QImage>
 #include <QImageWriter>
 #include <QPainter>
+#include <QRegularExpression>
 #ifdef QUIZPANE_HAS_QT_PDF
 #include <QPdfDocument>
 #include <QPdfSelection>
@@ -383,6 +384,176 @@ QString recognizePage(const QImage& source, QString* error) {
 
 } // namespace
 
+void stripRepeatedPageFurniture(ExtractedDocument* document) {
+    if (!document || !document->hasPageBoundaries)
+        return;
+    QStringList pages = document->plainText.split(QChar(u'\f'), Qt::KeepEmptyParts);
+    if (pages.size() < 3)
+        return;
+
+    constexpr qreal kTopEdge = 0.08;
+    constexpr qreal kBottomEdge = 0.92;
+    const auto furnitureKey = [](QString text) {
+        text = text.normalized(QString::NormalizationForm_KC).simplified().toLower();
+        text.replace(QRegularExpression(QStringLiteral("\\d+")), QStringLiteral("#"));
+        text.remove(QRegularExpression(QStringLiteral("\\s+")));
+        if (text == QStringLiteral("#"))
+            return text; // 逐页变化的独立页码。
+        QString meaningful = text;
+        meaningful.remove(QRegularExpression(QStringLiteral("[\\p{P}\\p{S}#]+")));
+        return meaningful.size() >= 2 ? text : QString{};
+    };
+    const auto bandedKey = [&](const QString& text, const QRectF& bounds) {
+        const QString key = furnitureKey(text);
+        if (key.isEmpty())
+            return QString{};
+        if (bounds.bottom() <= kTopEdge)
+            return QStringLiteral("T|") + key;
+        if (bounds.top() >= kBottomEdge)
+            return QStringLiteral("B|") + key;
+        return QString{};
+    };
+
+    QHash<QString, QSet<int>> anchoredOccurrences;
+    for (auto page = document->lineAnchors.cbegin(); page != document->lineAnchors.cend(); ++page) {
+        for (const PdfTextAnchor& line : page.value()) {
+            const QString key = bandedKey(line.text, line.bounds);
+            if (!key.isEmpty())
+                anchoredOccurrences[key].insert(page.key());
+        }
+    }
+    const int anchoredMinimum = qMax(3, qCeil(pages.size() * 0.40));
+    QSet<QString> repeatedAnchoredKeys;
+    for (auto it = anchoredOccurrences.cbegin(); it != anchoredOccurrences.cend(); ++it) {
+        if (it.value().size() >= anchoredMinimum)
+            repeatedAnchoredKeys.insert(it.key());
+    }
+
+    // OCR 或缺失 page_size 的 MinerU 页没有可靠坐标。只在整页没有行锚点且
+    // 至少有三行时检查第一/最后一条非空行，并把门槛提高到 65%，避免把
+    // 紧邻页眉页脚的正文误删。
+    QHash<QString, QSet<int>> edgeOccurrences;
+    for (int pageIndex = 0; pageIndex < pages.size(); ++pageIndex) {
+        const int pageNumber = document->firstPageNumber + pageIndex;
+        if (!document->lineAnchors.value(pageNumber).isEmpty())
+            continue;
+        QString normalizedPage = pages.at(pageIndex);
+        normalizedPage.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+        normalizedPage.replace(QChar(u'\r'), QChar(u'\n'));
+        const QStringList lines = normalizedPage.split(QChar(u'\n'), Qt::KeepEmptyParts);
+        QList<int> nonEmpty;
+        for (int lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+            if (!lines.at(lineIndex).trimmed().isEmpty())
+                nonEmpty.append(lineIndex);
+        }
+        if (nonEmpty.size() < 3)
+            continue;
+        for (int ordinal = 0; ordinal < nonEmpty.size(); ++ordinal) {
+            if (ordinal != 0 && ordinal != nonEmpty.size() - 1)
+                continue;
+            const QString key = furnitureKey(lines.at(nonEmpty.at(ordinal)));
+            if (key.isEmpty())
+                continue;
+            const QString band = ordinal == 0 ? QStringLiteral("T|") : QStringLiteral("B|");
+            edgeOccurrences[band + key].insert(pageNumber);
+        }
+    }
+    const int edgeMinimum = qMax(3, qCeil(pages.size() * 0.65));
+    QSet<QString> repeatedEdgeKeys;
+    for (auto it = edgeOccurrences.cbegin(); it != edgeOccurrences.cend(); ++it) {
+        if (it.value().size() >= edgeMinimum)
+            repeatedEdgeKeys.insert(it.key());
+    }
+    if (repeatedAnchoredKeys.isEmpty() && repeatedEdgeKeys.isEmpty())
+        return;
+
+    QHash<int, QList<QRectF>> removedBounds;
+    for (int pageIndex = 0; pageIndex < pages.size(); ++pageIndex) {
+        const int pageNumber = document->firstPageNumber + pageIndex;
+        const QList<PdfTextAnchor> anchors = document->lineAnchors.value(pageNumber);
+        QString normalizedPage = pages.at(pageIndex);
+        normalizedPage.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+        normalizedPage.replace(QChar(u'\r'), QChar(u'\n'));
+        const QStringList sourceLines = normalizedPage.split(QChar(u'\n'), Qt::KeepEmptyParts);
+        QList<int> nonEmpty;
+        for (int lineIndex = 0; lineIndex < sourceLines.size(); ++lineIndex) {
+            if (!sourceLines.at(lineIndex).trimmed().isEmpty())
+                nonEmpty.append(lineIndex);
+        }
+        QHash<int, int> ordinalByLine;
+        for (int ordinal = 0; ordinal < nonEmpty.size(); ++ordinal)
+            ordinalByLine.insert(nonEmpty.at(ordinal), ordinal);
+
+        QStringList keptLines;
+        int anchorCursor = 0;
+        for (int lineIndex = 0; lineIndex < sourceLines.size(); ++lineIndex) {
+            const QString& sourceLine = sourceLines.at(lineIndex);
+            const QString simplified = sourceLine.simplified();
+            int matchedAnchor = -1;
+            if (!simplified.isEmpty()) {
+                for (int candidate = anchorCursor; candidate < anchors.size(); ++candidate) {
+                    if (anchors.at(candidate).text.simplified() != simplified)
+                        continue;
+                    matchedAnchor = candidate;
+                    anchorCursor = candidate + 1;
+                    break;
+                }
+            }
+
+            bool remove = false;
+            if (matchedAnchor >= 0) {
+                const PdfTextAnchor& anchor = anchors.at(matchedAnchor);
+                remove = repeatedAnchoredKeys.contains(bandedKey(sourceLine, anchor.bounds));
+                if (remove)
+                    removedBounds[pageNumber].append(anchor.bounds);
+            } else if (anchors.isEmpty() && ordinalByLine.contains(lineIndex)) {
+                const int ordinal = ordinalByLine.value(lineIndex);
+                const QString key = furnitureKey(sourceLine);
+                if (!key.isEmpty()) {
+                    if (ordinal == 0)
+                        remove = repeatedEdgeKeys.contains(QStringLiteral("T|") + key) ||
+                            repeatedAnchoredKeys.contains(QStringLiteral("T|") + key);
+                    else if (ordinal == nonEmpty.size() - 1)
+                        remove = repeatedEdgeKeys.contains(QStringLiteral("B|") + key) ||
+                            repeatedAnchoredKeys.contains(QStringLiteral("B|") + key);
+                }
+            }
+            if (!remove)
+                keptLines.append(sourceLine);
+        }
+        pages[pageIndex] = keptLines.join(QChar(u'\n'));
+    }
+    document->plainText = pages.join(QChar(u'\f'));
+
+    for (auto page = document->lineAnchors.begin(); page != document->lineAnchors.end(); ++page) {
+        QList<PdfTextAnchor>& lines = page.value();
+        for (int index = lines.size() - 1; index >= 0; --index) {
+            if (repeatedAnchoredKeys.contains(bandedKey(lines.at(index).text,
+                                                        lines.at(index).bounds)))
+                lines.removeAt(index);
+        }
+    }
+    const auto overlapsRemovedLine = [&removedBounds](int page, const QRectF& bounds) {
+        for (const QRectF& removed : removedBounds.value(page)) {
+            if (bounds.center().y() >= removed.top() - 0.002 &&
+                bounds.center().y() <= removed.bottom() + 0.002)
+                return true;
+        }
+        return false;
+    };
+    const auto removeStaleAnchors = [&](QHash<int, QList<PdfTextAnchor>>* byPage) {
+        for (auto page = byPage->begin(); page != byPage->end(); ++page) {
+            QList<PdfTextAnchor>& anchors = page.value();
+            for (int index = anchors.size() - 1; index >= 0; --index) {
+                if (overlapsRemovedLine(page.key(), anchors.at(index).bounds))
+                    anchors.removeAt(index);
+            }
+        }
+    };
+    removeStaleAnchors(&document->questionAnchors);
+    removeStaleAnchors(&document->optionLabelAnchors);
+}
+
 PdfUnderlineDecoration detectRenderedLineDecorations(
     const QImage& source, const QString& text, const QList<QRectF>& characterBounds) {
     PdfUnderlineDecoration result;
@@ -602,6 +773,7 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
     }
     result.plainText = pages.join(QChar('\f'));
     result.hasPageBoundaries = true;
+    stripRepeatedPageFurniture(&result);
     if (result.plainText.trimmed().isEmpty()) {
         // Avoid repeating the same model/feature error hundreds of times for
         // a long scanned book. Keep detailed page warnings separately.

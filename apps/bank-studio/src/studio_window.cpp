@@ -16,6 +16,7 @@
 #include "quizpane/zip_archive.hpp"
 #include "source_row_widget.hpp"
 #include "review_draft_bank.hpp"
+#include "review_image_utils.hpp"
 #include "source_validation.hpp"
 #include "styled_dropdown.hpp"
 
@@ -109,6 +110,16 @@ QLabel* mutedLabel(const QString& text) {
     return label;
 }
 
+QSettings projectSettings(const QString& application = QStringLiteral("题库制作器")) {
+    const QString testDirectory = qEnvironmentVariable("QUIZPANE_TEST_SETTINGS_DIR");
+    if (!testDirectory.isEmpty()) {
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, testDirectory);
+        return QSettings(QSettings::IniFormat, QSettings::UserScope,
+                         QStringLiteral("QuizPane Project"), application);
+    }
+    return QSettings(QStringLiteral("QuizPane Project"), application);
+}
+
 QString reviewQuestionTitle(const QJsonObject& question) {
     const auto source = question.value("source").toObject();
     const int number = source.value("questionNumber").toInt();
@@ -121,14 +132,14 @@ QString reviewQuestionTitle(const QJsonObject& question) {
 }
 
 QString studioColorTheme() {
-    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    QSettings settings = projectSettings();
     const QString value = settings.value(QStringLiteral("ui/colorTheme"),
                                          QStringLiteral("dark")).toString();
     return value == QStringLiteral("light") ? value : QStringLiteral("dark");
 }
 
 void storeStudioColorTheme(const QString& value) {
-    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    QSettings settings = projectSettings();
     settings.setValue(QStringLiteral("ui/colorTheme"),
                       value == QStringLiteral("light") ? value : QStringLiteral("dark"));
 }
@@ -281,7 +292,9 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
-        painter.fillRect(rect(), QColor(QStringLiteral("#0b0d10")));
+        // 即使上游传入了透明页面，也不能让透明区域透出黑色画布，
+        // 否则浅色主题会出现用户截图中的黑底黑字。
+        painter.fillRect(rect(), QColor(QStringLiteral("#dfe4ea")));
         painter.drawImage(rect(), image_);
         const QRect selectionRect(qRound(selection_.x() * width()),
                                   qRound(selection_.y() * height()),
@@ -416,7 +429,7 @@ QImage renderPdfReviewPage(const QString& sourcePath, int page, QString* error) 
     const QSizeF points = pdfPagePointSize(&document, page - 1);
     const QSize pixels = QSize(qBound(1, qRound(points.width() * 1.7), 1800),
                                qBound(1, qRound(points.height() * 1.7), 2400));
-    const QImage image = document.render(page - 1, pixels);
+    const QImage image = flattenReviewPage(document.render(page - 1, pixels));
     if (image.isNull())
         *error = QStringLiteral("无法渲染原卷第 %1 页").arg(page);
     return image;
@@ -444,7 +457,7 @@ QString loadMineruToken() {
 }
 
 MineruConfig loadStoredMineruConfig() {
-    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    QSettings settings = projectSettings();
     settings.beginGroup(QStringLiteral("question-maker/mineru"));
     MineruConfig result;
     result.modelVersion =
@@ -466,7 +479,7 @@ MineruConfig loadStoredMineruConfig() {
 }
 
 bool storeMineruConfig(const MineruConfig& value, QString* error) {
-    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    QSettings settings = projectSettings();
     settings.beginGroup(QStringLiteral("question-maker/mineru"));
     settings.setValue(QStringLiteral("modelVersion"), value.modelVersion);
     settings.setValue(QStringLiteral("isOcr"), value.isOcr);
@@ -517,7 +530,7 @@ struct PersistedCloudTask {
 constexpr auto kCloudTaskSettingsGroup = "question-maker/mineru/pending-cloud-task";
 
 std::optional<PersistedCloudTask> loadPersistedCloudTask() {
-    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    QSettings settings = projectSettings();
     settings.beginGroup(QString::fromLatin1(kCloudTaskSettingsGroup));
     PersistedCloudTask task;
     task.sessionId = settings.value(QStringLiteral("sessionId")).toString();
@@ -531,7 +544,14 @@ std::optional<PersistedCloudTask> loadPersistedCloudTask() {
         SourceMaterialGroup group;
         group.questionPath = settings.value(QStringLiteral("questionPath")).toString();
         group.answerPath = settings.value(QStringLiteral("answerPath")).toString();
-        group.hasAnswerKey = settings.value(QStringLiteral("hasAnswerKey"), true).toBool();
+        if (settings.contains(QStringLiteral("answerPolicy"))) {
+            group.answerPolicy = static_cast<AnswerPolicyHint>(
+                settings.value(QStringLiteral("answerPolicy")).toInt());
+        } else {
+            // 兼容升级前尚未完成的云任务。
+            group.answerPolicy = settings.value(QStringLiteral("hasAnswerKey"), true).toBool()
+                ? AnswerPolicyHint::Included : AnswerPolicyHint::None;
+        }
         group.mineruZipPath = settings.value(QStringLiteral("mineruZipPath")).toString();
         group.mineruAnswerZipPath =
             settings.value(QStringLiteral("mineruAnswerZipPath")).toString();
@@ -547,7 +567,7 @@ std::optional<PersistedCloudTask> loadPersistedCloudTask() {
 }
 
 void savePersistedCloudTask(const PersistedCloudTask& task) {
-    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    QSettings settings = projectSettings();
     settings.remove(QString::fromLatin1(kCloudTaskSettingsGroup));
     settings.beginGroup(QString::fromLatin1(kCloudTaskSettingsGroup));
     settings.setValue(QStringLiteral("sessionId"), task.sessionId);
@@ -561,7 +581,7 @@ void savePersistedCloudTask(const PersistedCloudTask& task) {
         const SourceMaterialGroup& group = task.groups.at(index);
         settings.setValue(QStringLiteral("questionPath"), group.questionPath);
         settings.setValue(QStringLiteral("answerPath"), group.answerPath);
-        settings.setValue(QStringLiteral("hasAnswerKey"), group.hasAnswerKey);
+        settings.setValue(QStringLiteral("answerPolicy"), static_cast<int>(group.answerPolicy));
         settings.setValue(QStringLiteral("mineruZipPath"), group.mineruZipPath);
         settings.setValue(QStringLiteral("mineruAnswerZipPath"), group.mineruAnswerZipPath);
     }
@@ -571,7 +591,7 @@ void savePersistedCloudTask(const PersistedCloudTask& task) {
 }
 
 void removePersistedCloudTask(const QString& cacheDir, bool removeCachedResults) {
-    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    QSettings settings = projectSettings();
     settings.remove(QString::fromLatin1(kCloudTaskSettingsGroup));
     settings.sync();
     if (!removeCachedResults || cacheDir.isEmpty())
@@ -857,7 +877,7 @@ void StudioWindow::updateMineruConfigSummary() {
         return;
     const QString model = mineruConfig_.modelVersion == QStringLiteral("pipeline")
         ? QStringLiteral("兼容识别") : QStringLiteral("准确识别（推荐）");
-    QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+    QSettings settings = projectSettings();
     const int submitted = settings.value(
         QStringLiteral("question-maker/mineru/usage/%1/submittedFiles")
             .arg(QDate::currentDate().toString(Qt::ISODate)), 0).toInt();
@@ -1532,15 +1552,15 @@ void StudioWindow::appendSources(const QStringList& paths) {
         const QString absolute = QFileInfo(path).absoluteFilePath();
         if (!acceptedSource(absolute) || sourcePaths_.contains(absolute)) continue;
         sourcePaths_.append(absolute);
-        hasAnswerKeyByQuestion_.insert(absolute, true);
+        answerPolicyByQuestion_.insert(absolute, AnswerPolicyHint::Auto);
         ++added;
         auto* row = new SourceRowWidget(absolute);
         sourceRows_.insert(absolute, row);
         // 插入到末尾的拉伸占位之前，保持新行始终追加在列表最下方。
         sourceListLayout_->insertWidget(sourceListLayout_->count() - 1, row);
-        connect(row, &SourceRowWidget::hasAnswerKeyChanged, this,
-                [this, absolute](bool hasAnswerKey) {
-            hasAnswerKeyByQuestion_.insert(absolute, hasAnswerKey);
+        connect(row, &SourceRowWidget::answerPolicyChanged, this,
+                [this, absolute](AnswerPolicyHint policy) {
+            answerPolicyByQuestion_.insert(absolute, policy);
         });
         connect(row, &SourceRowWidget::answerRequested, this, [this, absolute] {
             const QString answer = QFileDialog::getOpenFileName(
@@ -1577,14 +1597,14 @@ void StudioWindow::appendSources(const QStringList& paths) {
 void StudioWindow::pairAnswer(const QString& question, const QString& answer) {
     if (answer == question || !acceptedSource(answer)) return;
     answerPathsByQuestion_.insert(question, answer);
-    hasAnswerKeyByQuestion_.insert(question, true);
+    answerPolicyByQuestion_.insert(question, AnswerPolicyHint::Included);
     if (auto* row = sourceRows_.value(question)) row->setPairedAnswer(answer);
 }
 
 void StudioWindow::removeSource(const QString& question) {
     sourcePaths_.removeAll(question);
     answerPathsByQuestion_.remove(question);
-    hasAnswerKeyByQuestion_.remove(question);
+    answerPolicyByQuestion_.remove(question);
     if (auto* row = sourceRows_.take(question)) {
         sourceListLayout_->removeWidget(row);
         row->deleteLater();
@@ -1762,18 +1782,9 @@ void StudioWindow::beginPreflight() {
     activitySpinner_->show();
     activityTimer_->start(120);
     QList<SourceMaterialGroup> groups;
-    const bool hasAnswerKey = hasAnswerKeyByQuestion_.value(sourcePaths_.first(), true);
     for (const QString& question : sourcePaths_) {
-        if (hasAnswerKeyByQuestion_.value(question, true) != hasAnswerKey) {
-            QMessageBox::warning(this, QStringLiteral("请统一答案设置"),
-                                 QStringLiteral("同一题库暂不能混合“有答案”和“无答案”资料。"
-                                                "请在文件列表中统一选择答案位置后再整理。"));
-            activityTimer_->stop();
-            activitySpinner_->hide();
-            updateNavigation();
-            return;
-        }
-        groups.append({question, answerPathsByQuestion_.value(question), hasAnswerKey, {}, {}});
+        groups.append({question, answerPathsByQuestion_.value(question),
+                       answerPolicyByQuestion_.value(question, AnswerPolicyHint::Auto), {}, {}});
     }
     startCloudParseThenGenerate(groups);
 }
@@ -1883,7 +1894,7 @@ void StudioWindow::processNextCloudSource() {
     connect(mineruJob_, &MineruExtractionJob::taskSubmitted, this, [this](const QString& batchId) {
         cloudBatchId_ = batchId;
         persistCloudTask();
-        QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
+        QSettings settings = projectSettings();
         const QString key = QStringLiteral("question-maker/mineru/usage/%1/submittedFiles")
             .arg(QDate::currentDate().toString(Qt::ISODate));
         settings.setValue(key, settings.value(key, 0).toInt() + 1);
@@ -2147,7 +2158,12 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
     // 图片收进一个页选择器，操作仅作用于当前页，标题和按钮只保留一套。
     auto* titleRow = new QHBoxLayout;
     auto* title = mutedLabel(validAssets.first().value(QStringLiteral("alt")).toString());
-    titleRow->addWidget(title, 1);
+    titleRow->addWidget(title);
+    auto* recrop = new QPushButton(QStringLiteral("手动修正"));
+    recrop->setObjectName(QStringLiteral("reviewActionButton"));
+    // 重裁是图片区的主操作，放在标题后而不是行尾；即使详情
+    // 内容较宽而出现横向滚动，初始视口也能直接看到按钮。
+    titleRow->addWidget(recrop);
     QComboBox* picker = nullptr;
     if (validAssets.size() > 1) {
         picker = new QComboBox;
@@ -2159,9 +2175,7 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
         }
         titleRow->addWidget(picker);
     }
-    auto* recrop = new QPushButton(QStringLiteral("手动修正"));
-    recrop->setObjectName(QStringLiteral("reviewActionButton"));
-    titleRow->addWidget(recrop);
+    titleRow->addStretch(1);
     reviewVisualLayout_->addLayout(titleRow);
 
     auto* image = new QLabel;
@@ -2180,9 +2194,12 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
         image->setPixmap(pixmap.scaledToWidth(520, Qt::SmoothTransformation));
         image->setToolTip(asset.value(QStringLiteral("path")).toString());
         title->setText(asset.value(QStringLiteral("alt")).toString());
-        const bool canRecrop = !asset.value(QStringLiteral("reviewOnly")).toBool() &&
-            asset.value(QStringLiteral("sourcePage")).toInt() > 0 &&
+        // 原卷校对图虽不属于最终题库附件，也必须允许重新框选。智能解析在缺少
+        // 行级坐标时会以整页作为安全回退；若此处禁用，就失去了人工校正入口。
+        const bool canRecrop = asset.value(QStringLiteral("sourcePage")).toInt() > 0 &&
             !asset.value(QStringLiteral("sourceDocument")).toString().isEmpty();
+        recrop->setText(asset.value(QStringLiteral("reviewOnly")).toBool()
+            ? QStringLiteral("调整原卷区域") : QStringLiteral("手动修正"));
         recrop->setVisible(canRecrop);
         recrop->setEnabled(canRecrop);
     };
@@ -2243,12 +2260,25 @@ bool StudioWindow::commitReviewCrop(const QJsonObject& asset, const QImage& page
         return false;
     }
     const QString path = asset.value(QStringLiteral("path")).toString();
-    generatedAssets_.insert(path, png);
+    if (path.isEmpty())
+        return false;
     QJsonObject replacement = asset;
     replacement.insert(QStringLiteral("crop"), cropRectToJson(normalizedCrop));
     QTreeWidgetItem* item = reviewTree_->currentItem();
     if (!item) return false;
     QJsonObject entry = item->data(0, Qt::UserRole).toJsonObject();
+    if (asset.value(QStringLiteral("reviewOnly")).toBool()) {
+        // 校对图不进 bank.json。只更新本次制作会话中的预览与其定位框，让用户
+        // 可以据此编辑题干/选项；不要把每题校对图升级成正式附件而撑大成品包。
+        const QString id = entry.value(QStringLiteral("id")).toString();
+        if (id.isEmpty())
+            return false;
+        reviewAssets_.insert(path, png);
+        reviewSourceImages_.insert(id, replacement);
+        showReviewQuestion(item);
+        return true;
+    }
+    generatedAssets_.insert(path, png);
     const auto replaceAsset = [&replacement, &path](QJsonObject* owner, const QString& key) {
         QJsonObject image = owner->value(key).toObject();
         if (image.value(QStringLiteral("path")).toString() != path)
@@ -2977,7 +3007,7 @@ void StudioWindow::packageProvider() {
     // 制作器与小窗是独立进程。先把题库交给已有的小窗进程，它会直接切换题库并
     // 进入“选择练习数量”页；绝不能通过 open -a 再拉一个同名应用实例，否则
     // macOS 可能命中另一份旧安装包，进而显示错误的 Schema 不匹配提示。
-    QSettings practiceSettings(QStringLiteral("QuizPane Project"), QStringLiteral("小窗刷题"));
+    QSettings practiceSettings = projectSettings(QStringLiteral("小窗刷题"));
     practiceSettings.setValue(QStringLiteral("provider/lastLibraryPath"), installed.entryPath);
     practiceSettings.sync();
     QString handoffError;

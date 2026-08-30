@@ -11,14 +11,37 @@
 #include <QPointer>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <optional>
+
 namespace quizpane::studio {
+namespace {
+
+constexpr int kAutoAnswerCoveragePercent = 5;
+
+QPair<int, int> resolvedAnswerCoverage(const RuleBasedGenerationResult& result) {
+    int resolved = 0;
+    int total = 0;
+    const auto count = [&resolved, &total](const QJsonArray& questions) {
+        for (const QJsonValue& value : questions) {
+            ++total;
+            if (!value.toObject().value(QStringLiteral("answer")).toObject()
+                     .value(QStringLiteral("optionIds")).toArray().isEmpty())
+                ++resolved;
+        }
+    };
+    count(result.questions);
+    count(result.needsReviewQuestions);
+    return {resolved, total};
+}
+
+}  // namespace
 
 GenerationWorkflow::GenerationWorkflow(QObject* parent) : QObject(parent) {}
 
 void GenerationWorkflow::startRuleBased(const QStringList& sourcePaths) {
     QList<SourceMaterialGroup> groups;
     for (const QString& path : sourcePaths)
-        groups.append({path, {}, true});
+        groups.append({path, {}, AnswerPolicyHint::Auto});
     startRuleBased(groups);
 }
 
@@ -35,8 +58,7 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
     // PDF 渲染、OCR 和规则扫描都会触发大量 CPU/磁盘工作。放到工作线程后，主窗口
     // 的“运行中”动画能持续刷新，完成结果再排回 GUI 线程，避免跨线程操作控件。
     const QPointer<GenerationWorkflow> owner(this);
-    const bool hasAnswerKey = sources.isEmpty() || sources.first().hasAnswerKey;
-    [[maybe_unused]] const auto backgroundTask = QtConcurrent::run([owner, sources, hasAnswerKey] {
+    [[maybe_unused]] const auto backgroundTask = QtConcurrent::run([owner, sources] {
         const auto publishProgress = [owner](WorkflowStage stage, int completed, int total,
                                              const QString& detail) {
             if (!owner)
@@ -51,12 +73,29 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
         QList<ExtractedDocument> documents;
         ExtractorRegistry registry;
         QString failure;
-        for (qsizetype sourceIndex = 0; sourceIndex < sources.size(); ++sourceIndex) {
-            const SourceMaterialGroup& source = sources.at(sourceIndex);
-            if (source.hasAnswerKey != hasAnswerKey) {
+        std::optional<bool> forcedHasAnswerKey;
+        for (const SourceMaterialGroup& source : sources) {
+            AnswerPolicyHint policy = source.answerPolicy;
+            if (!source.answerPath.isEmpty()) {
+                if (policy == AnswerPolicyHint::None) {
+                    failure = QStringLiteral("无答案题库不能配对答案文件");
+                    break;
+                }
+                policy = AnswerPolicyHint::Included;
+            }
+            if (policy == AnswerPolicyHint::Auto)
+                continue;
+            const bool included = policy == AnswerPolicyHint::Included;
+            if (forcedHasAnswerKey.has_value() && *forcedHasAnswerKey != included) {
                 failure = QStringLiteral("同一题库不能混合含答案与无答案资料");
                 break;
             }
+            forcedHasAnswerKey = included;
+        }
+        for (qsizetype sourceIndex = 0; sourceIndex < sources.size(); ++sourceIndex) {
+            if (!failure.isEmpty())
+                break;
+            const SourceMaterialGroup& source = sources.at(sourceIndex);
             const QString path = source.questionPath;
             publishProgress(WorkflowStage::Extracting, sourceIndex, sources.size(),
                             QStringLiteral("正在读取第 %1 / %2 份资料：%3")
@@ -87,10 +126,6 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                 break;
             }
             if (!source.answerPath.isEmpty()) {
-                if (!hasAnswerKey) {
-                    failure = QStringLiteral("无答案题库不能配对答案文件");
-                    break;
-                }
                 const ExtractedDocument answers =
                     extractOne(source.answerPath, source.mineruAnswerZipPath);
                 if (!answers.error.isEmpty()) {
@@ -98,7 +133,8 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                         .arg(QFileInfo(source.answerPath).fileName(), answers.error);
                     break;
                 }
-                document.plainText += QStringLiteral("\n\n答案及解析\n") + answers.plainText;
+                document.companionAnswerText = answers.plainText;
+                document.companionAnswerSourcePath = answers.sourcePath;
             }
             documents.append(document);
             publishProgress(WorkflowStage::Extracting, sourceIndex + 1, sources.size(),
@@ -109,8 +145,36 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                         QStringLiteral("资料读取完成，正在按题号、选项、答案和材料规则整理…"));
         QElapsedTimer generationElapsed;
         generationElapsed.start();
-        const RuleBasedGenerationResult result = failure.isEmpty()
-            ? RuleBasedBankGenerator{}.generate(documents, hasAnswerKey) : RuleBasedGenerationResult{};
+        RuleBasedGenerationResult result;
+        if (failure.isEmpty()) {
+            if (forcedHasAnswerKey.has_value()) {
+                result = RuleBasedBankGenerator{}.generate(documents, *forcedHasAnswerKey);
+            } else {
+                // 自动模式先用“含答案”语义完整扫描，再按真正成功绑定到具体题目的
+                // 答案覆盖率决策。孤立答案记录、无法对齐的答案串和少量误识别不能
+                // 以一票否决把整库锁成含答案语义。
+                result = RuleBasedBankGenerator{}.generate(documents, true);
+                const auto [resolvedAnswers, totalQuestions] = resolvedAnswerCoverage(result);
+                const bool sparseAnswers = totalQuestions > 0 &&
+                    resolvedAnswers * 100 <= totalQuestions * kAutoAnswerCoveragePercent;
+                diagnostic::event(QStringLiteral("workflow"), QStringLiteral("answer-policy-auto"),
+                    {{QStringLiteral("resolvedAnswers"), resolvedAnswers},
+                     {QStringLiteral("totalQuestions"), totalQuestions},
+                     {QStringLiteral("thresholdPercent"), kAutoAnswerCoveragePercent},
+                     {QStringLiteral("decision"), sparseAnswers
+                          ? QStringLiteral("none") : QStringLiteral("included")}});
+                if (sparseAnswers) {
+                    result = RuleBasedBankGenerator{}.generate(documents, false);
+                    result.warnings.prepend(QStringLiteral(
+                        "仅 %1/%2 题识别到答案（不高于 %3%），已按无答案题库整理")
+                        .arg(resolvedAnswers).arg(totalQuestions).arg(kAutoAnswerCoveragePercent));
+                } else {
+                    result.warnings.prepend(QStringLiteral(
+                        "已为 %1/%2 题识别到答案，按含答案题库整理")
+                        .arg(resolvedAnswers).arg(totalQuestions));
+                }
+            }
+        }
         diagnostic::event(QStringLiteral("workflow"), QStringLiteral("rule-run-finished"),
             {{QStringLiteral("sources"), documents.size()},
              {QStringLiteral("generationMs"), generationElapsed.elapsed()},

@@ -93,6 +93,63 @@ int main(int argc, char** argv) {
         return 3;
     if (registry.extract(md).plainText.isEmpty())
         return 4;
+
+    // 页眉页脚过滤必须同时依赖“页面边缘”和“跨页高频”。逐页变化的页码可
+    // 归一化比较，但正文里只偶尔落在页边的相同句子不能被误删。
+    {
+        quizpane::studio::ExtractedDocument furniture;
+        furniture.hasPageBoundaries = true;
+        QStringList pages;
+        for (int page = 1; page <= 5; ++page) {
+            const QString occasional = page <= 2
+                ? QStringLiteral("依次填入画横线部分最恰当的一项是：")
+                : QStringLiteral("第 %1 页正文起始").arg(page);
+            const QString header = QStringLiteral("2026 国考课程 固定页眉");
+            const QString footer = QStringLiteral("前行必有曙光 %1").arg(page);
+            pages.append(header + QChar(u'\n') + occasional + QChar(u'\n') +
+                         QStringLiteral("第 %1 页独有正文").arg(page) + QChar(u'\n') + footer);
+            if (page < 5) {
+                furniture.lineAnchors[page] = {
+                    {header, QRectF(0.10, 0.02, 0.80, 0.02)},
+                    {occasional, QRectF(0.10, 0.055, 0.80, 0.015)},
+                    {QStringLiteral("第 %1 页独有正文").arg(page),
+                     QRectF(0.10, 0.20, 0.80, 0.02)},
+                    {footer, QRectF(0.10, 0.95, 0.80, 0.02)},
+                };
+                // 模拟页眉数字被误采成题号锚点；清理文字时不能留下会干扰裁图的
+                // 过期坐标。第 5 页刻意不提供 bbox，覆盖混合文本/OCR PDF。
+                furniture.questionAnchors[page].append(
+                    {QStringLiteral("2026"), QRectF(0.10, 0.02, 0.08, 0.02)});
+            }
+        }
+        furniture.plainText = pages.join(QChar(u'\f'));
+        quizpane::studio::stripRepeatedPageFurniture(&furniture);
+        if (furniture.plainText.contains(QStringLiteral("固定页眉")) ||
+            furniture.plainText.contains(QStringLiteral("前行必有曙光")) ||
+            furniture.plainText.count(QStringLiteral("依次填入画横线")) != 2 ||
+            furniture.plainText.count(QChar(u'\f')) != 4)
+            return 23;
+        if (!furniture.questionAnchors.value(1).isEmpty() ||
+            furniture.lineAnchors.value(1).size() != 2)
+            return 24;
+    }
+
+    // 扫描/OCR 页没有 bbox 时采用更严格的首尾行兜底；仍须保留分页数量。
+    {
+        quizpane::studio::ExtractedDocument ocrFurniture;
+        ocrFurniture.hasPageBoundaries = true;
+        QStringList pages;
+        for (int page = 1; page <= 5; ++page) {
+            pages.append(QStringLiteral("OCR 固定页眉\n第 %1 页正文\nOCR 固定页脚 %1").arg(page));
+        }
+        ocrFurniture.plainText = pages.join(QChar(u'\f'));
+        quizpane::studio::stripRepeatedPageFurniture(&ocrFurniture);
+        if (ocrFurniture.plainText.contains(QStringLiteral("OCR 固定页眉")) ||
+            ocrFurniture.plainText.contains(QStringLiteral("OCR 固定页脚")) ||
+            ocrFurniture.plainText.count(QStringLiteral("页正文")) != 5 ||
+            ocrFurniture.plainText.count(QChar(u'\f')) != 4)
+            return 25;
+    }
     // 记事本"UTF-8 (带 BOM)"保存的文件：Qt5/Qt6 两条解码路径都必须剥掉
     // 行首 U+FEFF，否则题干首字前会多出一个不可见字符。
     {

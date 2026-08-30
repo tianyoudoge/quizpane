@@ -80,7 +80,12 @@
       "properties": {
         "document": { "type": "string", "maxLength": 300 },
         "page": { "type": "integer", "minimum": 1 },
-        "questionNumber": { "type": "integer", "minimum": 1 },
+        "questionNumber": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string", "minLength": 1, "maxLength": 40 }
+          ]
+        },
         "questionLabel": { "type": "string", "maxLength": 40 },
         "sectionId": { "$ref": "#/$defs/id" },
         "sectionTitle": { "type": "string", "minLength": 1, "maxLength": 120 }

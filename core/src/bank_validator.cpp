@@ -29,6 +29,15 @@ bool validId(const QString& id) {
     return pattern.match(id).hasMatch();
 }
 
+bool validQuestionNumber(const QJsonValue& value) {
+    if (value.isDouble()) {
+        const int number = value.toInt();
+        return value.toDouble() == number && number > 0;
+    }
+    return value.isString() && !value.toString().trimmed().isEmpty() &&
+        value.toString().size() <= 40;
+}
+
 // Schema 用"白名单键集合"而非"逐字段可选校验"来防止额外字段：JSON 本身
 // 不像强类型语言那样会在多余字段上报错，这里手动补上这道防线。
 bool hasOnlyKeys(const QJsonObject& object, const QSet<QString>& allowed) {
@@ -295,14 +304,12 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
         static const QSet<QString> sourceKeys{"document", "page", "questionNumber", "questionLabel",
                                               "sectionId", "sectionTitle"};
         const int page = source.value("page").toInt();
-        const int questionNumber = source.value("questionNumber").toInt();
         if (!question.value("source").isObject() || !hasOnlyKeys(source, sourceKeys) ||
             (source.contains("document") && (!source.value("document").isString() ||
                 source.value("document").toString().size() > 300)) ||
             (source.contains("page") && (!source.value("page").isDouble() ||
                 source.value("page").toDouble() != page || page < 1)) ||
-            (source.contains("questionNumber") && (!source.value("questionNumber").isDouble() ||
-                source.value("questionNumber").toDouble() != questionNumber || questionNumber < 1)) ||
+            (source.contains("questionNumber") && !validQuestionNumber(source.value("questionNumber"))) ||
             (source.contains("questionLabel") && (!source.value("questionLabel").isString() ||
                 source.value("questionLabel").toString().size() > 40)) ||
             (source.contains("sectionId") && (!source.value("sectionId").isString() ||
@@ -390,8 +397,7 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
                 QStringLiteral("题干为空、格式错误或超过 20000 字"));
         if (schemaVersion == 3) {
             const QJsonObject source = question.value("source").toObject();
-            require(source.value("questionNumber").isDouble() &&
-                    source.value("questionNumber").toInt() > 0,
+            require(validQuestionNumber(source.value("questionNumber")),
                     QStringLiteral("必须保留源文档中的原始小题号"));
         }
         require(question.value("options").isArray() && options.size() >= 2 && options.size() <= 20,

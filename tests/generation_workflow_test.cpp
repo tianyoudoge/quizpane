@@ -69,7 +69,8 @@ int main(int argc, char** argv) {
     ready = {};
     finished = false;
     workflow.startRuleBased(QList<quizpane::studio::SourceMaterialGroup>{
-        {questionPath, cloudAnswerPath, true, {}, mineruAnswerZip}});
+        {questionPath, cloudAnswerPath, quizpane::studio::AnswerPolicyHint::Included,
+         {}, mineruAnswerZip}});
     timeout.start(5000);
     app.exec();
     if (!finished || ready.questions.size() != 1 || !ready.needsReviewQuestions.isEmpty())
@@ -80,5 +81,135 @@ int main(int argc, char** argv) {
         return 10;
     if (ready.warnings.join(QStringLiteral(";")).contains(QStringLiteral("答案册页脚")))
         return 11;
+
+    // 默认 Auto：没有任何答案证据时应自动生成无答案题库，不能把整份资料因
+    // “缺少答案”打成 hard 复核。
+    ready = {};
+    finished = false;
+    workflow.startRuleBased(QStringList{questionPath});
+    timeout.start(5000);
+    app.exec();
+    if (!finished || ready.hasAnswerKey || ready.questions.size() != 1 ||
+        !ready.needsReviewQuestions.isEmpty() ||
+        ready.questions.first().toObject().contains(QStringLiteral("answer"))) return 12;
+
+    // 只识别到“参考答案”标题、却没有任何可解析答案值时，标题不能把 Auto
+    // 锁死为含答案库。此类残缺/扫描资料应按无答案语义重跑并正常收录题目。
+    const QString emptyAnswerSectionPath =
+        directory.filePath(QStringLiteral("empty-answer-section.txt"));
+    QFile emptyAnswerSection(emptyAnswerSectionPath);
+    if (!emptyAnswerSection.open(QIODevice::WriteOnly)) return 19;
+    emptyAnswerSection.write(
+        "1. Which one is A?\nA. Alpha\nB. Beta\n参考答案\n答案内容未识别\n");
+    emptyAnswerSection.close();
+    ready = {};
+    finished = false;
+    workflow.startRuleBased(QStringList{emptyAnswerSectionPath});
+    timeout.start(5000);
+    app.exec();
+    if (!finished || ready.hasAnswerKey || ready.questions.size() != 1 ||
+        !ready.needsReviewQuestions.isEmpty() ||
+        ready.questions.first().toObject().contains(QStringLiteral("answer"))) return 20;
+
+    // 孤立答案记录没有匹配到任何具体题目，覆盖率为 0，不能再一票否决地把
+    // Auto 锁成含答案题库。
+    const QString unmatchedAnswerPath =
+        directory.filePath(QStringLiteral("unmatched-answer.txt"));
+    QFile unmatchedAnswer(unmatchedAnswerPath);
+    if (!unmatchedAnswer.open(QIODevice::WriteOnly)) return 21;
+    unmatchedAnswer.write(
+        "1. Which one is A?\nA. Alpha\nB. Beta\n参考答案\n99. A\n");
+    unmatchedAnswer.close();
+    ready = {};
+    finished = false;
+    workflow.startRuleBased(QStringList{unmatchedAnswerPath});
+    timeout.start(5000);
+    app.exec();
+    if (!finished || ready.hasAnswerKey || ready.questions.size() != 1 ||
+        !ready.needsReviewQuestions.isEmpty()) return 22;
+
+    const auto writeCoverageFixture = [&](const QString& name, int answered) {
+        const QString path = directory.filePath(name);
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) return QString();
+        QByteArray content;
+        for (int number = 1; number <= 20; ++number) {
+            content += QByteArray::number(number) + ". Coverage question?\nA. Alpha\nB. Beta\n";
+            if (number <= answered)
+                content += "答案：A\n";
+        }
+        if (file.write(content) != content.size()) return QString();
+        return path;
+    };
+
+    // 20 题只匹配 1 题答案，覆盖率恰为 5%：按产品规则视为无答案题库。
+    const QString fivePercentPath = writeCoverageFixture(QStringLiteral("five-percent.txt"), 1);
+    if (fivePercentPath.isEmpty()) return 23;
+    ready = {};
+    finished = false;
+    workflow.startRuleBased(QStringList{fivePercentPath});
+    timeout.start(5000);
+    app.exec();
+    if (!finished || ready.hasAnswerKey || ready.questions.size() != 20 ||
+        !ready.needsReviewQuestions.isEmpty()) return 24;
+
+    // 高于阈值则保留含答案语义；未匹配题仍进入复核，不猜答案。
+    const QString tenPercentPath = writeCoverageFixture(QStringLiteral("ten-percent.txt"), 2);
+    if (tenPercentPath.isEmpty()) return 25;
+    ready = {};
+    finished = false;
+    workflow.startRuleBased(QStringList{tenPercentPath});
+    timeout.start(5000);
+    app.exec();
+    if (!finished || !ready.hasAnswerKey || ready.questions.size() != 2 ||
+        ready.needsReviewQuestions.size() != 18) return 26;
+
+    const QString embeddedPath = directory.filePath(QStringLiteral("embedded-answer.txt"));
+    QFile embedded(embeddedPath);
+    if (!embedded.open(QIODevice::WriteOnly)) return 17;
+    embedded.write("1. The embedded answer is (B).\nA. Alpha\nB. Beta\n");
+    embedded.close();
+    ready = {};
+    finished = false;
+    workflow.startRuleBased(QStringList{embeddedPath});
+    timeout.start(5000);
+    app.exec();
+    if (!finished || !ready.hasAnswerKey || ready.questions.size() != 1 ||
+        !ready.needsReviewQuestions.isEmpty() ||
+        ready.questions.first().toObject().value(QStringLiteral("answer")).toObject()
+            .value(QStringLiteral("optionIds")).toArray() != QJsonArray{"b"}) return 18;
+
+    // 同一个答案册覆盖多套、且各套题号从 1 重启时，必须先按套题标题分发，
+    // 不能把答案全文只留给最后一套或按裸题号串错。
+    const QString bookletPath = directory.filePath(QStringLiteral("booklet.txt"));
+    QFile booklet(bookletPath);
+    if (!booklet.open(QIODevice::WriteOnly)) return 13;
+    booklet.write(
+        "第1套试题\n1. First?\nA. Alpha\nB. Beta\n"
+        "第2套试题\n1. Second?\nA. Alpha\nB. Beta\n");
+    booklet.close();
+    const QString bookletAnswersPath = directory.filePath(QStringLiteral("booklet-answers.txt"));
+    QFile bookletAnswers(bookletAnswersPath);
+    if (!bookletAnswers.open(QIODevice::WriteOnly)) return 14;
+    bookletAnswers.write("第1套试题\n1.A\n第2套试题\n1.B\n");
+    bookletAnswers.close();
+    ready = {};
+    finished = false;
+    workflow.startRuleBased(QList<quizpane::studio::SourceMaterialGroup>{
+        {bookletPath, bookletAnswersPath}});
+    timeout.start(5000);
+    app.exec();
+    if (!finished || !ready.hasAnswerKey || ready.questions.size() != 2 ||
+        !ready.needsReviewQuestions.isEmpty()) return 15;
+    const QJsonObject first = ready.questions.at(0).toObject();
+    const QJsonObject second = ready.questions.at(1).toObject();
+    if (first.value(QStringLiteral("answer")).toObject()
+            .value(QStringLiteral("optionIds")).toArray() != QJsonArray{"a"} ||
+        second.value(QStringLiteral("answer")).toObject()
+            .value(QStringLiteral("optionIds")).toArray() != QJsonArray{"b"} ||
+        first.value(QStringLiteral("source")).toObject()
+            .value(QStringLiteral("sectionTitle")).toString() != QStringLiteral("第1套试题") ||
+        second.value(QStringLiteral("source")).toObject()
+            .value(QStringLiteral("sectionTitle")).toString() != QStringLiteral("第2套试题")) return 16;
     return 0;
 }

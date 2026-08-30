@@ -1,5 +1,7 @@
 #pragma once
 
+#include "quizpane/studio/generation_workflow.hpp"
+
 #include <QFrame>
 #include <QString>
 
@@ -10,8 +12,9 @@ class QWidget;
 
 namespace quizpane::studio {
 
-// 已导入题目资料在向导第一步的一行展示：左侧是题目文件信息，右侧根据是否
-// 已配对答案/解析文档切换成两种状态。行本身只负责展示和发出信号，题目与
+// 已导入题目资料在向导第一步的一行展示：答案策略默认自动检测，也允许用户
+// 强制指定含答案/无答案；配对答案文档时自动切到“含答案”。行本身只负责
+// 展示和发出信号，题目与
 // 答案的配对关系仍由 StudioWindow 统一持有（sourcePaths_/answerPathsByQuestion_），
 // 避免 UI 行控件和向导状态机互相拥有对方的数据。
 class SourceRowWidget final : public QFrame {
@@ -21,13 +24,13 @@ public:
 
     QString questionPath() const { return questionPath_; }
 
-    bool hasAnswerKey() const;
-    void setHasAnswerKey(bool hasAnswerKey);
+    AnswerPolicyHint answerPolicy() const;
+    void setAnswerPolicy(AnswerPolicyHint policy);
     void setPairedAnswer(const QString& answerPath);
     void clearPairedAnswer();
 
 signals:
-    void hasAnswerKeyChanged(bool hasAnswerKey);
+    void answerPolicyChanged(quizpane::studio::AnswerPolicyHint policy);
     void answerRequested();
     void answerDropped(const QString& answerPath);
     void answerCleared();

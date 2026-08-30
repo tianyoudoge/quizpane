@@ -525,6 +525,24 @@ QJsonObject captureSourceBlock(ExtractedDocument* document, const QList<SourceLi
     return visualAssetDescriptor(*document, regions.firstKey(), firstCrop, path, QStringLiteral("原卷题目（请核对版式或题目边界）"));
 }
 
+QJsonObject captureSourcePageFallback(ExtractedDocument* document, int page, const QString& id,
+                                      QHash<QString, QByteArray>* assets) {
+    // 云端版面结果偶尔只有题号/段落坐标，或行文本在规范化后无法逐行反查。
+    // 此时不能因为自动框选失败就让复核者完全看不到原卷：先保留整页作为安全
+    // 回退，用户仍可在复核页重新框选真正的题目区域。该图仅供校对，不进入题库包。
+    if (!document || !assets || page <= 0)
+        return {};
+    ensurePdfPageImages(document, {page});
+    const QByteArray bytes = document->pageImages.value(page);
+    if (QImage::fromData(bytes, "PNG").isNull())
+        return {};
+    const QString path = QStringLiteral("assets/%1-%2-reference.png")
+        .arg(assetBaseName(document->sourcePath), id);
+    assets->insert(path, bytes);
+    return visualAssetDescriptor(*document, page, QRectF(0.0, 0.0, 1.0, 1.0), path,
+                                 QStringLiteral("原卷整页（请手动框选题目区域）"));
+}
+
 QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, int page,
                                              int number) {
     const QRectF questionBounds = questionBoundsFor(document, page, number);
@@ -1054,26 +1072,35 @@ QList<ExtractedDocument> splitBookletSections(const ExtractedDocument& document)
     return result;
 }
 
-void removeRepeatedPageFurniture(const ExtractedDocument& document, QList<SourceLine>* lines) {
-    if (!document.hasPageBoundaries || document.lineAnchors.size() < 3) return;
-    const auto keyFor = [](QString text) {
-        return text.simplified().replace(QRegularExpression(QStringLiteral("\\d+")), QStringLiteral("#"));
-    };
-    QHash<QString, QSet<int>> occurrences;
-    QHash<int, QSet<QString>> marginLines;
-    for (auto page = document.lineAnchors.cbegin(); page != document.lineAnchors.cend(); ++page)
-        for (const auto& line : page.value()) {
-            if (line.bounds.bottom() >= 0.075 && line.bounds.top() <= 0.93) continue;
-            const QString key = keyFor(line.text);
-            occurrences[key].insert(page.key());
-            marginLines[page.key()].insert(line.text.simplified());
+QString companionAnswerTextForSection(const QString& answerText, const QString& sectionTitle,
+                                      const QStringList& knownSectionTitles) {
+    if (answerText.trimmed().isEmpty() || sectionTitle.isEmpty())
+        return answerText;
+    const QStringList lines = answerText.split(QRegularExpression(QStringLiteral("[\\r\\n\\f]+")));
+    int offset = 0;
+    int sectionStart = -1;
+    int sectionEnd = answerText.size();
+    for (const QString& line : lines) {
+        const int lineStart = offset;
+        offset += line.size();
+        while (offset < answerText.size() &&
+               (answerText.at(offset) == u'\r' || answerText.at(offset) == u'\n' ||
+                answerText.at(offset) == u'\f'))
+            ++offset;
+        const QString title = line.trimmed();
+        if (sectionStart < 0) {
+            if (title == sectionTitle)
+                sectionStart = offset;
+            continue;
         }
-    for (int i = lines->size() - 1; i >= 0; --i) {
-        const auto& line = lines->at(i);
-        if (marginLines.value(line.page).contains(line.text.simplified()) &&
-            occurrences.value(keyFor(line.text)).size() >= qMax(3, document.lineAnchors.size() / 4))
-            lines->removeAt(i);
+        if (knownSectionTitles.contains(title)) {
+            sectionEnd = lineStart;
+            break;
+        }
     }
+    // 答案册没有与题本一致的套题标题时，保留全文交给题号/数量安全规则。
+    return sectionStart >= 0 ? answerText.mid(sectionStart, sectionEnd - sectionStart)
+                             : answerText;
 }
 
 QHash<int, QRectF> lineBoundsBySourceIndex(const ExtractedDocument& document,
@@ -1668,7 +1695,7 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
                           const QHash<int, QString>& solutionKey,
                           QHash<QString, QByteArray>* generatedAssets, QString* reviewReason,
                           bool allowMultipleAnswers, bool insideGraphicalReasoningPart,
-                          bool hasAnswerKey) {
+                          bool hasAnswerKey, bool* answerEvidenceDetected) {
     QStringList stemLines;
     QList<int> stemSourceIndices;
     const auto appendStem = [&stemLines, &stemSourceIndices](const QString& text, int sourceIndex) {
@@ -1683,6 +1710,8 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
     const auto recordAnswer = [&](const QString& value) {
         rawAnswer = value.trimmed();
         explicitAnswers.append(rawAnswer);
+        if (answerEvidenceDetected && !rawAnswer.isEmpty())
+            *answerEvidenceDetected = true;
     };
     QStringList solutionLines;
     bool inSolution = false;
@@ -1797,6 +1826,8 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
         } else if (candidate.size() > 1 && !multiple) {
             bracketReviewReason = QStringLiteral("括号包含多个答案字母，但题目未标注多选，已保留原文；请核对");
         } else {
+            if (answerEvidenceDetected)
+                *answerEvidenceDetected = true;
             bool conflict = false;
             for (const QString& explicitAnswer : explicitAnswers)
                 conflict |= sortedAnswer(answerFromOptionText(explicitAnswer, options)) != sortedAnswer(candidate);
@@ -1812,6 +1843,8 @@ QJsonObject parseQuestion(ExtractedDocument& document, const QList<SourceLine>& 
     }
     stemLines = decoratedStem.body.split(QChar('\n'));
     QString answer = answerFromOptionText(rawAnswer, options);
+    if (answerEvidenceDetected && answerKey.contains(anchor.number))
+        *answerEvidenceDetected = true;
     if (answer.isEmpty())
         answer = answerKey.value(anchor.number);
     if (solutionLines.isEmpty() && solutionKey.contains(anchor.number))
@@ -2194,13 +2227,31 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
     result.hasAnswerKey = hasAnswerKey;
     int documentOrdinal = 0;
     QList<ExtractedDocument> scopedDocuments;
-    for (const auto& document : documents) scopedDocuments.append(splitBookletSections(document));
+    for (const auto& sourceDocument : documents) {
+        ExtractedDocument document = sourceDocument;
+        // 正式的本地 PDF / MinerU 适配器已在提取阶段执行；这里保留一次幂等
+        // 清理，使测试夹具和其它 ExtractedDocument 生产者同样遵守边栏契约。
+        stripRepeatedPageFurniture(&document);
+        QList<ExtractedDocument> sections = splitBookletSections(document);
+        QStringList sectionTitles;
+        for (const ExtractedDocument& section : sections)
+            if (!section.sectionTitle.isEmpty())
+                sectionTitles.append(section.sectionTitle);
+        for (ExtractedDocument& section : sections) {
+            if (!document.companionAnswerText.trimmed().isEmpty()) {
+                const QString companion = companionAnswerTextForSection(
+                    document.companionAnswerText, section.sectionTitle, sectionTitles);
+                section.plainText += QStringLiteral("\n\n答案及解析\n") + companion;
+                section.companionAnswerText.clear();
+            }
+            scopedDocuments.append(section);
+        }
+    }
     for (const auto& sourceDocument : scopedDocuments) {
         // 下划线装饰是按需补充的版面元数据，生成时只影响当前文档的副本。
         ExtractedDocument document = sourceDocument;
         ++documentOrdinal;
         QList<SourceLine> lines = sourceLines(document);
-        removeRepeatedPageFurniture(document, &lines);
         normalizeTrailingQuestionNumberLayout(&lines);
         const QSet<int> inferredQuestionLines =
             recoverSingleMissingQuestionNumbers(&document, &lines);
@@ -2444,6 +2495,11 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             const auto segmentAnswers = globalAnswers(lines, sectionStart, sectionEnd,
                                                       inlineAnswerSections.contains(sectionStart),
                                                       &ambiguousAnswerNumbers, &orderedRecords);
+            // “参考答案/答案解析”标题本身不是答案证据：扫描件或残缺资料可能只
+            // 识别出标题。只有真正解析到题号+答案记录时才锁定为含答案语义，
+            // 否则 Auto 应允许工作流重跑成无答案题库。
+            if (!orderedRecords.isEmpty())
+                result.answerEvidenceDetected = true;
             sectionAnswerRecords.append(orderedRecords);
             for (auto it = segmentAnswers.cbegin(); it != segmentAnswers.cend(); ++it)
                 if (answers.contains(it.key()) && sortedAnswer(answers.value(it.key())) != sortedAnswer(it.value()))
@@ -2570,6 +2626,9 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                     }
                     if (run.isEmpty())
                         continue;
+                    // 连续答案串即使暂时无法安全对齐题号，也证明原文确有答案；
+                    // 保持含答案复核，不能静默丢弃。
+                    result.answerEvidenceDetected = true;
 
                     // 整卷题数与答案数相等是最强证据，直接顺序配对。
                     if (run.size() == anchors.size()) {
@@ -2699,7 +2758,7 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                                                  questionAnswers, questionSolutions, &result.assets, &reviewReason,
                                                  allowMultipleAnswers,
                                                  isInsideGraphicalReasoningPart(lines, anchor.line),
-                                                 hasAnswerKey);
+                                                 hasAnswerKey, &result.answerEvidenceDetected);
             // 正式题图只在题目确实依赖图片时随题库发布；校对页则应始终能看到
             // 原卷。普通文字题在这里额外生成一张 review-only 裁图，避免复核者
             // 只能对照转写文本，也避免把数百张校对图塞进最终题库安装包。
@@ -2707,6 +2766,9 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             if (sourcePreview.isEmpty()) {
                 sourcePreview = captureSourceBlock(
                     &document, lines, anchor.line, blockEnd, id, &result.reviewAssets);
+                if (sourcePreview.isEmpty())
+                    sourcePreview = captureSourcePageFallback(
+                        &document, lines.at(anchor.line).page, id, &result.reviewAssets);
                 if (!sourcePreview.isEmpty())
                     sourcePreview.insert(QStringLiteral("reviewOnly"), true);
             }

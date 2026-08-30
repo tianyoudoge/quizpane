@@ -447,10 +447,16 @@ MineruAdaptResult adaptMineruLayout(const QByteArray& layoutJson, const QString&
     // 与本地 PdfExtractor 同构：换页符分隔，规则解析器据此生成 source.page。
     result.document.plainText = pageTexts.join(QChar(u'\f'));
     result.document.hasPageBoundaries = true;
+    result.document.firstPageNumber = options.normalizePageNumbers ? 1 : 0;
     result.document.extractionBackend = result.backend.isEmpty()
         ? QStringLiteral("mineru")
         : QStringLiteral("mineru-%1").arg(result.backend);
     result.document.usedOcr = options.usedOcr;
+    stripRepeatedPageFurniture(&result.document);
+    if (result.document.plainText.trimmed().isEmpty()) {
+        result.error = QStringLiteral("MinerU 提取结果仅包含重复页眉或页脚，没有可用正文");
+        return result;
+    }
     return result;
 }
 

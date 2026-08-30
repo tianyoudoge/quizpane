@@ -190,7 +190,7 @@ private:
     int spinnerFrame_ = 0;
     QStringList sourcePaths_;
     QHash<QString, QString> answerPathsByQuestion_;
-    QHash<QString, bool> hasAnswerKeyByQuestion_;
+    QHash<QString, AnswerPolicyHint> answerPolicyByQuestion_;
     QHash<QString, SourceRowWidget*> sourceRows_;
     QJsonArray generatedMaterials_;
     QJsonArray generatedQuestions_;

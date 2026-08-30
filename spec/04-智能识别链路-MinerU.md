@@ -112,7 +112,8 @@
   仅本次运行保留 Token，绝不退化为 QSettings 明文**（`:490-497`）；
 - 设置对话框（`mineru_settings_dialog.cpp:32-165`）：Token 密码框（空时"保存"禁用）、
   模型下拉两项（vlm / pipeline）、本地"今日已提交 N 个文件"计数（`:82-87`）、
-  云端额度查询 `GET /api/v4/quota`（`:104-127`，展示 `user_left_quota` 高优剩余页数）。
+  云端额度查询 `GET /api/v4/quota`（`:104-127`，展示 `user_left_quota` 高优剩余页数）；
+  页脚明确标注服务"由 MinerU 免费提供"，并鸣谢出品方上海人工智能实验室。
 
 ### 1.6 隐私约束
 
@@ -133,8 +134,9 @@
 `mineru_output_adapter.hpp:17-25`：
 1. **layout.json 提供 span 级 bbox**，content_list.json 只有段落级。真题"A. 甲 B. 乙"常排同一行，
    段落级坐标无法区分四个选项标签，而 `optionLabelAnchors` 是图片/公式选项裁切的唯一依据；
-2. layout.json 的 `discarded_blocks` 已把页眉/页脚/页码与正文**结构性分离**
-   ——"页脚粘进选项行"的确定性解法，无需文案黑名单猜测；
+2. layout.json 的 `discarded_blocks` 通常已把页眉/页脚/页码与正文**结构性分离**；
+   若云端偶尔误放进 `para_blocks`，共享 `stripRepeatedPageFurniture()` 再按边缘 bbox +
+   跨页高频兜底，仍不依赖文案黑名单；
 3. content_list.json 仅用于诊断与人工比对，不参与锚点构建。
 （⚠️ 方案文档 §4.1 原计划以 content_list.json 为主入口，实施时改为 layout.json，
 见方案文末"实施记录 Phase 1：实测得出的设计修正"。）
@@ -193,9 +195,14 @@
     一个 span 内多个标签（MinerU 偶尔把"A. 甲 B. 乙"合成一个 span）也按字符位置水平分段（`:184-194`）
     ——注意这是**均分近似**，不等同于字形级坐标；
   - 每行文本 + 行 bbox → `lineAnchors[page]`（`:236-239`）；
-- **`discarded_blocks` 刻意不参与**（`buildPageText` 只遍历 `para_blocks`，`:212-220`）；
+- **`discarded_blocks` 刻意不参与**（`buildPageText` 只遍历 `para_blocks`）；若云端把页眉页脚
+  误归入 `para_blocks`，页面组装完成后调用 `stripRepeatedPageFurniture()`，与本地 PDF 使用
+  同一组 8% 边缘带 / 40% 重复比例规则，并同步删除失效锚点；
 - image/chart/table 块：span 承载 `image_path` 而非文字，"只记录版面存在性"；
   **最终裁图仍由规则引擎按 bbox 从原卷高分辨率渲染图切取，不使用 MinerU 导出的压缩图**（`:223-225`）；
+- 某题的行级 bbox 缺失或无法与规范化后的文本逐行对应时，规则引擎不会丢掉校对能力：
+  `captureSourcePageFallback()` 将原 PDF **整页**作为仅复核预览，并保留 `sourceDocument`、
+  `sourcePage` 与全页 `autoCrop`。复核者可重新框选题目区域；该回退图不进入成品题库。
 - `plainText` 各页用 `\f` 连接（`:447-449`）；`hasPageBoundaries = true`；
   `extractionBackend = "mineru-<_backend>"`（`:450-452`）；`usedOcr` 透传自请求参数；
 - **全部页无文字 → error** "未能从该文档提取到任何文字"（`:442-445`）——
@@ -230,7 +237,7 @@
    （`studio_window.cpp:1200-1201`）；`selectParseMode(true)` 无 Token 时**直接带去配置**
    （"而不是把看似选中的智能模式又悄悄切回规则模式"，`:870-876`）。
 2. **预检** `beginPreflight`（`:1683-1779`）：智能模式必须有 Token（`:1716-1722`）；
-   全批 hasAnswerKey 一致（`:1765-1775`）。
+   每份资料默认 `AnswerPolicyHint::Auto`，不再要求用户预先声明是否含答案。
 3. **云解析** `startCloudParseThenGenerate`（`:1783-1807`）+ `processNextCloudSource()`（`:1833-1953`）：
    **逐份串行**——先题目文件、后答案文件；每份新建 `MineruExtractionJob`，
    连接 `taskSubmitted`（持久化 batchId + 本地提交计数）、`stageChanged`（进度页阶段文案）、
@@ -240,6 +247,9 @@
    （TXT/MD/DOCX 永不上传，"本机解析已经是无损的"）；Win7 构建无 Qt PDF 恒 false。
 4. **规则工作流** `startRuleBased`（`generation_workflow.cpp:25-147`）：
    QtConcurrent 工作线程提取 + `RuleBasedBankGenerator::generate`；
+   Auto 先按含答案探测，成功绑定到具体题目的答案覆盖率不高于 5% 时以无答案语义重跑；
+   配对答案文件作为
+   `companionAnswerText` 保留到题本分套之后再分发，不在云提取阶段改变规则语义；
    进度映射（`studio_window.cpp:1955-1973`）：云解析 0-20、Extracting 20-60、Chunking 60-90、Done 100。
 5. **复核页 → 打包**：与规则模式完全相同（见 [05](05-识别后手工编辑与导出.md)）。
 
@@ -268,7 +278,7 @@
 | span 级坐标 ≠ 字形级：一个 span 内多标签只能水平均分 | `:184-186` |
 | 页尺寸缺失 → 该页文字保留但锚点全废 | `:431-436` |
 | 图/表/公式选项：MinerU 导出切图**不用于产品**，只取 bbox 证据，像素永远来自原卷重裁 | `:223-225` |
-| Day11 实测稳定缺陷模式：选项粘连（规则拆）、页脚污染（discarded_blocks 结构性解决）、
+| Day11 实测稳定缺陷模式：选项粘连（规则拆）、页脚污染（discarded_blocks + 跨页边栏兜底）、
   **漏选项（规则不可修 → 硬复核）** | docs 方案 §2.1-2.2 |
 | 全卷无文字 → 整体失败（不产空文档） | `:442-445` |
 

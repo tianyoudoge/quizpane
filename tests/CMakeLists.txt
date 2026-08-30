@@ -98,6 +98,13 @@ add_executable(question_navigator_test
 target_link_libraries(question_navigator_test PRIVATE ${QUIZPANE_QT_PACKAGE}::Widgets)
 add_test(NAME question_navigator_test COMMAND question_navigator_test)
 
+add_executable(result_image_preview_test
+    result_image_preview_test.cpp
+    ../apps/desktop-qt/src/ui/result_image_preview.cpp
+)
+target_link_libraries(result_image_preview_test PRIVATE ${QUIZPANE_QT_PACKAGE}::Widgets)
+add_test(NAME result_image_preview_test COMMAND result_image_preview_test)
+
 add_executable(browser_protocol_test
     browser_protocol_test.cpp
     ../apps/desktop-qt/src/browser/browser_protocol.cpp
@@ -120,6 +127,7 @@ if(TARGET question_maker_engine)
         ../apps/bank-studio/src/mineru_settings_dialog.cpp
         ../apps/bank-studio/src/source_row_widget.cpp
         ../apps/bank-studio/src/styled_dropdown.cpp
+        ../apps/bank-studio/src/review_image_utils.cpp
         ../apps/bank-studio/resources/resources.qrc
     )
     set_target_properties(studio_review_ui_test PROPERTIES AUTORCC TRUE)

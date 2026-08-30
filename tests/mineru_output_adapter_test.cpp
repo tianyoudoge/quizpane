@@ -11,6 +11,9 @@
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 
 #include <cstdio>
@@ -87,6 +90,39 @@ QByteArray optionEndingInNumberLayout() {
   ]}
 ]}]}
 )json");
+}
+
+QByteArray repeatedFurnitureLayout() {
+    QJsonArray pages;
+    for (int page = 0; page < 5; ++page) {
+        const auto line = [](const QString& text, int top, int bottom) {
+            return QJsonObject{
+                {QStringLiteral("bbox"), QJsonArray{30, top, 540, bottom}},
+                {QStringLiteral("spans"), QJsonArray{QJsonObject{
+                    {QStringLiteral("type"), QStringLiteral("text")},
+                    {QStringLiteral("bbox"), QJsonArray{30, top, 540, bottom}},
+                    {QStringLiteral("content"), text},
+                }}},
+            };
+        };
+        QJsonArray lines{
+            line(QStringLiteral("智能课程固定页眉"), 10, 24),
+        };
+        if (page < 2)
+            lines.append(line(QStringLiteral("依次填入画横线部分最恰当的一项是："), 42, 56));
+        lines.append(line(QStringLiteral("%1. 第 %1 页独有正文").arg(page + 1), 100, 120));
+        lines.append(line(QStringLiteral("固定口号 第 %1 页").arg(page + 1), 770, 790));
+        pages.append(QJsonObject{
+            {QStringLiteral("page_idx"), page},
+            {QStringLiteral("page_size"), QJsonArray{600, 800}},
+            {QStringLiteral("para_blocks"), QJsonArray{QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("text")},
+                {QStringLiteral("lines"), lines},
+            }}},
+        });
+    }
+    return QJsonDocument(QJsonObject{{QStringLiteral("pdf_info"), pages}})
+        .toJson(QJsonDocument::Compact);
 }
 
 } // namespace
@@ -237,6 +273,27 @@ int main(int argc, char** argv) {
     if (repairedAnchors.size() != 2 || repairedAnchors.at(0).text != QStringLiteral("1") ||
         repairedAnchors.at(1).text != QStringLiteral("2") || repairedAnchors.at(0).bounds.isEmpty())
         return fail("trailing question numbers did not produce usable anchors");
+
+    // MinerU 偶尔未把页眉页脚归入 discarded_blocks，而是混进 para_blocks。
+    // 适配器仍要用与本地 PDF 相同的高频边栏规则清理；低频页边正文须保留。
+    const MineruAdaptResult furniture =
+        adaptMineruLayout(repeatedFurnitureLayout(), sourcePath);
+    if (!furniture.error.isEmpty())
+        return fail("repeated-furniture layout was rejected");
+    if (furniture.document.plainText.contains(QStringLiteral("智能课程固定页眉")) ||
+        furniture.document.plainText.contains(QStringLiteral("固定口号")))
+        return fail("repeated header/footer leaked from MinerU para_blocks");
+    if (furniture.document.plainText.count(QStringLiteral("依次填入画横线")) != 2 ||
+        furniture.document.plainText.count(QChar(u'\f')) != 4)
+        return fail("low-frequency edge body text or page boundaries were damaged");
+    for (auto page = furniture.document.lineAnchors.cbegin();
+         page != furniture.document.lineAnchors.cend(); ++page) {
+        for (const PdfTextAnchor& anchor : page.value()) {
+            if (anchor.text.contains(QStringLiteral("固定页眉")) ||
+                anchor.text.contains(QStringLiteral("固定口号")))
+                return fail("removed MinerU furniture left stale line anchors");
+        }
+    }
 
     // ZIP 入口：正常包可读，缺 layout.json 的包必须被拒绝。
     QTemporaryDir directory;

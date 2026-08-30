@@ -54,6 +54,8 @@ quizpane_add_executable(quizpane_bank_studio
     src/source_validation.hpp
     src/styled_dropdown.cpp
     src/styled_dropdown.hpp
+    src/review_image_utils.cpp
+    src/review_image_utils.hpp
     src/studio_window.cpp
     src/studio_window.hpp
     resources/resources.qrc

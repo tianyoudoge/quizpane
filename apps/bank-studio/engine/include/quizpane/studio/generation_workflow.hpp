@@ -25,12 +25,20 @@ struct WorkflowProgress {
 
 using GeneratedBankCandidate = ReviewResult;
 
-// 一组资料可由题目文件和独立答案/解析文件组成。离线路径在本机合并两者，
-// 按题号匹配答案；没有答案文件时 answerPath 为空。
+// 默认由程序根据解析到的答案证据决定整库策略；Included/None 只作为用户
+// 明确覆盖。最终 bank.json 仍保持 included/none 两态，不引入混合题库。
+enum class AnswerPolicyHint {
+    Auto,
+    Included,
+    None
+};
+
+// 一组资料可由题目文件和独立答案/解析文件组成。离线路径分别提取两者，
+// 题本分套后再按套题标题、题号和安全位置规则匹配；没有答案文件时 answerPath 为空。
 struct SourceMaterialGroup {
     QString questionPath;
     QString answerPath;
-    bool hasAnswerKey = true;
+    AnswerPolicyHint answerPolicy = AnswerPolicyHint::Auto;
     // 云解析结果 ZIP 的本地路径。非空时用 MinerU 的版面数据替代本机 PDF 文字层，
     // 其余流程（规则引擎、复核、打包）完全一致。
     // 上传与下载由 MineruExtractionJob 在本工作流之前完成——它是异步的，而这里
@@ -79,3 +87,4 @@ class GenerationWorkflow final : public QObject {
 
 Q_DECLARE_METATYPE(quizpane::studio::WorkflowProgress)
 Q_DECLARE_METATYPE(quizpane::studio::GeneratedBankCandidate)
+Q_DECLARE_METATYPE(quizpane::studio::AnswerPolicyHint)

@@ -71,7 +71,16 @@ struct ExtractedDocument {
     QString sectionId;
     QString sectionTitle;
     int firstPageNumber = 1;
+    // 独立答案/解析文件的提取文本。保留为伴随文档而不是提前拼进 plainText，
+    // 使规则引擎可以先分套，再把答案按套题标题或安全作用域分发。
+    QString companionAnswerText;
+    QString companionAnswerSourcePath;
 };
+
+// 移除跨大量页面重复出现、且确实位于页面上下边缘的页眉、页脚和页码。
+// 文本 PDF / MinerU 有坐标时以边缘 bbox 为主；无坐标的 OCR 页仅在首尾行以
+// 更高重复比例兜底。函数保持换页符数量不变，并同步清理落在被删行上的锚点。
+void stripRepeatedPageFurniture(ExtractedDocument* document);
 
 // 单一文档格式的提取器。supports() 只看扩展名，不打开文件，方便
 // ExtractorRegistry 在选择具体实现前先做一次快速分派。

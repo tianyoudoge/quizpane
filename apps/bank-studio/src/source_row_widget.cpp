@@ -49,12 +49,16 @@ SourceRowWidget::SourceRowWidget(const QString& questionPath, QWidget* parent)
 
     answerLocation_ = new QComboBox;
     answerLocation_->setObjectName(QStringLiteral("answerLocation"));
-    answerLocation_->addItem(QStringLiteral("含答案"), true);
-    answerLocation_->addItem(QStringLiteral("无答案"), false);
+    answerLocation_->addItem(QStringLiteral("自动检测"),
+                             static_cast<int>(AnswerPolicyHint::Auto));
+    answerLocation_->addItem(QStringLiteral("含答案"),
+                             static_cast<int>(AnswerPolicyHint::Included));
+    answerLocation_->addItem(QStringLiteral("无答案"),
+                             static_cast<int>(AnswerPolicyHint::None));
     answerLocation_->setToolTip(QStringLiteral(
-        "答案在另一份文档时，请使用右侧“添加单独答案”。"));
+        "默认由程序识别是否包含答案；答案在另一份文档时，请使用右侧“添加单独答案”。"));
     connect(answerLocation_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this](int) { emit hasAnswerKeyChanged(hasAnswerKey()); });
+            [this](int) { emit answerPolicyChanged(answerPolicy()); });
     layout->addWidget(answerLocation_, 0);
 
     addAnswerButton_ = new QPushButton(QStringLiteral("添加单独答案"));
@@ -83,12 +87,12 @@ SourceRowWidget::SourceRowWidget(const QString& questionPath, QWidget* parent)
     layout->addWidget(removeButton, 0);
 }
 
-bool SourceRowWidget::hasAnswerKey() const {
-    return answerLocation_->currentData().toBool();
+AnswerPolicyHint SourceRowWidget::answerPolicy() const {
+    return static_cast<AnswerPolicyHint>(answerLocation_->currentData().toInt());
 }
 
-void SourceRowWidget::setHasAnswerKey(bool hasAnswerKey) {
-    const int index = answerLocation_->findData(hasAnswerKey);
+void SourceRowWidget::setAnswerPolicy(AnswerPolicyHint policy) {
+    const int index = answerLocation_->findData(static_cast<int>(policy));
     if (index >= 0)
         answerLocation_->setCurrentIndex(index);
 }
@@ -101,13 +105,14 @@ void SourceRowWidget::setPairedAnswer(const QString& answerPath) {
     addAnswerButton_->setVisible(false);
     pairedAnswerLabel_->setVisible(true);
     clearAnswerButton_->setVisible(true);
-    setHasAnswerKey(true);
+    setAnswerPolicy(AnswerPolicyHint::Included);
 }
 
 void SourceRowWidget::clearPairedAnswer() {
     pairedAnswerLabel_->setVisible(false);
     clearAnswerButton_->setVisible(false);
     addAnswerButton_->setVisible(true);
+    setAnswerPolicy(AnswerPolicyHint::Auto);
 }
 
 void SourceRowWidget::dragEnterEvent(QDragEnterEvent* event) {

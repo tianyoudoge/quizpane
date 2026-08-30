@@ -108,6 +108,7 @@ bool DeclarativeProvider::load(const QString& bankPath, QString* errorOutput) {
     if (providerId_.isEmpty() || providerName_.isEmpty()) {
         unload(); return fail(errorOutput, QStringLiteral("题库名称或标识为空"));
     }
+    expandSectionCatalogs();
     for (const auto& value : materials_)
         materialsById_.insert(value.toObject().value("id").toString(), value.toObject());
     // 预算 catalogId -> 题目数索引，catalog.list 直接查表，避免每分类遍历全量题。
@@ -134,6 +135,104 @@ QJsonObject DeclarativeProvider::error(const QJsonValue& id, const QString& mess
 QJsonObject DeclarativeProvider::findCatalog(const QString& id) const {
     for (const auto& value : catalogs_) if (value.toObject().value("id").toString() == id) return value.toObject();
     return {};
+}
+
+void DeclarativeProvider::expandSectionCatalogs() {
+    QJsonArray expandedCatalogs;
+    QJsonArray expandedQuestions = questions_;
+    QJsonArray expandedMaterials = materials_;
+    QSet<QString> usedCatalogIds;
+    for (const auto& value : catalogs_)
+        usedCatalogIds.insert(value.toObject().value("id").toString());
+
+    for (const auto& catalogValue : catalogs_) {
+        const QJsonObject catalog = catalogValue.toObject();
+        const QString catalogId = catalog.value("id").toString();
+        QStringList groupOrder;
+        QHash<QString, QString> titleByGroup;
+        QHash<QString, QString> groupByMaterialId;
+        bool sharedMaterialAcrossGroups = false;
+
+        for (const auto& questionValue : questions_) {
+            const QJsonObject question = questionValue.toObject();
+            if (question.value("catalogId").toString() != catalogId) continue;
+            const QJsonObject source = question.value("source").toObject();
+            const QString sectionId = source.value("sectionId").toString();
+            const QString document = source.value("document").toString();
+            // document 参与分组，避免两份文件都叫 set-1 时被误合成一套。
+            const QString groupKey = sectionId.isEmpty()
+                ? QStringLiteral("__ungrouped__")
+                : document + QChar(0x1f) + sectionId;
+            if (!groupOrder.contains(groupKey)) groupOrder.append(groupKey);
+            const QString sectionTitle = source.value("sectionTitle").toString().trimmed();
+            if (!sectionTitle.isEmpty() && !titleByGroup.contains(groupKey))
+                titleByGroup.insert(groupKey, sectionTitle);
+            const QString materialId = question.value("materialId").toString();
+            if (!materialId.isEmpty()) {
+                if (groupByMaterialId.contains(materialId) &&
+                    groupByMaterialId.value(materialId) != groupKey)
+                    sharedMaterialAcrossGroups = true;
+                else
+                    groupByMaterialId.insert(materialId, groupKey);
+            }
+        }
+
+        // 单套题不改变旧 catalog；跨套共享材料也保持旧行为，避免内存归类后
+        // 题目和材料的 catalogId 不一致。
+        if (groupOrder.size() < 2 || sharedMaterialAcrossGroups) {
+            expandedCatalogs.append(catalog);
+            continue;
+        }
+
+        QHash<QString, QString> catalogIdByGroup;
+        for (int groupIndex = 0; groupIndex < groupOrder.size(); ++groupIndex) {
+            const QString groupKey = groupOrder.at(groupIndex);
+            QString sectionId = groupKey == QStringLiteral("__ungrouped__")
+                ? QStringLiteral("ungrouped") : groupKey.section(QChar(0x1f), 1, 1);
+            sectionId.replace(QRegularExpression(QStringLiteral("[^a-z0-9._-]")), QStringLiteral("-"));
+            sectionId = sectionId.left(48);
+            if (sectionId.isEmpty()) sectionId = QStringLiteral("set-%1").arg(groupIndex + 1);
+            QString expandedId = (catalogId + QChar('.') + sectionId).left(96);
+            int suffix = 2;
+            while (usedCatalogIds.contains(expandedId)) {
+                const QString tail = QStringLiteral("-%1").arg(suffix++);
+                expandedId = (catalogId + QChar('.') + sectionId).left(96 - tail.size()) + tail;
+            }
+            usedCatalogIds.insert(expandedId);
+            catalogIdByGroup.insert(groupKey, expandedId);
+            QJsonObject expanded = catalog;
+            expanded.insert("id", expandedId);
+            expanded.insert("title", titleByGroup.value(
+                groupKey, groupKey == QStringLiteral("__ungrouped__")
+                    ? QStringLiteral("未分套题目")
+                    : QStringLiteral("第 %1 套").arg(groupIndex + 1)));
+            expandedCatalogs.append(expanded);
+        }
+
+        for (qsizetype index = 0; index < expandedQuestions.size(); ++index) {
+            QJsonObject question = expandedQuestions.at(index).toObject();
+            if (question.value("catalogId").toString() != catalogId) continue;
+            const QJsonObject source = question.value("source").toObject();
+            const QString sectionId = source.value("sectionId").toString();
+            const QString groupKey = sectionId.isEmpty()
+                ? QStringLiteral("__ungrouped__")
+                : source.value("document").toString() + QChar(0x1f) + sectionId;
+            question.insert("catalogId", catalogIdByGroup.value(groupKey));
+            expandedQuestions.replace(index, question);
+        }
+        for (qsizetype index = 0; index < expandedMaterials.size(); ++index) {
+            QJsonObject material = expandedMaterials.at(index).toObject();
+            if (material.value("catalogId").toString() != catalogId) continue;
+            const QString groupKey = groupByMaterialId.value(material.value("id").toString());
+            if (!groupKey.isEmpty()) {
+                material.insert("catalogId", catalogIdByGroup.value(groupKey));
+                expandedMaterials.replace(index, material);
+            }
+        }
+    }
+    catalogs_ = expandedCatalogs;
+    questions_ = expandedQuestions;
+    materials_ = expandedMaterials;
 }
 
 QString DeclarativeProvider::assetUrl(const QJsonObject& asset) const {
@@ -190,10 +289,18 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
         }
         QString content = paragraph(source.value("stem").toString(), source.value("stemUnderlines").toArray());
         const QString sectionTitle = source.value("source").toObject().value("sectionTitle").toString();
-        const int sourceQuestionNumber = source.value("source").toObject().value("questionNumber").toInt();
-        const QString sourceLabel = source.value("source").toObject().value("questionLabel")
-            .toString(QString::number(sourceQuestionNumber));
-        const bool distinctLabel = !sourceLabel.isEmpty() && sourceLabel != QString::number(sourceQuestionNumber);
+        const QJsonObject sourceInfo = source.value("source").toObject();
+        const QJsonValue sourceNumberValue = sourceInfo.value("questionNumber");
+        const int sourceQuestionNumber = sourceNumberValue.isDouble()
+            ? sourceNumberValue.toInt() : 0;
+        QString sourceLabel = sourceInfo.value("questionLabel").toString();
+        if (sourceLabel.isEmpty()) {
+            sourceLabel = sourceNumberValue.isString()
+                ? sourceNumberValue.toString()
+                : (sourceQuestionNumber > 0 ? QString::number(sourceQuestionNumber) : QString{});
+        }
+        const bool distinctLabel = !sourceLabel.isEmpty() &&
+            (sourceQuestionNumber <= 0 || sourceLabel != QString::number(sourceQuestionNumber));
         if (!sectionTitle.isEmpty() || distinctLabel) {
             QString title = distinctLabel ? sourceLabel : QStringLiteral("第 %1 题").arg(sourceQuestionNumber);
             if (!sectionTitle.isEmpty()) title.prepend(sectionTitle + QStringLiteral(" · "));
@@ -206,7 +313,7 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
             {"contentHtml", content}, {"options", options}};
         if (sourceQuestionNumber > 0)
             question.insert("sourceQuestionNumber", sourceQuestionNumber);
-        if (distinctLabel) question.insert("sourceQuestionLabel", sourceLabel);
+        if (!sourceLabel.isEmpty()) question.insert("sourceQuestionLabel", sourceLabel);
         if (!sectionTitle.isEmpty()) question.insert("sourceSectionTitle", sectionTitle);
         if (source.contains("materialId")) question.insert("materialId", source.value("materialId"));
         if (withSolutions && hasAnswerKey_) {
@@ -267,7 +374,10 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
             const QJsonObject catalog = value.toObject(); const QString catalogId = catalog.value("id").toString();
             const int count = questionCountByCatalog_.value(catalogId, 0);
             const QJsonObject practice = catalog.value("practice").toObject();
-            int suggested = practice.value("mode").toString() == QStringLiteral("all")
+            const QString configuredMode = practice.value("mode").toString();
+            const QString effectiveMode = !hasAnswerKey_ && configuredMode == QStringLiteral("random")
+                ? QStringLiteral("sequential") : configuredMode;
+            int suggested = effectiveMode == QStringLiteral("all")
                 ? count : practice.value("questionCount").toInt(qMin(15, count));
             suggested = qBound(1, suggested, qMax(1, count));
             int mastered = 0, mistakes = 0;
@@ -281,6 +391,7 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
             }
             nodes.append(QJsonObject{{"id", catalogId}, {"title", catalog.value("title")},
                 {"availableQuestionCount", count}, {"canStartAttempt", count > 0},
+                {"practiceMode", effectiveMode},
                 {"suggestedCounts", QJsonArray{suggested}}, {"masteredCount", mastered},
                 {"mistakeCount", mistakes}});
         }
@@ -304,7 +415,10 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
             }
             units = filtered;
         }
-        if (catalog.value("practice").toObject().value("mode") == QStringLiteral("random"))
+        // 无答案卷需要按原卷次序作答、完成后再自行对答案；即使旧题库曾配置
+        // random，也在运行时收紧为 sequential，不要求用户重新制作题库。
+        if (hasAnswerKey_ &&
+            catalog.value("practice").toObject().value("mode") == QStringLiteral("random"))
             std::shuffle(units.begin(), units.end(), *QRandomGenerator::global());
         int totalQuestions = 0;
         for (const auto& unit : units) totalQuestions += static_cast<int>(unit.size());

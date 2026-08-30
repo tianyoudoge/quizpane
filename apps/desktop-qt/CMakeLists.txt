@@ -21,6 +21,8 @@ quizpane_add_executable(quizpane
     src/ui/material_card.hpp
     src/ui/question_navigator.cpp
     src/ui/question_navigator.hpp
+    src/ui/result_image_preview.cpp
+    src/ui/result_image_preview.hpp
     src/ui/app_dialogs.cpp
     src/ui/app_dialogs.hpp
     resources/resources.qrc

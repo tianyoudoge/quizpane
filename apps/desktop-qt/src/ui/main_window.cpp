@@ -11,6 +11,7 @@
 #include "line_icons.hpp"
 #include "material_card.hpp"
 #include "question_navigator.hpp"
+#include "result_image_preview.hpp"
 
 #include <QAction>
 #include <QActionGroup>
@@ -1537,15 +1538,12 @@ void MainWindow::showSolution(int index) {
 void MainWindow::exportAttemptResults() {
     if (questions_.isEmpty())
         return;
-    constexpr int imageWidth = 1080;
-    constexpr int padding = 44;
-    constexpr int columns = 4;
-    constexpr int rowHeight = 74;
+    const int imageWidth = ui::resultImagePixelWidth();
+    constexpr int padding = 32;
+    constexpr int columns = 2;
     constexpr int maxRowsPerImage = 72;
-    constexpr int headerHeight = 208;
-    constexpr int gap = 14;
-    const int itemCapacity = columns * maxRowsPerImage;
-    const int pageCount = (questions_.size() + itemCapacity - 1) / itemCapacity;
+    constexpr int headerHeight = 190;
+    constexpr int gap = 12;
     QList<QImage> resultImages;
     const auto answerText = [this](qsizetype index, const QJsonObject& question) {
         if (question.value("type").toString() == QStringLiteral("multiple_choice")) {
@@ -1556,9 +1554,31 @@ void MainWindow::exportAttemptResults() {
         }
         return choiceLabel(answers_.value(index, -1));
     };
+    // 无答案题库只承担“记录选择”的职责。五题起按每五题一组汇总，避免
+    // 大题库生成数百张宽卡片；多选用方括号保留边界，未作答用 ? 标记。
+    const bool compactMode = !attemptHasAnswerKey_ && questions_.size() >= 5;
+    QStringList compactTokens;
+    if (compactMode) {
+        compactTokens.reserve(questions_.size());
+        for (int index = 0; index < questions_.size(); ++index) {
+            QString token = answerText(index, questions_.at(index).toObject());
+            if (token == QStringLiteral("未作答")) {
+                token = QStringLiteral("?");
+            } else if (token.contains(QStringLiteral("、"))) {
+                token.remove(QStringLiteral("、"));
+                token = QStringLiteral("[%1]").arg(token);
+            }
+            compactTokens.append(token);
+        }
+    }
+    const QList<ui::CompactResultRow> compactRows = ui::compactResultRows(compactTokens);
+    const int displayItemCount = compactMode ? compactRows.size() : int(questions_.size());
+    const int rowHeight = compactMode ? 66 : 74;
+    const int itemCapacity = columns * maxRowsPerImage;
+    const int pageCount = (displayItemCount + itemCapacity - 1) / itemCapacity;
     for (int page = 0; page < pageCount; ++page) {
         const int first = page * itemCapacity;
-        const int count = qMin(itemCapacity, int(questions_.size()) - first);
+        const int count = qMin(itemCapacity, displayItemCount - first);
         const int rows = (count + columns - 1) / columns;
         QImage image(imageWidth, headerHeight + rows * rowHeight + padding,
                      QImage::Format_ARGB32_Premultiplied);
@@ -1566,19 +1586,22 @@ void MainWindow::exportAttemptResults() {
         QPainter painter(&image);
         painter.setRenderHint(QPainter::Antialiasing);
         QFont titleFont = painter.font();
-        titleFont.setPixelSize(38);
+        titleFont.setPixelSize(34);
         titleFont.setBold(true);
         painter.setFont(titleFont);
         painter.setPen(QColor(QStringLiteral("#f2f5f8")));
         painter.drawText(padding, 66, QStringLiteral("作答结果"));
         QFont detailFont = painter.font();
-        detailFont.setPixelSize(22);
+        detailFont.setPixelSize(19);
         detailFont.setBold(false);
         painter.setFont(detailFont);
         painter.setPen(QColor(QStringLiteral("#aeb8c3")));
         painter.drawText(padding, 104, attemptTitle_.isEmpty() ? QStringLiteral("题库练习") : attemptTitle_);
-        const int answered = std::count_if(answers_.cbegin(), answers_.cend(),
-            [](int answer) { return answer >= 0; });
+        int answered = 0;
+        for (int index = 0; index < questions_.size(); ++index) {
+            if (answers_.value(index, -1) >= 0 || !multiAnswers_.value(index).isEmpty())
+                ++answered;
+        }
         painter.drawText(padding, 140, QStringLiteral("已作答 %1 / %2 题 · %3")
             .arg(answered).arg(questions_.size())
             .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))));
@@ -1591,7 +1614,6 @@ void MainWindow::exportAttemptResults() {
         const qreal cardWidth = (imageWidth - padding * 2 - gap * (columns - 1)) / qreal(columns);
         for (int offset = 0; offset < count; ++offset) {
             const int index = first + offset;
-            const QJsonObject question = questions_.at(index).toObject();
             const int column = offset % columns;
             const int row = offset / columns;
             const QRectF card(padding + column * (cardWidth + gap), headerHeight + row * rowHeight,
@@ -1599,12 +1621,43 @@ void MainWindow::exportAttemptResults() {
             painter.setPen(Qt::NoPen);
             painter.setBrush(QColor(QStringLiteral("#1b232d")));
             painter.drawRoundedRect(card, 12, 12);
-            const int sourceNumber = question.value("sourceQuestionNumber").toInt(index + 1);
+            if (compactMode) {
+                const ui::CompactResultRow& compactRow = compactRows.at(index);
+                QFont rangeFont = painter.font();
+                rangeFont.setPixelSize(18);
+                rangeFont.setBold(true);
+                painter.setFont(rangeFont);
+                painter.setPen(QColor(QStringLiteral("#e7edf4")));
+                painter.drawText(card.adjusted(16, 8, -16, -8),
+                                 Qt::AlignLeft | Qt::AlignVCenter, compactRow.rangeLabel);
+
+                QFont sequenceFont = painter.font();
+                sequenceFont.setPixelSize(22);
+                sequenceFont.setBold(true);
+                painter.setFont(sequenceFont);
+                const int sequenceWidth = qMax(54, int(card.width())
+                    - 44 - painter.fontMetrics().horizontalAdvance(compactRow.rangeLabel));
+                while (sequenceFont.pixelSize() > 15
+                       && painter.fontMetrics().horizontalAdvance(compactRow.answerSequence) > sequenceWidth) {
+                    sequenceFont.setPixelSize(sequenceFont.pixelSize() - 1);
+                    painter.setFont(sequenceFont);
+                }
+                painter.setPen(compactRow.answerSequence.contains(QLatin1Char('?'))
+                    ? QColor(QStringLiteral("#c99db5")) : QColor(QStringLiteral("#f45aa6")));
+                painter.drawText(card.adjusted(16, 8, -16, -8),
+                                 Qt::AlignRight | Qt::AlignVCenter, compactRow.answerSequence);
+                continue;
+            }
+
+            const QJsonObject question = questions_.at(index).toObject();
+            const int sourceNumber = question.value("sourceQuestionNumber").toInt();
             const QString sectionTitle = question.value("sourceSectionTitle").toString();
-            const QString sourceLabel = question.value("sourceQuestionLabel").toString(QString::number(sourceNumber));
-            // 四列答案卡很窄，长标签若省略尾部会丢掉“第几处”。重号使用本次
+            QString sourceLabel = question.value("sourceQuestionLabel").toString();
+            if (sourceLabel.isEmpty()) sourceLabel = sourceNumber > 0
+                ? QString::number(sourceNumber) : QString::number(index + 1);
+            // 长标签若省略尾部会丢掉“第几处”。重号使用本次
             // 练习的独立序号 + 原题号，两者都保留，不按原题号覆盖或合并。
-            const bool repeatedLabel = sourceLabel != QString::number(sourceNumber);
+            const bool repeatedLabel = sourceNumber > 0 && sourceLabel != QString::number(sourceNumber);
             const QString exportLabel = repeatedLabel
                 ? QStringLiteral("%1 · 原%2").arg(index + 1).arg(sourceNumber)
                 : (sectionTitle.isEmpty() ? sourceLabel : QStringLiteral("%1 · %2").arg(sectionTitle, sourceLabel));
@@ -1672,7 +1725,7 @@ void MainWindow::exportAttemptResults() {
     layout->addWidget(scroll, 1);
     int currentImage = 0;
     const auto showImage = [&] {
-        preview->setPixmap(QPixmap::fromImage(resultImages.at(currentImage)));
+        ui::setResultPreviewImage(preview, resultImages.at(currentImage));
         pageLabel->setText(QStringLiteral("%1 / %2").arg(currentImage + 1).arg(resultImages.size()));
         previous->setEnabled(currentImage > 0);
         next->setEnabled(currentImage + 1 < resultImages.size());
