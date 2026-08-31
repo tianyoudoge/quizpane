@@ -6,6 +6,7 @@
 #include <QScrollArea>
 
 int main(int argc, char** argv) {
+    qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
     if (quizpane::ui::resultImagePixelWidth() > 680)
         return 1;

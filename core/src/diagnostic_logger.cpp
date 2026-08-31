@@ -536,7 +536,8 @@ QVariantMap memorySnapshot() {
     MEMORYSTATUSEX system{};
     system.dwLength = sizeof(system);
     if (GlobalMemoryStatusEx(&system)) {
-        fields.insert(QStringLiteral("memoryLoadPercent"), system.dwMemoryLoad);
+        fields.insert(QStringLiteral("memoryLoadPercent"),
+                      QVariant::fromValue<quint32>(system.dwMemoryLoad));
         fields.insert(QStringLiteral("availablePhysicalBytes"),
                       QVariant::fromValue<qulonglong>(system.ullAvailPhys));
         fields.insert(QStringLiteral("totalPhysicalBytes"),
