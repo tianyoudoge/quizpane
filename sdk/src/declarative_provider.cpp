@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QPair>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSet>
@@ -369,7 +370,23 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
         {"solutions", hasAnswerKey_}}}};
     if (dispatch == Method::CatalogList) {
         QJsonArray nodes;
-        QSettings settings;
+        // 逐分类对全量题目做一次 QSettings::value() 是 O(分类数 × 题数)：大题库
+        // 多分类时，进入目录页会触发成千上万次 Windows 注册表读取，在 Win7 低配
+        // 机上是明显卡顿。这里改为对题目只遍历一次，按 catalogId 累计到内存表，
+        // 分类循环再各自查表，整体降到 O(题数 + 分类数)。
+        QHash<QString, QPair<int, int>> masteryByCatalog;
+        {
+            QSettings settings;
+            for (const auto& questionValue : questions_) {
+                const QJsonObject question = questionValue.toObject();
+                const QString state = settings.value(QStringLiteral("practice/history/%1/%2")
+                    .arg(providerId_, question.value("id").toString())).toString();
+                if (state != QStringLiteral("correct") && state != QStringLiteral("wrong")) continue;
+                QPair<int, int>& tally = masteryByCatalog[question.value("catalogId").toString()];
+                if (state == QStringLiteral("correct")) ++tally.first;
+                else ++tally.second;
+            }
+        }
         for (const auto& value : catalogs_) {
             const QJsonObject catalog = value.toObject(); const QString catalogId = catalog.value("id").toString();
             const int count = questionCountByCatalog_.value(catalogId, 0);
@@ -380,20 +397,12 @@ QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
             int suggested = effectiveMode == QStringLiteral("all")
                 ? count : practice.value("questionCount").toInt(qMin(15, count));
             suggested = qBound(1, suggested, qMax(1, count));
-            int mastered = 0, mistakes = 0;
-            for (const auto& questionValue : questions_) {
-                const QJsonObject question = questionValue.toObject();
-                if (question.value("catalogId").toString() != catalogId) continue;
-                const QVariant state = settings.value(QStringLiteral("practice/history/%1/%2")
-                    .arg(providerId_, question.value("id").toString()));
-                if (state.toString() == QStringLiteral("correct")) ++mastered;
-                else if (state.toString() == QStringLiteral("wrong")) ++mistakes;
-            }
+            const QPair<int, int> tally = masteryByCatalog.value(catalogId);
             nodes.append(QJsonObject{{"id", catalogId}, {"title", catalog.value("title")},
                 {"availableQuestionCount", count}, {"canStartAttempt", count > 0},
                 {"practiceMode", effectiveMode},
-                {"suggestedCounts", QJsonArray{suggested}}, {"masteredCount", mastered},
-                {"mistakeCount", mistakes}});
+                {"suggestedCounts", QJsonArray{suggested}}, {"masteredCount", tally.first},
+                {"mistakeCount", tally.second}});
         }
         return {{"id", id}, {"result", QJsonObject{{"nodes", nodes}}}};
     }
