@@ -90,6 +90,11 @@ int main(int argc, char** argv) {
                              .arg(result.questions.size())
                              .arg(result.needsReviewQuestions.size())
                              .arg(result.materials.size());
+    qint64 assetBytes = 0;
+    for (auto it = result.assets.cbegin(); it != result.assets.cend(); ++it)
+        assetBytes += it.value().size();
+    qInfo().noquote() << QStringLiteral("assets: count=%1 bytes=%2")
+                             .arg(result.assets.size()).arg(assetBytes);
     for (const QString& warning : result.warnings)
         qInfo().noquote() << QStringLiteral("rule warning: ") + warning;
 

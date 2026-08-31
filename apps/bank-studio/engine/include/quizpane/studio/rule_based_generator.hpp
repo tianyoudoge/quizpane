@@ -32,6 +32,8 @@ struct RuleGenerationProgress {
     qint64 pageImageBytes = 0;
     int reviewAssetCount = 0;
     qint64 reviewAssetBytes = 0;
+    int generatedAssetCount = 0;
+    qint64 generatedAssetBytes = 0;
 };
 
 using RuleGenerationProgressCallback =

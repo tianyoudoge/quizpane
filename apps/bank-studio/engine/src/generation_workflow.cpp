@@ -155,6 +155,17 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
         generationElapsed.start();
         RuleBasedGenerationResult result;
         if (failure.isEmpty()) {
+            // Auto 可能先按含答案探测、再按无答案语义重跑。把会话挂在工作流持有
+            // 的原始文档上，两遍生成和全部分套共用同一个 QPdfDocument，不能在
+            // 第二遍又重新打开一次 Qt5/PDFium。
+            for (ExtractedDocument& document : documents) {
+                if (!document.pdfRenderSession &&
+                    QFileInfo(document.sourcePath).suffix().compare(
+                        QStringLiteral("pdf"), Qt::CaseInsensitive) == 0) {
+                    document.pdfRenderSession =
+                        std::make_shared<PdfRenderSession>(document.sourcePath);
+                }
+            }
             const auto ruleProgress = [&](const QString& pass, int basePercent, int spanPercent) {
                 return [&, pass, basePercent, spanPercent](const RuleGenerationProgress& rule) {
                     WorkflowProgress snapshot;
@@ -202,6 +213,8 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                         fields.insert(QStringLiteral("pageImageBytes"), rule.pageImageBytes);
                         fields.insert(QStringLiteral("reviewAssetCount"), rule.reviewAssetCount);
                         fields.insert(QStringLiteral("reviewAssetBytes"), rule.reviewAssetBytes);
+                        fields.insert(QStringLiteral("generatedAssetCount"), rule.generatedAssetCount);
+                        fields.insert(QStringLiteral("generatedAssetBytes"), rule.generatedAssetBytes);
                         diagnostic::event(QStringLiteral("workflow"),
                                           QStringLiteral("rule-progress"), fields);
                     }

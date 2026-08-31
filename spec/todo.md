@@ -130,15 +130,27 @@
   `diagnostic_logger_test` 校验原始日志字节，`feedback_report_test` 校验中文日志经过反馈 JSON
   导出后仍可原样读取，Qt5/Qt6 与各平台共享同一编码契约。
 
-### A16. 大题本逐题校对图与整页渲染缓存共同抬高内存峰值 — 已解决（2026-09-01）
+### A16. 大题本逐题校对图与整页渲染缓存共同抬高内存峰值 — 部分修复（2026-09-01）
 - **原现象**：规则生成器为每道题生成 `reviewAssets` 校对 PNG；生成校对图时又通过
   `pageImages` 保留原卷整页 PNG。147 页、约 600 题的无答案题本在 Auto 首轮“含答案探测”中，
   会同时增长两套图片容器。仅限制 `pageImages` 不能约束按题数增长的 `reviewAssets`。
 - **修复**：普通题只产出 `lazyReview + reviewSegments` 描述符，复核页选中题目时才渲染并缓存
   当前一张校对图；跨页题仍按最多 4 个片段拼接。`pageImages` 保留字节预算，正式题图行为不变。
-- **实测**：同一份 147 页 MinerU 样本，Release 回归 harness 单遍最大 RSS 从约 553MB 降到
-  177MB，下降约 68%；耗时从约 74 秒降到 65 秒。`workflow/rule-progress` 每 10 题继续在日志中
-  记录两类图片数量/字节和 Windows Private Usage，UI 不展示这些诊断字段。
+- **实测与更正**：同一份 147 页 MinerU 样本，macOS/Qt6 harness 单遍最大 RSS 从约
+  553MB 降到 177MB，但这只证明容器峰值被压低，**不能外推为 Win7 OOM 已解决**。
+  Win7 新日志证实 `reviewAssets=0`、`pageImages≈27–32MB` 时 Private Usage 仍从 32MB
+  增长到 15.1GB，因此该项不再被当作最终根因。
+
+### A17. Qt 5.15/Win7 按分套重复打开 PDF 导致 PDFium 提交内存累积 — 修复待实机验收（2026-09-01）
+- **硬证据**：第 1–8 套不渲染页面时 Private Usage 稳定约 32MB；第 11 套渲染 8 页后从
+  约 681MB 跳到 4.0GB，之后每套渲染 6–7 页再增约 1.3–1.6GB；第 19 套后达 15.1GB，
+  系统可用提交额度仅剩约 1.05GB。增长与新建 `QPdfDocument` + 批量页渲染一一对应，
+  与已记录的 PNG 容器字节数不对应。
+- **修复**：整次 `RuleBasedBankGenerator::generate()` 的所有分套共享一个
+  `PdfRenderSession/QPdfDocument`，结束时显式 `close()`。每页渲染前执行 Windows 提交额度保护；
+  危险时记录 `pdf-render-skipped-memory-pressure`并降级为文字整理+人工复核。
+- **崩溃产物**：旧的 `MiniDumpWithIndirectlyReferencedMemory` 在 OOM 时可能自身申请内存失败，
+  从而只留 0 字节 dmp；现在失败后会截断并回退到 `MiniDumpNormal`。
 
 ## B. 功能缺口
 

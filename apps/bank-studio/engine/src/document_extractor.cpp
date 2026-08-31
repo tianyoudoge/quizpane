@@ -42,6 +42,12 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <memory>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 namespace quizpane::studio {
 namespace {
@@ -60,6 +66,31 @@ bool hasSuffix(const QString& path, const QStringList& suffixes) {
     const QString suffix = QFileInfo(path).suffix().toLower();
     return suffixes.contains(suffix);
 }
+
+#ifdef Q_OS_WIN
+bool pdfRenderWouldExhaustCommit() {
+    MEMORYSTATUSEX memory{};
+    memory.dwLength = sizeof(memory);
+    if (!GlobalMemoryStatusEx(&memory))
+        return false;
+    PROCESS_MEMORY_COUNTERS_EX process{};
+    process.cb = sizeof(process);
+    if (!GetProcessMemoryInfo(GetCurrentProcess(),
+                              reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&process),
+                              sizeof(process)))
+        return false;
+    constexpr quint64 kOneGiB = 1024ULL * 1024ULL * 1024ULL;
+    const quint64 privateLimit = qMax<quint64>(
+        1536ULL * 1024ULL * 1024ULL, memory.ullTotalPhys * 3ULL / 4ULL);
+    const quint64 commitReserve = qMax<quint64>(2ULL * kOneGiB,
+                                                memory.ullTotalPhys / 2ULL);
+    return static_cast<quint64>(process.PrivateUsage) >= privateLimit ||
+        memory.ullAvailPageFile <= commitReserve ||
+        (memory.dwMemoryLoad >= 94 && memory.ullAvailPhys <= 256ULL * 1024ULL * 1024ULL);
+}
+#else
+bool pdfRenderWouldExhaustCommit() { return false; }
+#endif
 
 // UTF-8 严格解码失败（出现非法字节序列）时回退到 GB18030，覆盖国内用户
 // 常见的 Windows 记事本"ANSI"编码保存的 TXT 文件。Qt 6 用
@@ -383,6 +414,71 @@ QString recognizePage(const QImage& source, QString* error) {
 #endif
 
 } // namespace
+
+class PdfRenderSession::Impl final {
+  public:
+    explicit Impl(const QString& sourcePath) {
+#ifdef QUIZPANE_HAS_QT_PDF
+        pdf = std::make_unique<QPdfDocument>();
+        if (!pdfLoadSucceeded(loadPdfDocument(pdf.get(), sourcePath)) ||
+            pdf->pageCount() <= 0)
+            pdf.reset();
+#else
+        Q_UNUSED(sourcePath)
+#endif
+    }
+
+    ~Impl() {
+#ifdef QUIZPANE_HAS_QT_PDF
+        if (pdf)
+            pdf->close();
+#endif
+    }
+
+#ifdef QUIZPANE_HAS_QT_PDF
+    std::unique_ptr<QPdfDocument> pdf;
+#endif
+    bool memoryPressure = false;
+    bool pressureLogged = false;
+};
+
+PdfRenderSession::PdfRenderSession(const QString& sourcePath)
+    : impl_(std::make_unique<Impl>(sourcePath)) {}
+
+PdfRenderSession::~PdfRenderSession() = default;
+
+QPdfDocument* PdfRenderSession::document() {
+#ifdef QUIZPANE_HAS_QT_PDF
+    return impl_->pdf.get();
+#else
+    return nullptr;
+#endif
+}
+
+QImage PdfRenderSession::renderPage(int zeroBasedPage) {
+#ifndef QUIZPANE_HAS_QT_PDF
+    Q_UNUSED(zeroBasedPage)
+    return {};
+#else
+    if (!impl_->pdf || zeroBasedPage < 0 || zeroBasedPage >= impl_->pdf->pageCount())
+        return {};
+    if (pdfRenderWouldExhaustCommit()) {
+        impl_->memoryPressure = true;
+        if (!impl_->pressureLogged) {
+            impl_->pressureLogged = true;
+            diagnostic::event(QStringLiteral("extractor"),
+                              QStringLiteral("pdf-render-skipped-memory-pressure"),
+                              diagnostic::memorySnapshot());
+        }
+        return {};
+    }
+    return renderPdfPage(impl_->pdf.get(), zeroBasedPage);
+#endif
+}
+
+bool PdfRenderSession::skippedForMemoryPressure() const {
+    return impl_->memoryPressure;
+}
 
 void stripRepeatedPageFurniture(ExtractedDocument* document) {
     if (!document || !document->hasPageBoundaries)
@@ -807,14 +903,16 @@ void detectPdfUnderlinesForCandidateLines(
         !hasSuffix(extracted->sourcePath, {"pdf"}))
         return;
 
-    QPdfDocument document;
-    if (!pdfLoadSucceeded(loadPdfDocument(&document, extracted->sourcePath)))
+    if (!extracted->pdfRenderSession)
+        extracted->pdfRenderSession = std::make_shared<PdfRenderSession>(extracted->sourcePath);
+    QPdfDocument* document = extracted->pdfRenderSession->document();
+    if (!document)
         return;
 
     for (auto pageIt = candidateLinesByPage.cbegin(); pageIt != candidateLinesByPage.cend(); ++pageIt) {
         const int pageNumber = pageIt.key();
         const int page = pageNumber - 1;
-        if (page < 0 || page >= document.pageCount())
+        if (page < 0 || page >= document->pageCount())
             continue;
         // MinerU 会规范化空白，例如把 PDF 文字层中的四个空格压成一个，或删掉
         // 数字前后的空格。若继续要求整行 simplified() 完全一致，恰好承载填空
@@ -964,12 +1062,12 @@ void detectPdfUnderlinesForCandidateLines(
             return bestKey.isEmpty() ? QStringList{} : candidates.value(bestKey);
         };
 
-        const QString text = document.getAllText(page).text();
+        const QString text = document->getAllText(page).text();
         QImage pageImage;
         if (extracted->pageImages.contains(pageNumber))
             pageImage.loadFromData(extracted->pageImages.value(pageNumber), "PNG");
         if (pageImage.isNull()) {
-            pageImage = renderPdfPage(&document, page);
+            pageImage = extracted->pdfRenderSession->renderPage(page);
             QByteArray png;
             if (writePreviewPng(pageImage, &png))
                 extracted->pageImages.insert(pageNumber, png);
@@ -991,7 +1089,7 @@ void detectPdfUnderlinesForCandidateLines(
                 const int leading = rawLine.indexOf(line);
                 const int textStart = lineStart + qMax(0, leading);
                 const QRectF bounds = normalizedSelectionBounds(
-                    &document, page, textStart, line.size());
+                    document, page, textStart, line.size());
                 if (!bounds.isEmpty()) {
                     // 文本已经被 MinerU 幻读或粘行时，文字相似度可能不足；两条
                     // 链路的页面坐标仍指向同一视觉行。只在纵向中心几乎重合且该
@@ -1023,7 +1121,7 @@ void detectPdfUnderlinesForCandidateLines(
                     QList<QRectF> characters;
                     for (int offset = 0; offset < line.size(); ++offset) {
                         characters.append(normalizedSelectionBounds(
-                            &document, page, textStart + offset, 1));
+                            document, page, textStart + offset, 1));
                     }
                     const auto decoration = detectRenderedLineDecorations(grayPage, line, characters);
                     if (!decoration.ranges.isEmpty() || !decoration.blanks.isEmpty()) {
@@ -1132,6 +1230,12 @@ void detectPdfUnderlinesForCandidateLines(
             }
         }
     }
+    if (extracted->pdfRenderSession->skippedForMemoryPressure()) {
+        const QString warning = QStringLiteral(
+            "系统可用内存不足，已停止自动提取部分原卷图片；题目文字仍会继续整理，请在复核页对照原 PDF 核对图片题");
+        if (!extracted->warnings.contains(warning))
+            extracted->warnings.append(warning);
+    }
 #endif
 }
 
@@ -1151,16 +1255,24 @@ void ensurePdfPageImages(ExtractedDocument* extracted, const QList<int>& pageNum
             requested.insert(pageNumber);
     if (requested.isEmpty())
         return;
-    QPdfDocument document;
-    if (!pdfLoadSucceeded(loadPdfDocument(&document, extracted->sourcePath)))
+    if (!extracted->pdfRenderSession)
+        extracted->pdfRenderSession = std::make_shared<PdfRenderSession>(extracted->sourcePath);
+    QPdfDocument* document = extracted->pdfRenderSession->document();
+    if (!document)
         return;
     for (const int pageNumber : requested) {
-        if (pageNumber > document.pageCount())
+        if (pageNumber > document->pageCount())
             continue;
-        const QImage image = renderPdfPage(&document, pageNumber - 1);
+        const QImage image = extracted->pdfRenderSession->renderPage(pageNumber - 1);
         QByteArray png;
         if (writePreviewPng(image, &png))
             extracted->pageImages.insert(pageNumber, png);
+    }
+    if (extracted->pdfRenderSession->skippedForMemoryPressure()) {
+        const QString warning = QStringLiteral(
+            "系统可用内存不足，已停止自动提取部分原卷图片；题目文字仍会继续整理，请在复核页对照原 PDF 核对图片题");
+        if (!extracted->warnings.contains(warning))
+            extracted->warnings.append(warning);
     }
 #endif
 }

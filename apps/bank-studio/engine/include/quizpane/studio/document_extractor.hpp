@@ -8,9 +8,31 @@
 #include <QPair>
 #include <QRectF>
 
+#include <memory>
+
 class QImage;
+class QPdfDocument;
 
 namespace quizpane::studio {
+
+// Qt 5.15/Win7 的 PDFium 后端反复构造 QPdfDocument 后，已释放实例的提交内存
+// 可能不归还给系统。一本合订本按 section 反复打开同一 PDF 会把 Private Usage
+// 推到十几 GB。渲染会话在一次规则生成内由所有 section 共享，只打开原 PDF 一次。
+class PdfRenderSession final {
+  public:
+    explicit PdfRenderSession(const QString& sourcePath);
+    ~PdfRenderSession();
+    PdfRenderSession(const PdfRenderSession&) = delete;
+    PdfRenderSession& operator=(const PdfRenderSession&) = delete;
+
+    QPdfDocument* document();
+    QImage renderPage(int zeroBasedPage);
+    bool skippedForMemoryPressure() const;
+
+  private:
+    class Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 // 原卷整页渲染只是本地中间产物，最终写入题库的是局部裁切后的小图；但这份缓存
 // 会与规则整理的其他中间数据叠加。它不是 147 页 Win7 OOM 的唯一原因，但无上限
@@ -96,6 +118,8 @@ struct ExtractedDocument {
     // 渲染页；文字 PDF 的页面则由规则生成器只在确认需要原卷视觉上下文时按需
     // 载入，避免“全卷每页渲染 + PNG 压缩”拖慢普通纯文字题库。
     PdfPageImageCache pageImages;
+    // 分套后的文档副本共享同一个 QtPdf/PDFium 会话，避免每套重复打开原 PDF。
+    std::shared_ptr<PdfRenderSession> pdfRenderSession;
     // 对文字型 PDF，保留题号与 A/B/C/D 标签的版面位置。它只用于“文字层没有
     // 选项内容、但选项本身是图或公式”的安全小图裁切。
     QHash<int, QList<PdfTextAnchor>> questionAnchors;

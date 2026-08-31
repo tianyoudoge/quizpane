@@ -2278,6 +2278,12 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
     QList<ExtractedDocument> scopedDocuments;
     for (const auto& sourceDocument : documents) {
         ExtractedDocument document = sourceDocument;
+        if (!document.pdfRenderSession &&
+            QFileInfo(document.sourcePath).suffix().compare(
+                QStringLiteral("pdf"), Qt::CaseInsensitive) == 0) {
+            document.pdfRenderSession =
+                std::make_shared<PdfRenderSession>(document.sourcePath);
+        }
         // 正式的本地 PDF / MinerU 适配器已在提取阶段执行；这里保留一次幂等
         // 清理，使测试夹具和其它 ExtractedDocument 生产者同样遵守边栏契约。
         stripRepeatedPageFurniture(&document);
@@ -2383,6 +2389,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             snapshot.pageImageBytes = document.pageImages.byteSize();
             snapshot.reviewAssetCount = result.reviewAssets.size();
             snapshot.reviewAssetBytes = assetBytes(result.reviewAssets);
+            snapshot.generatedAssetCount = result.assets.size();
+            snapshot.generatedAssetBytes = assetBytes(result.assets);
             progress(snapshot);
         };
         reportProgress(0);

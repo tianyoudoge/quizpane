@@ -288,10 +288,21 @@ void writeMiniDump(EXCEPTION_POINTERS* exception) {
     information.ThreadId = GetCurrentThreadId();
     information.ExceptionPointers = exception;
     information.ClientPointers = FALSE;
-    MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file,
-                      static_cast<MINIDUMP_TYPE>(MiniDumpWithThreadInfo |
-                                                MiniDumpWithIndirectlyReferencedMemory),
-                      exception ? &information : nullptr, nullptr, nullptr);
+    const BOOL detailed = MiniDumpWriteDump(
+        GetCurrentProcess(), GetCurrentProcessId(), file,
+        static_cast<MINIDUMP_TYPE>(MiniDumpWithThreadInfo |
+                                  MiniDumpWithIndirectlyReferencedMemory),
+        exception ? &information : nullptr, nullptr, nullptr);
+    if (!detailed) {
+        // OOM 时带间接引用内存的 dump 本身还需要额外提交额度，可能只留下一个
+        // 0 字节文件。截断后退回 MiniDumpNormal；信息少一些，但至少仍是可由
+        // WinDbg 打开的有效 minidump，而不是误导用户上传空文件。
+        SetFilePointer(file, 0, nullptr, FILE_BEGIN);
+        SetEndOfFile(file);
+        (void)MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file,
+                                MiniDumpNormal,
+                                exception ? &information : nullptr, nullptr, nullptr);
+    }
     CloseHandle(file);
 }
 
