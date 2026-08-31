@@ -29,10 +29,14 @@ int main(int argc, char** argv) {
         quizpane::diagnostic::event(QStringLiteral("feedback-test"), QStringLiteral("entry"),
                                     {{QStringLiteral("sequence"), index}});
     }
+    quizpane::diagnostic::event(QStringLiteral("feedback-test"), QStringLiteral("unicode"),
+                                {{QStringLiteral("detail"),
+                                  QStringLiteral("内存不足：规则整理")}});
     const QString tail = quizpane::feedback::buildLogTail();
     if (tail.split(QChar('\n'), Qt::SkipEmptyParts).size() > 1000 ||
         tail.toUtf8().size() > 512 * 1024 ||
-        !tail.contains(QStringLiteral("sequence=1099")))
+        !tail.contains(QStringLiteral("sequence=1099")) ||
+        !tail.contains(QStringLiteral("detail=内存不足：规则整理")))
         return fail(2, "log tail bounds or newest event assertion failed");
     quizpane::diagnostic::shutdown();
 
@@ -41,14 +45,20 @@ int main(int argc, char** argv) {
         return fail(3, "cannot create temporary export directory");
     const QString exportPath = exportDirectory.filePath(QStringLiteral("feedback.json"));
     quizpane::feedback::ReportOptions exportOptions;
-    exportOptions.description = QStringLiteral("offline export");
-    exportOptions.includeLogs = false;
+    exportOptions.description = QStringLiteral("离线导出");
+    exportOptions.includeLogs = true;
     exportOptions.includeCrash = false;
     const auto exported = quizpane::feedback::exportReport(exportOptions, exportPath);
     QFile exportedFile(exportPath);
-    if (!exported.success || !exportedFile.open(QIODevice::ReadOnly) ||
-        !exportedFile.readAll().contains("\"description\":\"offline export\""))
+    if (!exported.success || !exportedFile.open(QIODevice::ReadOnly))
         return fail(4, "offline export contents assertion failed");
+    const QJsonObject exportedPayload =
+        QJsonDocument::fromJson(exportedFile.readAll()).object();
+    if (exportedPayload.value(QStringLiteral("description")).toString() !=
+            QStringLiteral("离线导出") ||
+        !exportedPayload.value(QStringLiteral("logs")).toString().contains(
+            QStringLiteral("detail=内存不足：规则整理")))
+        return fail(4, "offline export unicode assertion failed");
     exportedFile.close();
 
     QFile oldCrash(quizpane::diagnostic::crashArtifactPath());

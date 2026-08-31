@@ -74,6 +74,7 @@ private:
     void handleBackNavigation();
     void movePage(int delta);
     void beginPreflight();
+    void discardPreviousGenerationForNewTask();
     void startCloudParseThenGenerate(const QList<SourceMaterialGroup>& groups);
     bool shouldUseCloudParse() const;
     void processNextCloudSource();

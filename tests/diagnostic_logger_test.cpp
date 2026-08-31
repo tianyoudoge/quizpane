@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QDir>
 #include <QStandardPaths>
 
@@ -19,6 +20,12 @@ int main(int argc, char** argv) {
     QFile::remove(expectedLog);
     QFile::remove(expectedLog + QStringLiteral(".1"));
     QFile::remove(expectedLog + QStringLiteral(".2"));
+    QDir().mkpath(QFileInfo(expectedLog).absolutePath());
+    QFile legacyLog(expectedLog);
+    if (!legacyLog.open(QIODevice::WriteOnly) ||
+        legacyLog.write(QByteArray::fromHex("D6D0CEC4")) != 4)
+        return 9;
+    legacyLog.close();
     if (!quizpane::diagnostic::initialize(QStringLiteral("diagnostic-test")))
         return 1;
     // 测试运行若继承了此前关闭的设置，先恢复为启用状态，确保后续断言稳定。
@@ -28,7 +35,16 @@ int main(int argc, char** argv) {
     qWarning().noquote() << "warning-windows C:\\Users\\alice\\private\\visible";
     quizpane::diagnostic::event(QStringLiteral("test"), QStringLiteral("breadcrumb"),
         {{QStringLiteral("count"), 3},
-         {QStringLiteral("apiKey"), QStringLiteral("must-not-appear")}});
+         {QStringLiteral("apiKey"), QStringLiteral("must-not-appear")},
+         {QStringLiteral("detail"), QStringLiteral("内存不足：规则整理")}});
+#if defined(Q_OS_WIN)
+    const QVariantMap memory = quizpane::diagnostic::memorySnapshot();
+    if (!memory.contains(QStringLiteral("availablePhysicalBytes")) ||
+        !memory.contains(QStringLiteral("workingSetBytes")) ||
+        !memory.contains(QStringLiteral("privateUsageBytes")) ||
+        memory.value(QStringLiteral("totalPhysicalBytes")).toULongLong() == 0)
+        return 8;
+#endif
 #ifdef QUIZPANE_VERBOSE_DIAGNOSTICS
     quizpane::diagnostic::payload(QStringLiteral("test"), QStringLiteral("payload"),
         QStringLiteral("source"), QStringLiteral("abcdef"), 4);
@@ -48,8 +64,13 @@ int main(int argc, char** argv) {
     if (!file.open(QIODevice::ReadOnly))
         return 3;
     const QByteArray contents = file.readAll();
+    QFile rotatedLegacy(expectedLog + QStringLiteral(".1"));
+    if (!rotatedLegacy.open(QIODevice::ReadOnly) ||
+        rotatedLegacy.readAll() != QByteArray::fromHex("D6D0CEC4"))
+        return 10;
     if (!contents.contains("[test] breadcrumb") ||
         !contents.contains("apiKey=<redacted>") ||
+        !contents.contains(QStringLiteral("detail=内存不足：规则整理").toUtf8()) ||
         contents.contains("must-not-appear") ||
         quizpane::diagnostic::crashArtifactPath().isEmpty() ||
         !contents.contains("[session] end exit=clean") ||

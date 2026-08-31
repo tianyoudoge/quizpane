@@ -319,6 +319,21 @@ public:
             window.reviewSourceImages_.value(QStringLiteral("q7")).value(QStringLiteral("crop"))
                 .toObject().value(QStringLiteral("width")).toDouble() != 0.50 ||
             window.generatedAssets_.contains(previewPath)) return 35;
+
+        // 开始下一次整理前必须释放上一批完整候选与逐题校对图，避免低内存
+        // Windows 在“旧复核结果 + 新任务中间产物”同时驻留时触发分配失败。
+        window.generatedAssets_.insert(QStringLiteral("assets/formal.png"), sourceBytes);
+        window.pendingCropAsset_ = preview;
+        window.pendingCropPage_ = sourcePage;
+        window.discardPreviousGenerationForNewTask();
+        if (!window.generatedMaterials_.isEmpty() || !window.generatedQuestions_.isEmpty() ||
+            !window.reviewQuestions_.isEmpty() || !window.generatedAssets_.isEmpty() ||
+            !window.reviewSourceImages_.isEmpty() || !window.reviewAssets_.isEmpty() ||
+            !window.pendingCropAsset_.isEmpty() || !window.pendingCropPage_.isNull() ||
+            window.currentReviewItem_ || window.currentMaterialItem_ ||
+            window.reviewTree_->topLevelItemCount() != 0 ||
+            !window.reviewOptionEditors_.isEmpty() || !window.reviewVisualPanel_->isHidden())
+            return 40;
         return 0;
     }
 };

@@ -112,6 +112,24 @@
   流水线额外解压 ZIP 检查 Qt 网络/PDF/WebSockets、Schannel、MSVC CRT、平台插件和 OCR 模型，
   并确认测试专用 EXE 与无用的 `vc_redist` 安装程序没有进入产物。
 
+### A14. 同一窗口连续整理时旧复核图片叠加内存峰值 — 已解决（2026-08-31）
+- **原现象**：新任务直到 `populateReview()` 收到新结果才覆盖上一批 `generatedAssets_`、
+  `reviewAssets_` 和题目树。低内存 Windows 会同时保留旧的数百张逐题校对图、新 MinerU
+  ZIP/layout、页面 PNG 缓存与新校对图，可能在规则整理阶段触发“内存不足”。
+- **现状**：输入与 Token 预检通过、真正创建新 workflow 之前，
+  `discardPreviousGenerationForNewTask()` 先安全断开树节点指针并清空上一批完整候选、图片与
+  待裁切页面。释放前后诊断事件记录系统可用物理内存、进程 Working Set/Private Usage/峰值，
+  同时记录旧图片数量和字节数；`studio_review_ui_test` 锁定完整释放契约。
+
+### A15. Win7 导出的诊断日志中文乱码 — 已解决（2026-08-31）
+- **原现象**：Qt 5 `QTextStream` 在中文 Windows 上按系统本地编码写日志，反馈模块却固定按
+  UTF-8 读取；应用名、阶段详情和错误原因因此在导出的反馈 JSON 中变成乱码。
+- **现状**：`diagnostic_logger` 不再依赖平台默认 codec，整行显式转成 UTF-8 字节后落盘；
+  初始化时若检测到旧日志不是合法 UTF-8，会先将它保留轮转为 `.1`，再创建纯 UTF-8 新日志，
+  避免升级后形成 GBK/UTF-8 混合文件；
+  `diagnostic_logger_test` 校验原始日志字节，`feedback_report_test` 校验中文日志经过反馈 JSON
+  导出后仍可原样读取，Qt5/Qt6 与各平台共享同一编码契约。
+
 ## B. 功能缺口
 
 ### B1. CropDialog 编辑能力弱 — P1

@@ -26,6 +26,9 @@ void setDiagnosticsEnabled(bool enabled);
 // name 是事件名，fields 是附加的 key=value 集合，最终格式化
 // 成一行文本写入日志文件。
 void event(const QString& area, const QString& name, const QVariantMap& fields = {});
+// 返回当前系统与进程的轻量内存快照。Windows 使用 Win7 可用的
+// GlobalMemoryStatusEx/GetProcessMemoryInfo；不支持的平台或未启用诊断时返回空 map。
+QVariantMap memorySnapshot();
 // 记录一段较长的原始内容（如 Provider 返回的完整 JSON）。只
 // 在 QUIZPANE_VERBOSE_DIAGNOSTICS 打开时才真正写入，避免默认
 // 诊断包体积暴涨或意外把敏感 payload 落盘。

@@ -1740,6 +1740,7 @@ void StudioWindow::beginPreflight() {
             return;
         }
     }
+    discardPreviousGenerationForNewTask();
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("generation-start"),
         {{QStringLiteral("mode"), mineruConfig_.cloudEnabled
             ? QStringLiteral("smart") : QStringLiteral("rules")},
@@ -1787,6 +1788,59 @@ void StudioWindow::beginPreflight() {
                        answerPolicyByQuestion_.value(question, AnswerPolicyHint::Auto), {}, {}});
     }
     startCloudParseThenGenerate(groups);
+}
+
+void StudioWindow::discardPreviousGenerationForNewTask() {
+    const int generatedAssetCount = generatedAssets_.size();
+    const int reviewAssetCount = reviewAssets_.size();
+    qint64 generatedAssetBytes = 0;
+    for (auto it = generatedAssets_.cbegin(); it != generatedAssets_.cend(); ++it)
+        generatedAssetBytes += it.value().size();
+    qint64 reviewAssetBytes = 0;
+    for (auto it = reviewAssets_.cbegin(); it != reviewAssets_.cend(); ++it)
+        reviewAssetBytes += it.value().size();
+
+    QVariantMap before = diagnostic::memorySnapshot();
+    before.insert(QStringLiteral("generatedAssetBytes"), generatedAssetBytes);
+    before.insert(QStringLiteral("generatedAssets"), generatedAssetCount);
+    before.insert(QStringLiteral("questions"),
+                  generatedQuestions_.size() + reviewQuestions_.size());
+    before.insert(QStringLiteral("reviewAssetBytes"), reviewAssetBytes);
+    before.insert(QStringLiteral("reviewAssets"), reviewAssetCount);
+    diagnostic::event(QStringLiteral("studio"),
+                      QStringLiteral("generation-memory-before-release"), before);
+
+    // 新任务已经明确替代旧结果。必须先断开所有树节点指针，再销毁树节点和
+    // 图片容器；否则低内存机器会在新 ZIP、页面缓存和旧复核图同时驻留时叠峰。
+    currentReviewItem_ = nullptr;
+    currentMaterialItem_ = nullptr;
+    if (reviewTree_)
+        reviewTree_->clear();
+    setReviewOptions({});
+    clearLayout(reviewVisualLayout_);
+    reviewQuestionEditorPanel_->setVisible(false);
+    reviewVisualPanel_->setVisible(false);
+
+    generatedMaterials_ = {};
+    generatedQuestions_ = {};
+    reviewQuestions_ = {};
+    generatedAssets_.clear();
+    generatedAssets_.squeeze();
+    reviewSourceImages_.clear();
+    reviewSourceImages_.squeeze();
+    reviewAssets_.clear();
+    reviewAssets_.squeeze();
+    pendingCropAsset_ = QJsonObject{};
+    pendingCropPage_ = QImage{};
+    generatedHasAnswerKey_ = true;
+
+    QVariantMap after = diagnostic::memorySnapshot();
+    after.insert(QStringLiteral("releasedAssetBytes"),
+                 generatedAssetBytes + reviewAssetBytes);
+    after.insert(QStringLiteral("releasedAssets"),
+                 generatedAssetCount + reviewAssetCount);
+    diagnostic::event(QStringLiteral("studio"),
+                      QStringLiteral("generation-memory-after-release"), after);
 }
 
 // 云解析在规则工作流之前完成：MinerU 是异步任务，而工作流内部的提取运行在

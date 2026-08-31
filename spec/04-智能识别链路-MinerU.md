@@ -289,3 +289,8 @@
 API 60s / 上传下载 600s；瞬时错误重试 ≤4 次；轮询 3s→30s 退避、弱网无次数上限；
 ZIP 512MB / layout.json 64MB / 10000 页；结果 ZIP 整包驻留内存；
 本地 PDF 页渲染像素上限 5000（`document_extractor.cpp:222-223`）。
+
+题库制作器真正启动新任务前会先释放上一批题目树、正式附件、逐题校对图和待裁切页面，
+避免“旧复核结果 + 新 ZIP/layout + 新页面缓存”在同一进程叠加峰值。诊断日志在释放前后记录
+系统可用物理内存、进程 Working Set/Private Usage/峰值以及被释放图片的数量与字节数；
+Windows 数据来自 Win7 可用的 `GlobalMemoryStatusEx` 与 `GetProcessMemoryInfo`。

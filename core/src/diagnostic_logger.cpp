@@ -16,7 +16,6 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QSysInfo>
-#include <QTextStream>
 #include <QThread>
 #include <QUrl>
 
@@ -28,6 +27,7 @@
 #if defined(Q_OS_WIN)
 #include <windows.h>
 #include <dbghelp.h>
+#include <psapi.h>
 #else
 #include <execinfo.h>
 #include <fcntl.h>
@@ -157,6 +157,53 @@ void rotate(const QString& path) {
     QFile::rename(path, path + QStringLiteral(".1"));
 }
 
+bool isValidUtf8(const QByteArray& bytes) {
+    qsizetype index = 0;
+    while (index < bytes.size()) {
+        const auto first = static_cast<unsigned char>(bytes.at(index));
+        if (first <= 0x7f) {
+            ++index;
+            continue;
+        }
+        int continuationCount = 0;
+        if (first >= 0xc2 && first <= 0xdf)
+            continuationCount = 1;
+        else if (first >= 0xe0 && first <= 0xef)
+            continuationCount = 2;
+        else if (first >= 0xf0 && first <= 0xf4)
+            continuationCount = 3;
+        else
+            return false;
+        if (index + continuationCount >= bytes.size())
+            return false;
+        const auto second = static_cast<unsigned char>(bytes.at(index + 1));
+        if ((second & 0xc0) != 0x80 ||
+            (first == 0xe0 && second < 0xa0) ||
+            (first == 0xed && second >= 0xa0) ||
+            (first == 0xf0 && second < 0x90) ||
+            (first == 0xf4 && second >= 0x90))
+            return false;
+        for (int offset = 2; offset <= continuationCount; ++offset)
+            if ((static_cast<unsigned char>(bytes.at(index + offset)) & 0xc0) != 0x80)
+                return false;
+        index += continuationCount + 1;
+    }
+    return true;
+}
+
+void rotateLegacyEncodedLog(const QString& path) {
+    QFile existing(path);
+    if (!existing.open(QIODevice::ReadOnly) || isValidUtf8(existing.readAll()))
+        return;
+    existing.close();
+    // 保留旧文件用于必要时人工取证，但不能继续追加形成 GBK/UTF-8 混合日志。
+    QFile::remove(path + QStringLiteral(".%1").arg(kRetainedLogs));
+    for (int index = kRetainedLogs - 1; index >= 1; --index)
+        QFile::rename(path + QStringLiteral(".%1").arg(index),
+                      path + QStringLiteral(".%1").arg(index + 1));
+    QFile::rename(path, path + QStringLiteral(".1"));
+}
+
 // 把一行写进日志文件（调用方已持有 mutex）。文件超过上限时先轮转再写。
 void appendLine(LogState& log, const QString& level, const QString& content) {
     if (!log.file.isOpen())
@@ -168,11 +215,17 @@ void appendLine(LogState& log, const QString& level, const QString& content) {
         if (!log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
             return;
     }
-    QTextStream stream(&log.file);
-    stream << QDateTime::currentDateTime().toString(Qt::ISODateWithMs)
-           << " pid=" << QCoreApplication::applicationPid()
-           << " tid=" << reinterpret_cast<quintptr>(QThread::currentThreadId())
-           << ' ' << level << ' ' << content << Qt::endl;
+    // Qt 5 的 QTextStream 默认使用系统本地编码；中文 Windows 通常会写成
+    // GBK，而反馈导出按 UTF-8 读取，最终把应用名、阶段和错误原因全部变成乱码。
+    // 直接写 UTF-8 字节，使 Qt5/Qt6 与所有平台使用同一份日志编码契约。
+    const QString line = QDateTime::currentDateTime().toString(Qt::ISODateWithMs) +
+        QStringLiteral(" pid=") + QString::number(QCoreApplication::applicationPid()) +
+        QStringLiteral(" tid=") +
+        QString::number(static_cast<qulonglong>(
+            reinterpret_cast<quintptr>(QThread::currentThreadId()))) +
+        QChar(' ') + level + QChar(' ') + content + QChar('\n');
+    const QByteArray encoded = line.toUtf8();
+    (void)log.file.write(encoded);
     log.file.flush();
 }
 
@@ -380,12 +433,14 @@ bool initialize(const QString& component) {
                   log.crashPath.toUtf8().constData());
 #endif
     if (enabledFlag.load(std::memory_order_relaxed)) {
+        rotateLegacyEncodedLog(log.path);
         rotate(log.path);
         log.file.setFileName(log.path);
         (void)log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     }
     installCrashHandlers();
 #else
+    rotateLegacyEncodedLog(log.path);
     rotate(log.path);
     log.file.setFileName(log.path);
     if (!log.file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
@@ -475,6 +530,40 @@ void event(const QString& area, const QString& name, const QVariantMap& fields) 
 #endif
 }
 
+QVariantMap memorySnapshot() {
+    QVariantMap fields;
+#if defined(Q_OS_WIN)
+    MEMORYSTATUSEX system{};
+    system.dwLength = sizeof(system);
+    if (GlobalMemoryStatusEx(&system)) {
+        fields.insert(QStringLiteral("memoryLoadPercent"), system.dwMemoryLoad);
+        fields.insert(QStringLiteral("availablePhysicalBytes"),
+                      QVariant::fromValue<qulonglong>(system.ullAvailPhys));
+        fields.insert(QStringLiteral("totalPhysicalBytes"),
+                      QVariant::fromValue<qulonglong>(system.ullTotalPhys));
+        fields.insert(QStringLiteral("availablePageFileBytes"),
+                      QVariant::fromValue<qulonglong>(system.ullAvailPageFile));
+        fields.insert(QStringLiteral("totalPageFileBytes"),
+                      QVariant::fromValue<qulonglong>(system.ullTotalPageFile));
+    }
+
+    PROCESS_MEMORY_COUNTERS_EX process{};
+    if (GetProcessMemoryInfo(GetCurrentProcess(),
+                             reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&process),
+                             sizeof(process))) {
+        fields.insert(QStringLiteral("workingSetBytes"),
+                      QVariant::fromValue<qulonglong>(process.WorkingSetSize));
+        fields.insert(QStringLiteral("peakWorkingSetBytes"),
+                      QVariant::fromValue<qulonglong>(process.PeakWorkingSetSize));
+        fields.insert(QStringLiteral("privateUsageBytes"),
+                      QVariant::fromValue<qulonglong>(process.PrivateUsage));
+        fields.insert(QStringLiteral("pageFileUsageBytes"),
+                      QVariant::fromValue<qulonglong>(process.PagefileUsage));
+    }
+#endif
+    return fields;
+}
+
 void shutdown() {
     LogState& log = state();
     if (!log.initialized)
@@ -513,6 +602,7 @@ bool openLogFile() {
 namespace quizpane::diagnostic {
 bool initialize(const QString&) { return false; }
 void event(const QString&, const QString&, const QVariantMap&) {}
+QVariantMap memorySnapshot() { return {}; }
 void payload(const QString&, const QString&, const QString&, const QString&, qsizetype) {}
 void shutdown() {}
 bool isDiagnosticsEnabled() { return true; }
