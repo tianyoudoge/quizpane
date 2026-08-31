@@ -52,6 +52,7 @@
 #include <QProgressDialog>
 #include <QRadioButton>
 #include <QCheckBox>
+#include <QRegularExpression>
 #include <QResizeEvent>
 #include <QScreen>
 #include <QShowEvent>
@@ -64,7 +65,6 @@
 #include <QSystemTrayIcon>
 #include <QSysInfo>
 #include <QStyle>
-#include <QTextDocument>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -104,9 +104,20 @@ protected:
 };
 
 QString plainText(const QString& html) {
-    QTextDocument document;
-    document.setHtml(html);
-    return document.toPlainText().trimmed();
+    // 选项文本只是 paragraph() 生成的简单 <p>/<span>/<br> 包裹 + toHtmlEscaped()
+    // 转义，不需要 QTextDocument 的完整 HTML 解析和排版树构建——那是翻题时最重的
+    // 单步开销，在 Win7 低配机上尤其明显。手动去标签 + 反转义即可等价还原纯文本。
+    static const QRegularExpression tagPattern(QStringLiteral("<[^>]*>"));
+    QString text = html;
+    text.replace(QStringLiteral("<br>"), QStringLiteral("\n"), Qt::CaseInsensitive);
+    text.remove(tagPattern);
+    text.replace(QStringLiteral("&nbsp;"), QStringLiteral(" "));
+    text.replace(QStringLiteral("&lt;"), QStringLiteral("<"));
+    text.replace(QStringLiteral("&gt;"), QStringLiteral(">"));
+    text.replace(QStringLiteral("&quot;"), QStringLiteral("\""));
+    text.replace(QStringLiteral("&#39;"), QStringLiteral("'"));
+    text.replace(QStringLiteral("&amp;"), QStringLiteral("&"));
+    return text.trimmed();
 }
 
 QString choiceLabel(int choice) {
