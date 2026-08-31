@@ -21,6 +21,17 @@ struct WorkflowProgress {
     int completedSourceBlocks = 0;
     int totalSourceBlocks = 0;
     QString detail;
+    int percent = -1;
+    QString rulePass;
+    QString documentName;
+    QString sectionTitle;
+    int sectionIndex = 0;
+    int sectionCount = 0;
+    int questionIndex = 0;
+    int questionCount = 0;
+    int processedQuestions = 0;
+    int acceptedQuestions = 0;
+    int reviewQuestions = 0;
 };
 
 using GeneratedBankCandidate = ReviewResult;

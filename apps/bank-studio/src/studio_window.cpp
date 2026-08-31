@@ -1634,17 +1634,6 @@ void StudioWindow::startFromSources() {
 }
 
 void StudioWindow::handleBackNavigation() {
-    const bool cloudActive = mineruJob_ &&
-        mineruJob_->stage() != MineruStage::Idle &&
-        mineruJob_->stage() != MineruStage::Done &&
-        mineruJob_->stage() != MineruStage::Failed &&
-        mineruJob_->stage() != MineruStage::Cancelled;
-    if (pages_->currentIndex() == 1 && cloudActive && !cloudBatchId_.isEmpty()) {
-        persistCloudTask();
-        closePreservingCloudTask_ = true;
-        close();
-        return;
-    }
     movePage(-1);
 }
 
@@ -1657,10 +1646,10 @@ void StudioWindow::updateNavigation() {
         mineruJob_->stage() != MineruStage::Failed &&
         mineruJob_->stage() != MineruStage::Cancelled;
     const bool workflowActive = workflow_ && workflow_->isActive();
-    const bool resumableCloud = page == 1 && cloudActive && !cloudBatchId_.isEmpty();
-    backButton_->setVisible(page > 0 && (!cloudActive && !workflowActive || resumableCloud));
-    backButton_->setText(resumableCloud ? QStringLiteral("后台等待并关闭")
-                                        : QStringLiteral("上一步"));
+    // 整理期间没有“后台等待并关闭”入口。旧入口实际会关闭进程，并不能在本机
+    // 后台继续工作；运行中只保留明确的取消/放弃操作。
+    backButton_->setVisible(page > 0 && !cloudActive && !workflowActive);
+    backButton_->setText(QStringLiteral("上一步"));
     nextButton_->setVisible(page == 0 || page == 2);
     startButton_->setVisible(page == 1 || page == 3);
     nextButton_->setEnabled(page != 0 || !sourcePaths_.isEmpty());
@@ -2029,12 +2018,24 @@ void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
     }
     const int within = progress.totalSourceBlocks > 0
         ? span * progress.completedSourceBlocks / progress.totalSourceBlocks : 0;
-    const int value = qBound(0, base + within, 100);
+    const int value = progress.percent >= 0
+        ? qBound(0, progress.percent, 100) : qBound(0, base + within, 100);
+    if (progress.stage == WorkflowStage::Chunking && !progress.rulePass.isEmpty())
+        phase += QStringLiteral(" · ") + progress.rulePass;
     progressBar_->setValue(value);
-    progressStatus_->setText(QStringLiteral("%1%").arg(value));
+    if (progress.stage == WorkflowStage::Chunking && progress.questionCount > 0) {
+        progressStatus_->setText(QStringLiteral("%1% · %2/%3 题")
+            .arg(value).arg(progress.questionIndex).arg(progress.questionCount));
+    } else {
+        progressStatus_->setText(QStringLiteral("%1%").arg(value));
+    }
     phaseLabel_->setText(phase);
     phaseDetail_->setText(progress.detail);
     sourceCount_->setText(QString::number(progress.completedSourceBlocks));
+    if (progress.stage == WorkflowStage::Chunking) {
+        generatedCount_->setText(QString::number(progress.acceptedQuestions));
+        reviewCount_->setText(QString::number(progress.reviewQuestions));
+    }
 }
 
 void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
@@ -2189,6 +2190,75 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
     applyReviewFilter();
 }
 
+QByteArray StudioWindow::ensureReviewAssetBytes(const QJsonObject& asset) {
+    const QString path = asset.value(QStringLiteral("path")).toString();
+    if (path.isEmpty())
+        return {};
+    if (reviewAssets_.contains(path))
+        return reviewAssets_.value(path);
+    if (generatedAssets_.contains(path))
+        return generatedAssets_.value(path);
+    if (!asset.value(QStringLiteral("lazyReview")).toBool())
+        return {};
+
+    const QString documentName = asset.value(QStringLiteral("sourceDocument")).toString();
+    QString sourcePath;
+    for (const QString& candidate : sourcePaths_) {
+        if (QFileInfo(candidate).fileName() == documentName) {
+            sourcePath = candidate;
+            break;
+        }
+    }
+    if (sourcePath.isEmpty())
+        return {};
+
+    QJsonArray segments = asset.value(QStringLiteral("reviewSegments")).toArray();
+    if (segments.isEmpty()) {
+        segments.append(QJsonObject{
+            {QStringLiteral("sourcePage"), asset.value(QStringLiteral("sourcePage"))},
+            {QStringLiteral("crop"), asset.value(QStringLiteral("autoCrop"))}});
+    }
+    QList<QImage> pieces;
+    int width = 0;
+    int height = 0;
+    for (const QJsonValue& value : segments) {
+        const QJsonObject segment = value.toObject();
+        QString error;
+        const QImage page = renderPdfReviewPage(
+            sourcePath, segment.value(QStringLiteral("sourcePage")).toInt(), &error);
+        if (page.isNull())
+            return {};
+        const QRectF crop = cropRectFromJson(segment.value(QStringLiteral("crop")).toObject());
+        const QImage piece = cropNormalizedImage(
+            page, crop.isEmpty() ? QRectF(0.0, 0.0, 1.0, 1.0) : crop);
+        if (piece.isNull())
+            return {};
+        pieces.append(piece);
+        width = qMax(width, piece.width());
+        height += piece.height();
+    }
+    if (pieces.isEmpty())
+        return {};
+    QImage combined(width, height, QImage::Format_RGB32);
+    combined.fill(Qt::white);
+    QPainter painter(&combined);
+    int y = 0;
+    for (const QImage& piece : pieces) {
+        painter.drawImage(0, y, piece);
+        y += piece.height();
+    }
+    painter.end();
+    QByteArray png;
+    QBuffer buffer(&png);
+    if (!buffer.open(QIODevice::WriteOnly) || !combined.save(&buffer, "PNG"))
+        return {};
+    reviewAssets_.insert(path, png);
+    diagnostic::event(QStringLiteral("studio"), QStringLiteral("review-image-lazy-rendered"),
+        {{QStringLiteral("segments"), segments.size()},
+         {QStringLiteral("pngBytes"), png.size()}});
+    return png;
+}
+
 void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
     // titleRow 是嵌套布局。只 delete 外层 QLayoutItem 会遗留其中的按钮，切换
     // 材料后就会把页选择器和“手动修正”按钮一组组叠加到页面上。
@@ -2196,8 +2266,7 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
     QList<QJsonObject> validAssets;
     for (const QJsonObject& asset : assets) {
         const QString path = asset.value(QStringLiteral("path")).toString();
-        const QByteArray bytes = reviewAssets_.contains(path)
-            ? reviewAssets_.value(path) : generatedAssets_.value(path);
+        const QByteArray bytes = ensureReviewAssetBytes(asset);
         QPixmap pixmap;
         if (path.isEmpty() || bytes.isEmpty() || !pixmap.loadFromData(bytes, "PNG"))
             continue;
@@ -3114,11 +3183,6 @@ void StudioWindow::closeEvent(QCloseEvent* event) {
         mineruJob_->stage() != MineruStage::Failed &&
         mineruJob_->stage() != MineruStage::Cancelled;
     const bool workflowActive = workflow_ && workflow_->isActive();
-    if (closePreservingCloudTask_ && cloudActive && !cloudBatchId_.isEmpty()) {
-        persistCloudTask();
-        event->accept();
-        return;
-    }
     if (!cloudActive && !workflowActive) {
         event->accept();
         return;

@@ -94,6 +94,7 @@ private:
     void refreshReviewDecisionState();
     void advanceToNextReviewIssue();
     void addManualMaterialUnderline();
+    QByteArray ensureReviewAssetBytes(const QJsonObject& asset);
     void displayReviewAssets(const QList<QJsonObject>& assets);
     void recropReviewAsset(const QJsonObject& asset);
     bool commitReviewCrop(const QJsonObject& asset, const QImage& page,
@@ -200,7 +201,6 @@ private:
     QHash<QString, QJsonObject> reviewSourceImages_;
     QHash<QString, QByteArray> reviewAssets_;
     bool generatedHasAnswerKey_ = true;
-    bool closePreservingCloudTask_ = false;
 };
 
 }  // namespace quizpane::studio

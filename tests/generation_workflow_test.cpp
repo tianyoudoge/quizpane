@@ -27,11 +27,14 @@ int main(int argc, char** argv) {
     // 工作流只编排离线资料组：不监听端口、不启动服务器，也不依赖网络调度。
     quizpane::studio::GenerationWorkflow workflow;
     quizpane::studio::GeneratedBankCandidate ready;
+    QList<quizpane::studio::WorkflowProgress> progressEvents;
     bool finished = false;
     QObject::connect(&workflow, &quizpane::studio::GenerationWorkflow::questionsReady, &app,
                      [&](const auto& candidate) { ready = candidate; });
     QObject::connect(&workflow, &quizpane::studio::GenerationWorkflow::finished, &app,
                      [&] { finished = true; });
+    QObject::connect(&workflow, &quizpane::studio::GenerationWorkflow::progressChanged, &app,
+                     [&](const auto& progress) { progressEvents.append(progress); });
     const QList<quizpane::studio::SourceMaterialGroup> sources{
         {questionPath, answerPath}};
     workflow.startRuleBased(sources);
@@ -48,6 +51,18 @@ int main(int argc, char** argv) {
     const QJsonObject question = ready.questions.first().toObject();
     if (question.value("answer").toObject().value("optionIds").toArray() !=
         QJsonArray{"a"}) return 5;
+    bool sawQuestionProgress = false;
+    for (const auto& progress : progressEvents) {
+        if (progress.stage == quizpane::studio::WorkflowStage::Chunking &&
+            progress.rulePass == QStringLiteral("规则整理") &&
+            progress.questionIndex == 1 && progress.questionCount == 1 &&
+            progress.processedQuestions == 1 && progress.acceptedQuestions == 1 &&
+            progress.percent >= 60 && progress.percent <= 90) {
+            sawQuestionProgress = true;
+            break;
+        }
+    }
+    if (!sawQuestionProgress) return 27;
 
     // 答案另册走 MinerU 时必须使用 mineruAnswerZipPath，而不是悄悄回到本地
     // PDF 文字层。夹具还带一个 discarded footer，用于确保适配器输出才是实际

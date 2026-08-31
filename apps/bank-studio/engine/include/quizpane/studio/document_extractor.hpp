@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QString>
 #include <QStringList>
 #include <QHash>
@@ -10,6 +11,41 @@
 class QImage;
 
 namespace quizpane::studio {
+
+// 原卷整页渲染只是本地中间产物，最终写入题库的是局部裁切后的小图；但这份缓存
+// 会与规则整理的其他中间数据叠加。它不是 147 页 Win7 OOM 的唯一原因，但无上限
+// 保留仍会放大低内存机器的峰值。用字节预算 + 先进先出淘汰钳住这部分占用：
+// - 正常小文档几页/十几页，预算用不满，行为和无上限缓存完全一致；
+// - 超预算的大文档，淘汰最早插入的页，之后如果又被用到会
+//   重新渲染，用一点重复渲染的时间换取内存不失控。
+// 单页自身超过预算时仍保留该页，保证插入后可立即读取。
+class PdfPageImageCache {
+  public:
+    bool contains(int page) const { return images_.contains(page); }
+    QByteArray value(int page) const { return images_.value(page); }
+    int size() const { return images_.size(); }
+    qint64 byteSize() const { return totalBytes_; }
+    void insert(int page, const QByteArray& bytes) {
+        if (images_.contains(page)) {
+            totalBytes_ -= images_.value(page).size();
+            order_.removeAll(page);
+        }
+        images_.insert(page, bytes);
+        order_.append(page);
+        totalBytes_ += bytes.size();
+        while (totalBytes_ > kMaxBytes && order_.size() > 1) {
+            const int oldest = order_.takeFirst();
+            totalBytes_ -= images_.value(oldest).size();
+            images_.remove(oldest);
+        }
+    }
+
+  private:
+    static constexpr qint64 kMaxBytes = 200LL * 1024 * 1024;
+    QHash<int, QByteArray> images_;
+    QList<int> order_;
+    qint64 totalBytes_ = 0;
+};
 
 // PDF 文字层中的题号/选项标签坐标。坐标已经归一化到 0..1，因而规则生成器可
 // 以同一套逻辑裁切任意渲染分辨率的页面，而不必 OCR 图片里的数学符号。
@@ -59,7 +95,7 @@ struct ExtractedDocument {
     // 文字 PDF 也可能把统计图、图形推理题嵌为位图。扫描 PDF 会在提取时保留
     // 渲染页；文字 PDF 的页面则由规则生成器只在确认需要原卷视觉上下文时按需
     // 载入，避免“全卷每页渲染 + PNG 压缩”拖慢普通纯文字题库。
-    QHash<int, QByteArray> pageImages;
+    PdfPageImageCache pageImages;
     // 对文字型 PDF，保留题号与 A/B/C/D 标签的版面位置。它只用于“文字层没有
     // 选项内容、但选项本身是图或公式”的安全小图裁切。
     QHash<int, QList<PdfTextAnchor>> questionAnchors;

@@ -228,8 +228,8 @@ int main(int argc, char** argv) {
         .value("length").toInt() != 2)
         return 120;
 
-    // 普通 PDF 文字题也必须有独立的原卷校对图；它不属于正式题库附件，
-    // 否则大题本会因为每题一张预览而显著膨胀。
+    // 普通 PDF 文字题保留原卷校对描述符，但不得在生成阶段立即创建 PNG；
+    // 复核页选中该题后再懒渲染，避免大题本把每题一张预览全部驻留内存。
     ExtractedDocument plainPdfPreview;
     plainPdfPreview.sourcePath = QStringLiteral("plain-preview.pdf");
     plainPdfPreview.hasPageBoundaries = true;
@@ -246,10 +246,14 @@ int main(int argc, char** argv) {
     const auto plainPreviewResult = RuleBasedBankGenerator{}.generate({plainPdfPreview});
     if (plainPreviewResult.questions.size() != 1 ||
         plainPreviewResult.reviewSourceImages.size() != 1 ||
-        plainPreviewResult.reviewAssets.size() != 1 ||
+        !plainPreviewResult.reviewAssets.isEmpty() ||
         !plainPreviewResult.assets.isEmpty() ||
         !plainPreviewResult.reviewSourceImages.cbegin().value()
-             .value(QStringLiteral("reviewOnly")).toBool())
+             .value(QStringLiteral("reviewOnly")).toBool() ||
+        !plainPreviewResult.reviewSourceImages.cbegin().value()
+             .value(QStringLiteral("lazyReview")).toBool() ||
+        plainPreviewResult.reviewSourceImages.cbegin().value()
+             .value(QStringLiteral("reviewSegments")).toArray().isEmpty())
         return 163;
 
     // MinerU 偶尔会给出可切题的文本，却缺少能与规范化文本逐行对应的 bbox。
@@ -265,9 +269,10 @@ int main(int argc, char** argv) {
     const auto mineruPreviewResult = RuleBasedBankGenerator{}.generate({mineruPreviewFallback}, false);
     if (mineruPreviewResult.questions.size() != 1 ||
         mineruPreviewResult.reviewSourceImages.size() != 1 ||
-        mineruPreviewResult.reviewAssets.size() != 1) return 164;
+        !mineruPreviewResult.reviewAssets.isEmpty()) return 164;
     const QJsonObject mineruPreview = mineruPreviewResult.reviewSourceImages.cbegin().value();
     if (!mineruPreview.value(QStringLiteral("reviewOnly")).toBool() ||
+        !mineruPreview.value(QStringLiteral("lazyReview")).toBool() ||
         mineruPreview.value(QStringLiteral("sourceDocument")).toString() !=
             QStringLiteral("mineru-preview.pdf") ||
         mineruPreview.value(QStringLiteral("sourcePage")).toInt() != 1 ||

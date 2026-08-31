@@ -59,6 +59,14 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
     // 的“运行中”动画能持续刷新，完成结果再排回 GUI 线程，避免跨线程操作控件。
     const QPointer<GenerationWorkflow> owner(this);
     [[maybe_unused]] const auto backgroundTask = QtConcurrent::run([owner, sources] {
+        const auto publishSnapshot = [owner](const WorkflowProgress& snapshot) {
+            if (!owner)
+                return;
+            QMetaObject::invokeMethod(owner.data(), [owner, snapshot] {
+                if (owner && owner->active_)
+                    emit owner->progressChanged(snapshot);
+            }, Qt::QueuedConnection);
+        };
         const auto publishProgress = [owner](WorkflowStage stage, int completed, int total,
                                              const QString& detail) {
             if (!owner)
@@ -147,13 +155,70 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
         generationElapsed.start();
         RuleBasedGenerationResult result;
         if (failure.isEmpty()) {
+            const auto ruleProgress = [&](const QString& pass, int basePercent, int spanPercent) {
+                return [&, pass, basePercent, spanPercent](const RuleGenerationProgress& rule) {
+                    WorkflowProgress snapshot;
+                    snapshot.stage = WorkflowStage::Chunking;
+                    snapshot.completedSourceBlocks = documents.size();
+                    snapshot.totalSourceBlocks = qMax(1, sources.size());
+                    snapshot.rulePass = pass;
+                    snapshot.documentName = rule.documentName;
+                    snapshot.sectionTitle = rule.sectionTitle;
+                    snapshot.sectionIndex = rule.sectionIndex;
+                    snapshot.sectionCount = rule.sectionCount;
+                    snapshot.questionIndex = rule.questionIndex;
+                    snapshot.questionCount = rule.questionCount;
+                    snapshot.processedQuestions = rule.processedQuestions;
+                    snapshot.acceptedQuestions = rule.acceptedQuestions;
+                    snapshot.reviewQuestions = rule.reviewQuestions;
+                    const double sectionFraction = rule.sectionCount > 0
+                        ? (qMax(0, rule.sectionIndex - 1) +
+                           (rule.questionCount > 0
+                                ? static_cast<double>(rule.questionIndex) / rule.questionCount
+                                : 1.0)) / rule.sectionCount
+                        : 0.0;
+                    snapshot.percent = qBound(0, basePercent +
+                        qRound(spanPercent * sectionFraction), 99);
+                    const QString section = rule.sectionTitle.trimmed().isEmpty()
+                        ? QStringLiteral("未分套") : rule.sectionTitle.trimmed();
+                    snapshot.detail = QStringLiteral("%1 · %2 · 本套第 %3 / %4 题")
+                        .arg(rule.documentName, section)
+                        .arg(rule.questionIndex)
+                        .arg(rule.questionCount);
+                    if (rule.questionIndex == 0 || rule.questionIndex == rule.questionCount ||
+                        rule.questionIndex % 10 == 0) {
+                        QVariantMap fields = diagnostic::memorySnapshot();
+                        fields.insert(QStringLiteral("pass"), pass);
+                        fields.insert(QStringLiteral("document"), rule.documentName);
+                        fields.insert(QStringLiteral("section"), section);
+                        fields.insert(QStringLiteral("sectionIndex"), rule.sectionIndex);
+                        fields.insert(QStringLiteral("sectionCount"), rule.sectionCount);
+                        fields.insert(QStringLiteral("questionIndex"), rule.questionIndex);
+                        fields.insert(QStringLiteral("questionCount"), rule.questionCount);
+                        fields.insert(QStringLiteral("processedQuestions"), rule.processedQuestions);
+                        fields.insert(QStringLiteral("acceptedQuestions"), rule.acceptedQuestions);
+                        fields.insert(QStringLiteral("reviewQuestions"), rule.reviewQuestions);
+                        fields.insert(QStringLiteral("pageImageCount"), rule.pageImageCount);
+                        fields.insert(QStringLiteral("pageImageBytes"), rule.pageImageBytes);
+                        fields.insert(QStringLiteral("reviewAssetCount"), rule.reviewAssetCount);
+                        fields.insert(QStringLiteral("reviewAssetBytes"), rule.reviewAssetBytes);
+                        diagnostic::event(QStringLiteral("workflow"),
+                                          QStringLiteral("rule-progress"), fields);
+                    }
+                    publishSnapshot(snapshot);
+                };
+            };
             if (forcedHasAnswerKey.has_value()) {
-                result = RuleBasedBankGenerator{}.generate(documents, *forcedHasAnswerKey);
+                result = RuleBasedBankGenerator{}.generate(
+                    documents, *forcedHasAnswerKey,
+                    ruleProgress(QStringLiteral("规则整理"), 60, 30));
             } else {
                 // 自动模式先用“含答案”语义完整扫描，再按真正成功绑定到具体题目的
                 // 答案覆盖率决策。孤立答案记录、无法对齐的答案串和少量误识别不能
                 // 以一票否决把整库锁成含答案语义。
-                result = RuleBasedBankGenerator{}.generate(documents, true);
+                result = RuleBasedBankGenerator{}.generate(
+                    documents, true,
+                    ruleProgress(QStringLiteral("答案策略探测"), 60, 15));
                 const auto [resolvedAnswers, totalQuestions] = resolvedAnswerCoverage(result);
                 const bool sparseAnswers = totalQuestions > 0 &&
                     resolvedAnswers * 100 <= totalQuestions * kAutoAnswerCoveragePercent;
@@ -164,7 +229,9 @@ void GenerationWorkflow::startRuleBased(const QList<SourceMaterialGroup>& source
                      {QStringLiteral("decision"), sparseAnswers
                           ? QStringLiteral("none") : QStringLiteral("included")}});
                 if (sparseAnswers) {
-                    result = RuleBasedBankGenerator{}.generate(documents, false);
+                    result = RuleBasedBankGenerator{}.generate(
+                        documents, false,
+                        ruleProgress(QStringLiteral("按无答案题库重整"), 75, 15));
                     result.warnings.prepend(QStringLiteral(
                         "仅 %1/%2 题识别到答案（不高于 %3%），已按无答案题库整理")
                         .arg(resolvedAnswers).arg(totalQuestions).arg(kAutoAnswerCoveragePercent));

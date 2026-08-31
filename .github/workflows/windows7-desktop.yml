@@ -148,7 +148,8 @@ jobs:
         run: |
           $EnableOcr = $env:ENABLE_OCR -eq "true"
           ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }} `
-            -EnableOcr:$EnableOcr -BuildDir build/windows7-desktop -DistDir dist/windows7
+            -EnableOcr:$EnableOcr -EnableDiagnosticLogging `
+            -BuildDir build/windows7-desktop -DistDir dist/windows7
 
       - name: Inspect portable ZIP
         shell: pwsh

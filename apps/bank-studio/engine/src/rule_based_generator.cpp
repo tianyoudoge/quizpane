@@ -44,6 +44,13 @@ struct MaterialMarker {
     QString id;
 };
 
+qint64 assetBytes(const QHash<QString, QByteArray>& assets) {
+    qint64 total = 0;
+    for (auto it = assets.cbegin(); it != assets.cend(); ++it)
+        total += it.value().size();
+    return total;
+}
+
 const QRegularExpression& questionPattern() {
     // `\.(?!\d)` 用来把 “1.5 倍”这类小数挡在题号之外。但资料分析题的题干几乎
     // 都以年份开头（“111.2016年～2020年，……”），负向前瞻会连真题号一起否掉，
@@ -525,22 +532,63 @@ QJsonObject captureSourceBlock(ExtractedDocument* document, const QList<SourceLi
     return visualAssetDescriptor(*document, regions.firstKey(), firstCrop, path, QStringLiteral("原卷题目（请核对版式或题目边界）"));
 }
 
-QJsonObject captureSourcePageFallback(ExtractedDocument* document, int page, const QString& id,
-                                      QHash<QString, QByteArray>* assets) {
-    // 云端版面结果偶尔只有题号/段落坐标，或行文本在规范化后无法逐行反查。
-    // 此时不能因为自动框选失败就让复核者完全看不到原卷：先保留整页作为安全
-    // 回退，用户仍可在复核页重新框选真正的题目区域。该图仅供校对，不进入题库包。
-    if (!document || !assets || page <= 0)
+QJsonObject describeLazySourceBlock(const ExtractedDocument& document,
+                                    const QList<SourceLine>& lines, int start, int end,
+                                    const QString& id) {
+    QMap<int, QRectF> regions;
+    for (int i = start; i < end; ++i) {
+        const auto& line = lines.at(i);
+        const QRectF bounds = lineBoundsFor(document, line.page, line.text);
+        if (line.page > 0 && !bounds.isEmpty())
+            regions[line.page] = regions.value(line.page).united(bounds);
+    }
+    if (regions.isEmpty() || regions.size() > 4)
         return {};
-    ensurePdfPageImages(document, {page});
-    const QByteArray bytes = document->pageImages.value(page);
-    if (QImage::fromData(bytes, "PNG").isNull())
+    QJsonArray segments;
+    QRectF firstCrop;
+    for (auto it = regions.cbegin(); it != regions.cend(); ++it) {
+        const qreal top = qMax<qreal>(0, it.value().top() - 0.004);
+        const qreal bottom = qMin<qreal>(1, it.value().bottom() + 0.004);
+        const QRectF crop(0.04, top, 0.92, bottom - top);
+        if (crop.isEmpty())
+            continue;
+        if (firstCrop.isEmpty())
+            firstCrop = crop;
+        segments.append(QJsonObject{
+            {QStringLiteral("sourcePage"), it.key()},
+            {QStringLiteral("crop"), QJsonObject{
+                {QStringLiteral("x"), crop.x()}, {QStringLiteral("y"), crop.y()},
+                {QStringLiteral("width"), crop.width()},
+                {QStringLiteral("height"), crop.height()}}}});
+    }
+    if (segments.isEmpty())
         return {};
     const QString path = QStringLiteral("assets/%1-%2-reference.png")
-        .arg(assetBaseName(document->sourcePath), id);
-    assets->insert(path, bytes);
-    return visualAssetDescriptor(*document, page, QRectF(0.0, 0.0, 1.0, 1.0), path,
-                                 QStringLiteral("原卷整页（请手动框选题目区域）"));
+        .arg(assetBaseName(document.sourcePath), id);
+    QJsonObject descriptor = visualAssetDescriptor(
+        document, regions.firstKey(), firstCrop, path,
+        QStringLiteral("原卷题目（请核对版式或题目边界）"));
+    descriptor.insert(QStringLiteral("lazyReview"), true);
+    descriptor.insert(QStringLiteral("reviewSegments"), segments);
+    return descriptor;
+}
+
+QJsonObject describeLazySourcePage(const ExtractedDocument& document, int page,
+                                   const QString& id) {
+    if (page <= 0)
+        return {};
+    const QString path = QStringLiteral("assets/%1-%2-reference.png")
+        .arg(assetBaseName(document.sourcePath), id);
+    QJsonObject descriptor = visualAssetDescriptor(
+        document, page, QRectF(0.0, 0.0, 1.0, 1.0), path,
+        QStringLiteral("原卷整页（请手动框选题目区域）"));
+    descriptor.insert(QStringLiteral("lazyReview"), true);
+    descriptor.insert(QStringLiteral("reviewSegments"), QJsonArray{QJsonObject{
+        {QStringLiteral("sourcePage"), page},
+        {QStringLiteral("crop"), QJsonObject{
+            {QStringLiteral("x"), 0.0}, {QStringLiteral("y"), 0.0},
+            {QStringLiteral("width"), 1.0}, {QStringLiteral("height"), 1.0}}}}});
+    return descriptor;
 }
 
 QHash<QString, QRectF> optionRowForQuestion(const ExtractedDocument& document, int page,
@@ -2222,7 +2270,8 @@ void applyRuleBasedGenerationAudit(RuleBasedGenerationResult* result, bool hasAn
 } // namespace
 
 RuleBasedGenerationResult
-RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool hasAnswerKey) const {
+RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool hasAnswerKey,
+                                 const RuleGenerationProgressCallback& progress) const {
     RuleBasedGenerationResult result;
     result.hasAnswerKey = hasAnswerKey;
     int documentOrdinal = 0;
@@ -2247,9 +2296,12 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             scopedDocuments.append(section);
         }
     }
+    int processedQuestions = 0;
+    int sectionOrdinal = 0;
     for (const auto& sourceDocument : scopedDocuments) {
         // 下划线装饰是按需补充的版面元数据，生成时只影响当前文档的副本。
         ExtractedDocument document = sourceDocument;
+        ++sectionOrdinal;
         ++documentOrdinal;
         QList<SourceLine> lines = sourceLines(document);
         normalizeTrailingQuestionNumberLayout(&lines);
@@ -2313,6 +2365,27 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             anchors.append({index, number, match.captured(2).trimmed(),
                             inferredQuestionLines.contains(index)});
         }
+
+        const auto reportProgress = [&](int questionIndex) {
+            if (!progress)
+                return;
+            RuleGenerationProgress snapshot;
+            snapshot.documentName = QFileInfo(document.sourcePath).fileName();
+            snapshot.sectionTitle = document.sectionTitle;
+            snapshot.sectionIndex = sectionOrdinal;
+            snapshot.sectionCount = scopedDocuments.size();
+            snapshot.questionIndex = questionIndex;
+            snapshot.questionCount = anchors.size();
+            snapshot.processedQuestions = processedQuestions;
+            snapshot.acceptedQuestions = result.questions.size();
+            snapshot.reviewQuestions = result.needsReviewQuestions.size();
+            snapshot.pageImageCount = document.pageImages.size();
+            snapshot.pageImageBytes = document.pageImages.byteSize();
+            snapshot.reviewAssetCount = result.reviewAssets.size();
+            snapshot.reviewAssetBytes = assetBytes(result.reviewAssets);
+            progress(snapshot);
+        };
+        reportProgress(0);
 
         // 材料扫描：材料头与“根据材料回答N-M题”的范围头一起出现，范围头可能与
         // 材料头同段。这里复用既有的范围正则与归属逻辑。
@@ -2764,11 +2837,14 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
             // 只能对照转写文本，也避免把数百张校对图塞进最终题库安装包。
             QJsonObject sourcePreview = question.value(QStringLiteral("stemImage")).toObject();
             if (sourcePreview.isEmpty()) {
-                sourcePreview = captureSourceBlock(
-                    &document, lines, anchor.line, blockEnd, id, &result.reviewAssets);
+                // 普通文字题只保存原卷页码与裁切框。过去这里会立即渲染并把每题
+                // 一张 PNG 全部放进 reviewAssets，600 题题本会与整页缓存共同抬高
+                // Win7 峰值。复核页选中题目时再按该描述符生成并缓存当前一张。
+                sourcePreview = describeLazySourceBlock(
+                    document, lines, anchor.line, blockEnd, id);
                 if (sourcePreview.isEmpty())
-                    sourcePreview = captureSourcePageFallback(
-                        &document, lines.at(anchor.line).page, id, &result.reviewAssets);
+                    sourcePreview = describeLazySourcePage(
+                        document, lines.at(anchor.line).page, id);
                 if (!sourcePreview.isEmpty())
                     sourcePreview.insert(QStringLiteral("reviewOnly"), true);
             }
@@ -2828,6 +2904,8 @@ RuleBasedBankGenerator::generate(const QList<ExtractedDocument>& documents, bool
                 result.questions.append(question);
             else
                 result.needsReviewQuestions.append(question);
+            ++processedQuestions;
+            reportProgress(index + 1);
         }
     }
 

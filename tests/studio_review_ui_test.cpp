@@ -11,10 +11,14 @@
 #include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QHeaderView>
 #include <QJsonObject>
 #include <QLabel>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QSettings>
 #include <QScrollArea>
 #include <QStackedWidget>
@@ -84,6 +88,26 @@ public:
                 << (window.progressStatus_ ? window.progressStatus_->text() : QStringLiteral("<null>"));
             return 19;
         }
+        WorkflowProgress detailedProgress;
+        detailedProgress.stage = WorkflowStage::Chunking;
+        detailedProgress.percent = 68;
+        detailedProgress.rulePass = QStringLiteral("答案策略探测");
+        detailedProgress.detail = QStringLiteral("测试资料.pdf · 第一套 · 本套第 3 / 10 题");
+        detailedProgress.completedSourceBlocks = 1;
+        detailedProgress.totalSourceBlocks = 1;
+        detailedProgress.questionIndex = 3;
+        detailedProgress.questionCount = 10;
+        detailedProgress.acceptedQuestions = 2;
+        detailedProgress.reviewQuestions = 1;
+        window.updateWorkflowProgress(detailedProgress);
+        if (window.progressBar_->value() != 68 ||
+            !window.progressStatus_->text().contains(QStringLiteral("3/10 题")) ||
+            !window.phaseLabel_->text().contains(QStringLiteral("答案策略探测")) ||
+            window.generatedCount_->text() != QStringLiteral("2") ||
+            window.reviewCount_->text() != QStringLiteral("1"))
+            return 41;
+        for (auto* button : window.findChildren<QPushButton*>())
+            if (button->text() == QStringLiteral("后台等待并关闭")) return 42;
         auto* buildVersion = window.findChild<QAction*>(QStringLiteral("studioBuildVersionAction"));
         auto* about = window.findChild<QAction*>(QStringLiteral("studioAboutAction"));
         if (!buildVersion || buildVersion->isEnabled() ||
@@ -319,6 +343,39 @@ public:
             window.reviewSourceImages_.value(QStringLiteral("q7")).value(QStringLiteral("crop"))
                 .toObject().value(QStringLiteral("width")).toDouble() != 0.50 ||
             window.generatedAssets_.contains(previewPath)) return 35;
+
+#ifdef QUIZPANE_HAS_QT_PDF
+        // 大题本的普通题只携带页码和 bbox；选中题目时才渲染当前校对图，
+        // 不得在规则生成阶段把数百张 PNG 一次性塞进 reviewAssets。
+        const QString lazyPdfPath = sourceDir.filePath(QStringLiteral("懒加载原卷.pdf"));
+        {
+            QPdfWriter writer(lazyPdfPath);
+            QPainter painter(&writer);
+            painter.drawText(QPoint(120, 180), QStringLiteral("1. 懒加载校对图"));
+            painter.end();
+        }
+        window.sourcePaths_.append(lazyPdfPath);
+        const QString lazyPath = QStringLiteral("assets/lazy-review-reference.png");
+        const QJsonObject lazyPreview{
+            {"path", lazyPath}, {"alt", QStringLiteral("原卷题目")},
+            {"reviewOnly", true}, {"lazyReview", true},
+            {"sourceDocument", QFileInfo(lazyPdfPath).fileName()}, {"sourcePage", 1},
+            {"autoCrop", QJsonObject{{"x", 0.0}, {"y", 0.0},
+                {"width", 1.0}, {"height", 0.3}}},
+            {"reviewSegments", QJsonArray{QJsonObject{
+                {"sourcePage", 1}, {"crop", QJsonObject{{"x", 0.0}, {"y", 0.0},
+                    {"width", 1.0}, {"height", 0.3}}}}}}};
+        candidate.questions = {question(QStringLiteral("q8"))};
+        candidate.needsReviewQuestions = {};
+        candidate.reviewSourceImages = {{QStringLiteral("q8"), lazyPreview}};
+        candidate.reviewAssets = {};
+        window.populateReview(candidate);
+        auto* lazyItem = window.reviewTree_->topLevelItem(0)->child(0);
+        window.showReviewQuestion(lazyItem);
+        if (!window.reviewAssets_.contains(lazyPath) ||
+            window.reviewAssets_.value(lazyPath).isEmpty() ||
+            window.reviewVisualPanel_->isHidden()) return 43;
+#endif
 
         // 开始下一次整理前必须释放上一批完整候选与逐题校对图，避免低内存
         // Windows 在“旧复核结果 + 新任务中间产物”同时驻留时触发分配失败。
