@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(QuizPane VERSION 0.5.6 LANGUAGES C CXX)
+project(QuizPane VERSION 0.6.0 LANGUAGES C CXX)
 
 # 便于用户反馈时确认实际运行的包，而不把 Git 提交号或构建机路径带进产品。
 # 格式遵循产品约定：MMddHHmmyyyy，例如 082914272026。
