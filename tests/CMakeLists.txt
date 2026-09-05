@@ -32,6 +32,11 @@ target_link_libraries(provider_installer_test PRIVATE
 )
 add_test(NAME provider_installer_test COMMAND provider_installer_test)
 
+add_executable(windows_compatibility_test windows_compatibility_test.cpp)
+target_link_libraries(windows_compatibility_test PRIVATE
+    quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core)
+add_test(NAME windows_compatibility_test COMMAND windows_compatibility_test)
+
 add_executable(running_app_handoff_test running_app_handoff_test.cpp)
 target_link_libraries(running_app_handoff_test PRIVATE
     quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Network

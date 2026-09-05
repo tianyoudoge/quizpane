@@ -72,8 +72,12 @@ QString ProviderInstaller::currentPlatformKey() {
 #elif defined(Q_OS_WIN)
 #  if defined(Q_PROCESSOR_ARM_64)
     return QStringLiteral("windows-arm64");
-#  else
+#  elif defined(Q_PROCESSOR_X86_32)
+    return QStringLiteral("windows-x86");
+#  elif defined(Q_PROCESSOR_X86_64)
     return QStringLiteral("windows-x64");
+#  else
+    return QStringLiteral("unknown");
 #  endif
 #elif defined(Q_OS_LINUX)
 #  if defined(Q_PROCESSOR_ARM_64)

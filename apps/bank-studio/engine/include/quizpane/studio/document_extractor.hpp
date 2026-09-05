@@ -63,7 +63,8 @@ class PdfPageImageCache {
     }
 
   private:
-    static constexpr qint64 kMaxBytes = 200LL * 1024 * 1024;
+    static constexpr qint64 kMaxBytes = sizeof(void*) == 4
+        ? 64LL * 1024 * 1024 : 200LL * 1024 * 1024;
     QHash<int, QByteArray> images_;
     QList<int> order_;
     qint64 totalBytes_ = 0;

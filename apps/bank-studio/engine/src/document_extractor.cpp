@@ -1,4 +1,5 @@
 #include "quizpane/studio/document_extractor.hpp"
+#include "quizpane/studio/pdf_memory_budget.hpp"
 
 #include "quizpane/diagnostic_logger.hpp"
 #ifdef QUIZPANE_HAS_QT_PDF
@@ -55,6 +56,7 @@ namespace {
 QImage whiteBackground(const QImage& source) {
     if (source.isNull()) return {};
     QImage flat(source.size(), QImage::Format_RGB32);
+    if (flat.isNull()) return {};
     flat.fill(Qt::white);
     QPainter painter(&flat);
     painter.drawImage(0, 0, source);
@@ -68,7 +70,7 @@ bool hasSuffix(const QString& path, const QStringList& suffixes) {
 }
 
 #ifdef Q_OS_WIN
-bool pdfRenderWouldExhaustCommit() {
+bool pdfRenderWouldExhaustCommit(quint64 imageBytes) {
     MEMORYSTATUSEX memory{};
     memory.dwLength = sizeof(memory);
     if (!GlobalMemoryStatusEx(&memory))
@@ -79,17 +81,13 @@ bool pdfRenderWouldExhaustCommit() {
                               reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&process),
                               sizeof(process)))
         return false;
-    constexpr quint64 kOneGiB = 1024ULL * 1024ULL * 1024ULL;
-    const quint64 privateLimit = qMax<quint64>(
-        1536ULL * 1024ULL * 1024ULL, memory.ullTotalPhys * 3ULL / 4ULL);
-    const quint64 commitReserve = qMax<quint64>(2ULL * kOneGiB,
-                                                memory.ullTotalPhys / 2ULL);
-    return static_cast<quint64>(process.PrivateUsage) >= privateLimit ||
-        memory.ullAvailPageFile <= commitReserve ||
-        (memory.dwMemoryLoad >= 94 && memory.ullAvailPhys <= 256ULL * 1024ULL * 1024ULL);
+    return !pdfMemoryBudgetAllows({memory.ullTotalPhys, memory.ullAvailPhys,
+        memory.ullAvailPageFile, memory.ullAvailVirtual,
+        static_cast<quint64>(process.PrivateUsage), memory.dwMemoryLoad},
+        imageBytes, sizeof(void*) == 4);
 }
 #else
-bool pdfRenderWouldExhaustCommit() { return false; }
+bool pdfRenderWouldExhaustCommit(quint64) { return false; }
 #endif
 
 // UTF-8 严格解码失败（出现非法字节序列）时回退到 GB18030，覆盖国内用户
@@ -224,10 +222,13 @@ QString docxPlainText(const QByteArray& xmlBytes, QString* error) {
 }
 
 #ifdef QUIZPANE_HAS_QT_PDF
-bool hasVisibleInk(const QImage& source) {
+bool hasVisibleInk(const QImage& source, bool* allocationFailed) {
+    *allocationFailed = source.isNull();
     if (source.isNull())
         return false;
     const QImage image = whiteBackground(source).convertToFormat(QImage::Format_Grayscale8);
+    *allocationFailed = image.isNull();
+    if (*allocationFailed) return false;
     const int stepX = qMax(1, image.width() / 300);
     const int stepY = qMax(1, image.height() / 300);
     qsizetype samples = 0;
@@ -243,7 +244,7 @@ bool hasVisibleInk(const QImage& source) {
     return samples > 0 && static_cast<double>(dark) / samples > 0.001;
 }
 
-QImage renderPdfPage(QPdfDocument* document, int page) {
+QSize pdfRenderPixels(QPdfDocument* document, int page) {
     // 原来每页按 2x 渲染后再 PNG 压缩，即使这页最终没有任何图表/材料会进入题库。
     // 对屏幕预览、原卷局部裁切和 AI 定位而言 1.5x（约 108 DPI）仍有足够的笔画
     // 细节，却把每页像素量降至原来的 56%，是整理阶段最主要的确定性加速点。
@@ -251,6 +252,13 @@ QImage renderPdfPage(QPdfDocument* document, int page) {
     const QSizeF points = pdfPagePointSize(document, page);
     const QSize pixels(qBound(1, static_cast<int>(std::ceil(points.width() * kPreviewScale)), 5000),
                        qBound(1, static_cast<int>(std::ceil(points.height() * kPreviewScale)), 5000));
+    return pixels;
+}
+
+QImage renderPdfPage(QPdfDocument* document, int page) {
+    const QSize pixels = pdfRenderPixels(document, page);
+    if (!pdfImageAllocationAllowed(pixels))
+        return {};
     return document->render(page, pixels);
 }
 
@@ -352,6 +360,10 @@ QString bundledTessdataPath() {
 
 QString recognizePage(const QImage& source, QString* error) {
     QImage image = whiteBackground(source).convertToFormat(QImage::Format_RGB888);
+    if (image.isNull()) {
+        *error = QStringLiteral("内存不足，无法准备文字识别图片");
+        return {};
+    }
     tesseract::TessBaseAPI api;
     const QByteArray tessdataPath = bundledTessdataPath().toUtf8();
     const char* dataPath = tessdataPath.isEmpty() ? nullptr : tessdataPath.constData();
@@ -415,6 +427,16 @@ QString recognizePage(const QImage& source, QString* error) {
 
 } // namespace
 
+bool pdfImageAllocationAllowed(const QSize& pixels) {
+    if (pixels.width() <= 0 || pixels.height() <= 0)
+        return false;
+    // Four RGB32-sized buffers for render/flatten/crop/conversion headroom.
+    const quint64 pixelCount = quint64(pixels.width()) * quint64(pixels.height());
+    if (pixelCount > (std::numeric_limits<quint64>::max)() / 16)
+        return false;
+    return !pdfRenderWouldExhaustCommit(pixelCount * 16);
+}
+
 class PdfRenderSession::Impl final {
   public:
     explicit Impl(const QString& sourcePath) {
@@ -462,7 +484,7 @@ QImage PdfRenderSession::renderPage(int zeroBasedPage) {
 #else
     if (!impl_->pdf || zeroBasedPage < 0 || zeroBasedPage >= impl_->pdf->pageCount())
         return {};
-    if (pdfRenderWouldExhaustCommit()) {
+    if (!pdfImageAllocationAllowed(pdfRenderPixels(impl_->pdf.get(), zeroBasedPage))) {
         impl_->memoryPressure = true;
         if (!impl_->pressureLogged) {
             impl_->pressureLogged = true;
@@ -834,7 +856,24 @@ ExtractedDocument PdfExtractor::extract(const QString& path) const {
         }
         if (text.isEmpty()) {
             pageImage = renderPdfPage(&document, page);
-            if (hasVisibleInk(pageImage)) {
+            if (pageImage.isNull()) {
+                ++result.ocrFailedPages;
+                result.warnings.append(QStringLiteral(
+                    "第 %1 页无法渲染（可能内存不足），未能提取文字，请缩小文件后重试。")
+                    .arg(page + 1));
+                pages.append(QString{});
+                continue;
+            }
+            bool inkAllocationFailed = false;
+            const bool visibleInk = hasVisibleInk(pageImage, &inkAllocationFailed);
+            if (inkAllocationFailed) {
+                ++result.ocrFailedPages;
+                result.warnings.append(QStringLiteral("第 %1 页内存不足，未能提取文字，请缩小文件后重试。")
+                    .arg(page + 1));
+                pages.append(QString{});
+                continue;
+            }
+            if (visibleInk) {
 #ifdef QUIZPANE_HAS_TESSERACT_OCR
                 QString ocrError;
                 text = recognizePage(pageImage, &ocrError);

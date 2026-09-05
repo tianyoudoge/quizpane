@@ -5,6 +5,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
+#include <memory>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -490,49 +492,87 @@ void MineruExtractionJob::download(const QString& zipUrl) {
                          QNetworkRequest::NoLessSafeRedirectPolicy);
 #endif
     request.setTransferTimeout(600000);
+    struct DownloadState {
+        explicit DownloadState(const QString& path) : output(path) {}
+        QSaveFile output;
+        qint64 bytes = 0;
+        QString error;
+    };
+    QDir().mkpath(QFileInfo(outputZipPath_).absolutePath());
+    const auto state = std::make_shared<DownloadState>(outputZipPath_);
+    if (!state->output.open(QIODevice::WriteOnly)) {
+        failWith(QStringLiteral("无法保存解析结果，请检查本机存储空间后重试。"));
+        return;
+    }
     reply_ = manager_->get(request);
     QNetworkReply* current = reply_;
-    connect(current, &QNetworkReply::finished, this, [this, current, zipUrl] {
+    current->setReadBufferSize(256 * 1024);
+    const auto drain = [current, state] {
+        if (!state->error.isEmpty())
+            return;
+        while (current->bytesAvailable() > 0) {
+            const QByteArray chunk = current->read(64 * 1024);
+            if (chunk.isEmpty())
+                break;
+            if (chunk.size() > kMaxZipBytes - state->bytes) {
+                state->error = QStringLiteral("MinerU 结果包超出体积上限，已停止下载");
+                state->output.cancelWriting();
+                current->abort();
+                return;
+            }
+            if (state->output.write(chunk) != chunk.size()) {
+                state->error = QStringLiteral("无法保存解析结果，请检查本机存储空间后重试。");
+                state->output.cancelWriting();
+                current->abort();
+                return;
+            }
+            state->bytes += chunk.size();
+        }
+    };
+    connect(current, &QNetworkReply::metaDataChanged, this, [current, state] {
+        if (current->header(QNetworkRequest::ContentLengthHeader).toLongLong() > kMaxZipBytes) {
+            state->error = QStringLiteral("MinerU 结果包超出体积上限，已停止下载");
+            state->output.cancelWriting();
+            current->abort();
+        }
+    });
+    connect(current, &QIODevice::readyRead, this, drain);
+    connect(current, &QNetworkReply::finished, this, [this, current, state, drain] {
         if (reply_ != current)
             return;
         reply_ = nullptr;
         const int status = current->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const bool ok = current->error() == QNetworkReply::NoError && status < 400;
-        const QString networkError = current->errorString();
         const int networkErrorCode = static_cast<int>(current->error());
         const int retryAfter = current->rawHeader("Retry-After").toInt();
-        const QByteArray payload = current->readAll();
+        if (ok)
+            drain();
         current->deleteLater();
+        if (!state->error.isEmpty()) {
+            failWith(state->error);
+            return;
+        }
         if (!ok) {
+            state->output.cancelWriting();
             if (retryTransient(MineruStage::Downloading, status, networkErrorCode, retryAfter,
-                               QStringLiteral("下载结果暂时失败"),
-                               // full_zip_url 是短时签名地址。连接被 OSS 关闭后，不能抱着
-                               // 同一个地址重试；重新轮询会拿到新的签名地址，再发起下载。
-                               [this] { poll(); }))
+                               QStringLiteral("下载结果暂时失败"), [this] { poll(); }))
                 return;
-            Q_UNUSED(networkError)
             failWith(QStringLiteral("解析结果暂时无法下载，请稍后重新打开任务继续等待。"));
             return;
         }
         transientRetryAttempts_ = 0;
-        if (payload.isEmpty()) {
+        if (state->bytes == 0) {
+            state->output.cancelWriting();
             failWith(QStringLiteral("MinerU 返回了空的结果包"));
             return;
         }
-        if (payload.size() > kMaxZipBytes) {
-            failWith(QStringLiteral("MinerU 结果包超出体积上限，已拒绝写入"));
-            return;
-        }
-        QDir().mkpath(QFileInfo(outputZipPath_).absolutePath());
-        QFile output(outputZipPath_);
-        if (!output.open(QIODevice::WriteOnly) || output.write(payload) != payload.size()) {
+        if (!state->output.commit()) {
             failWith(QStringLiteral("无法保存解析结果，请检查本机存储空间后重试。"));
             return;
         }
-        output.close();
         setStage(MineruStage::Done);
         diagnostic::event(QStringLiteral("mineru"), QStringLiteral("job-done"),
-                          {{QStringLiteral("zipBytes"), payload.size()}});
+                          {{QStringLiteral("zipBytes"), state->bytes}});
         emit finished(true, outputZipPath_, QString());
     });
 }

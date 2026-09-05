@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QHash>
+#include <QCache>
+#include "review_image_utils.hpp"
 #include <QImage>
 #include <QMainWindow>
 #include "mineru_settings_dialog.hpp"
@@ -200,6 +202,8 @@ private:
     QHash<QString, QByteArray> generatedAssets_;
     QHash<QString, QJsonObject> reviewSourceImages_;
     QHash<QString, QByteArray> reviewAssets_;
+    QCache<QString, QByteArray> lazyReviewAssets_{16 * 1024}; // KiB; rebuildable only
+    ReviewPdfCache reviewPdfCache_;
     bool generatedHasAnswerKey_ = true;
 };
 

@@ -42,6 +42,11 @@ public:
     int downloadCount = 0;
     int latestZipTicket = 0;
     QByteArray uploadedBody;
+    QByteArray downloadPayload = "PK\x03\x04stub-zip-bytes";
+    bool chunkedDownload = false;
+    bool oversizedDownloadHeader = false;
+    bool holdDownload = false;
+    std::function<void()> onDownload;
 
 protected:
     void incomingConnection(qintptr descriptor) override {
@@ -148,7 +153,29 @@ private:
                 send("503 Service Unavailable", R"({"msg":"temporary download failure"})");
                 return;
             }
-            send("200 OK", "PK\x03\x04stub-zip-bytes", "application/zip");
+            if (oversizedDownloadHeader) {
+                socket->write("HTTP/1.1 200 OK\r\nContent-Length: 536870913\r\n\r\n");
+                socket->flush();
+                return;
+            }
+            if (chunkedDownload) {
+                socket->write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+                const QByteArray first = downloadPayload.left(1000);
+                socket->write(QByteArray::number(first.size(), 16) + "\r\n" + first + "\r\n");
+                socket->flush();
+                if (onDownload) onDownload();
+                if (!holdDownload) {
+                    const QByteArray rest = downloadPayload.mid(first.size());
+                    QTimer::singleShot(20, socket, [socket, rest] {
+                        if (!rest.isEmpty())
+                            socket->write(QByteArray::number(rest.size(), 16) + "\r\n" + rest + "\r\n");
+                        socket->write("0\r\n\r\n");
+                        socket->disconnectFromHost();
+                    });
+                }
+                return;
+            }
+            send("200 OK", downloadPayload, "application/zip");
             return;
         }
         send("404 Not Found", "{}");
@@ -395,6 +422,59 @@ int main(int argc, char** argv) {
         if (server.uploadCount != uploadsBeforeResume ||
             server.uploadTicketRequestCount != ticketsBeforeResume)
             return fail("resumed task must not upload the original file again");
+    }
+
+    // Unknown-length/chunked response: publish only a complete, byte-identical
+    // file. Cancellation and header overflow must preserve an existing result.
+    {
+        const QString streamedZip = directory.filePath(QStringLiteral("分块结果.zip"));
+        server.chunkedDownload = true;
+        server.downloadPayload = QByteArray(700000, 'z');
+        server.downloadPayload.replace(0, 4, "PK\x03\x04");
+        MineruExtractionJob job(&manager);
+        bool ok = false;
+        QString resultZip, error;
+        job.resume(stubSettings, QStringLiteral("batch-1"), streamedZip);
+        if (!waitForFinish(&job, &ok, &resultZip, &error) || !ok)
+            return fail("chunked download failed");
+        QFile result(streamedZip);
+        if (!result.open(QIODevice::ReadOnly) || result.readAll() != server.downloadPayload)
+            return fail("streamed bytes must match the response exactly");
+        result.close();
+        const QByteArray previous = server.downloadPayload;
+        server.holdDownload = true;
+        server.downloadPayload = QByteArray(700000, 'n');
+        server.onDownload = [&job] { QTimer::singleShot(0, &job, &MineruExtractionJob::cancel); };
+        job.resume(stubSettings, QStringLiteral("batch-1"), streamedZip);
+        if (!waitForFinish(&job, &ok, &resultZip, &error) || ok ||
+            job.stage() != MineruStage::Cancelled)
+            return fail("in-flight download must be cancellable");
+        server.onDownload = {};
+        server.holdDownload = false;
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        if (!result.open(QIODevice::ReadOnly) || result.readAll() != previous)
+            return fail("cancelled download must not overwrite a complete result");
+        result.close();
+        server.chunkedDownload = false;
+        server.oversizedDownloadHeader = true;
+        job.resume(stubSettings, QStringLiteral("batch-1"), streamedZip);
+        if (!waitForFinish(&job, &ok, &resultZip, &error) || ok ||
+            !error.contains(QStringLiteral("超出")))
+            return fail("oversized response must stop before receiving its body");
+        server.oversizedDownloadHeader = false;
+        if (!result.open(QIODevice::ReadOnly) || result.readAll() != previous)
+            return fail("overflow must preserve an existing complete result");
+        result.close();
+        server.downloadPayload = {};
+        const QString emptyZip = directory.filePath(QStringLiteral("empty.zip"));
+        job.resume(stubSettings, QStringLiteral("batch-1"), emptyZip);
+        if (!waitForFinish(&job, &ok, &resultZip, &error) || ok || QFile::exists(emptyZip))
+            return fail("empty download must not create a completed result");
+        server.downloadPayload = "PK\x03\x04stub-zip-bytes";
+        // A directory cannot be used as the output file, even if networking works.
+        job.resume(stubSettings, QStringLiteral("batch-1"), directory.path());
+        if (!waitForFinish(&job, &ok, &resultZip, &error) || ok || error.isEmpty())
+            return fail("unwritable output must fail without retrying a signed url");
     }
 
     // 错误路径：Token 不被桩服务接受时必须失败并给出提示，不能写出结果文件。

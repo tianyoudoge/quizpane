@@ -372,9 +372,39 @@ public:
         window.populateReview(candidate);
         auto* lazyItem = window.reviewTree_->topLevelItem(0)->child(0);
         window.showReviewQuestion(lazyItem);
-        if (!window.reviewAssets_.contains(lazyPath) ||
-            window.reviewAssets_.value(lazyPath).isEmpty() ||
+        if (window.reviewAssets_.contains(lazyPath) ||
+            window.lazyReviewAssets_.isEmpty() ||
+            window.ensureReviewAssetBytes(lazyPreview).isEmpty() ||
             window.reviewVisualPanel_->isHidden()) return 43;
+        const QByteArray lazyBytes = window.ensureReviewAssetBytes(lazyPreview);
+        window.lazyReviewAssets_.setMaxCost(0);
+        if (!window.lazyReviewAssets_.isEmpty() ||
+            window.ensureReviewAssetBytes(lazyPreview) != lazyBytes ||
+            !window.lazyReviewAssets_.isEmpty()) return 44;
+        // Manual edits are not disposable, even if the descriptor still carries
+        // lazyReview from its original automatic preview.
+        window.reviewAssets_.insert(lazyPath, sourceBytes);
+        if (window.ensureReviewAssetBytes(lazyPreview) != sourceBytes) return 45;
+        window.reviewAssets_.remove(lazyPath);
+        window.lazyReviewAssets_.setMaxCost(16 * 1024);
+
+        ReviewPdfCache pages(24 * 1024);
+        QString pageError;
+        const QImage firstPage = pages.renderPage(lazyPdfPath, 1, &pageError);
+        const QImage repeatedPage = pages.renderPage(lazyPdfPath, 1, &pageError);
+        if (firstPage.isNull() || !pageError.isEmpty() ||
+            firstPage.cacheKey() != repeatedPage.cacheKey() ||
+            pages.cachedKiB() <= 0 || pages.cachedKiB() > 24 * 1024) return 46;
+        ReviewPdfCache noPages(0);
+        if (noPages.renderPage(lazyPdfPath, 1, &pageError) != firstPage ||
+            noPages.cachedKiB() != 0) return 47;
+        if (!pages.renderPage(lazyPdfPath, 2, &pageError).isNull() || pageError.isEmpty()) return 48;
+        pages.clear();
+        if (pages.cachedKiB() != 0) return 49;
+        // Invalid sources must never reuse a previously cached PDF page.
+        if (!pages.renderPage(sourceDir.filePath("missing.pdf"), 1, &pageError).isNull() ||
+            pageError.isEmpty()) return 50;
+        if (!window.reviewTree_->updatesEnabled()) return 51;
 #endif
 
         // 开始下一次整理前必须释放上一批完整候选与逐题校对图，避免低内存
@@ -386,6 +416,7 @@ public:
         if (!window.generatedMaterials_.isEmpty() || !window.generatedQuestions_.isEmpty() ||
             !window.reviewQuestions_.isEmpty() || !window.generatedAssets_.isEmpty() ||
             !window.reviewSourceImages_.isEmpty() || !window.reviewAssets_.isEmpty() ||
+            !window.lazyReviewAssets_.isEmpty() || window.reviewPdfCache_.cachedKiB() != 0 ||
             !window.pendingCropAsset_.isEmpty() || !window.pendingCropPage_.isNull() ||
             window.currentReviewItem_ || window.currentMaterialItem_ ||
             window.reviewTree_->topLevelItemCount() != 0 ||

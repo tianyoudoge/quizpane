@@ -17,6 +17,7 @@
 #include "source_row_widget.hpp"
 #include "review_draft_bank.hpp"
 #include "review_image_utils.hpp"
+#include "quizpane/studio/pdf_memory_budget.hpp"
 #include "source_validation.hpp"
 #include "styled_dropdown.hpp"
 
@@ -418,28 +419,6 @@ QImage cropNormalizedImage(const QImage& page, const QRectF& normalizedCrop) {
     return page.copy(pixels.intersected(page.rect()));
 }
 
-QImage renderPdfReviewPage(const QString& sourcePath, int page, QString* error) {
-#ifdef QUIZPANE_HAS_QT_PDF
-    QPdfDocument document;
-    if (!pdfLoadSucceeded(loadPdfDocument(&document, sourcePath)) || page < 1 ||
-        page > document.pageCount()) {
-        *error = QStringLiteral("无法打开原卷第 %1 页").arg(page);
-        return {};
-    }
-    const QSizeF points = pdfPagePointSize(&document, page - 1);
-    const QSize pixels = QSize(qBound(1, qRound(points.width() * 1.7), 1800),
-                               qBound(1, qRound(points.height() * 1.7), 2400));
-    const QImage image = flattenReviewPage(document.render(page - 1, pixels));
-    if (image.isNull())
-        *error = QStringLiteral("无法渲染原卷第 %1 页").arg(page);
-    return image;
-#else
-    Q_UNUSED(sourcePath)
-    Q_UNUSED(page)
-    *error = QStringLiteral("当前兼容构建未包含 PDF 原卷预览");
-    return {};
-#endif
-}
 
 QString loadMineruToken() {
     size_t size = 0;
@@ -1817,6 +1796,8 @@ void StudioWindow::discardPreviousGenerationForNewTask() {
     generatedAssets_.squeeze();
     reviewSourceImages_.clear();
     reviewSourceImages_.squeeze();
+    lazyReviewAssets_.clear();
+    reviewPdfCache_.clear();
     reviewAssets_.clear();
     reviewAssets_.squeeze();
     pendingCropAsset_ = QJsonObject{};
@@ -2039,6 +2020,12 @@ void StudioWindow::updateWorkflowProgress(const WorkflowProgress& progress) {
 }
 
 void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
+    struct RestoreUpdates {
+        QWidget* widget;
+        bool enabled;
+        ~RestoreUpdates() { widget->setUpdatesEnabled(enabled); }
+    } restore{reviewTree_, reviewTree_->updatesEnabled()};
+    reviewTree_->setUpdatesEnabled(false);
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("review-populated"),
         {{QStringLiteral("materials"), candidate.materials.size()},
          {QStringLiteral("accepted"), candidate.questions.size()},
@@ -2053,6 +2040,8 @@ void StudioWindow::populateReview(const GeneratedBankCandidate& candidate) {
                 .toJson(QJsonDocument::Compact)),
         128 * 1024);
 #endif
+    lazyReviewAssets_.clear();
+    reviewPdfCache_.clear();
     generatedMaterials_ = candidate.materials;
     generatedQuestions_ = candidate.questions;
     reviewQuestions_ = candidate.needsReviewQuestions;
@@ -2209,8 +2198,13 @@ QByteArray StudioWindow::ensureReviewAssetBytes(const QJsonObject& asset) {
             break;
         }
     }
-    if (sourcePath.isEmpty())
+    const QString identity = ReviewPdfCache::sourceIdentity(sourcePath);
+    if (identity.isEmpty())
         return {};
+    const QString cacheKey = identity + QChar('\n') +
+        QString::fromUtf8(QJsonDocument(asset).toJson(QJsonDocument::Compact));
+    if (const auto* cached = lazyReviewAssets_.object(cacheKey))
+        return *cached;
 
     QJsonArray segments = asset.value(QStringLiteral("reviewSegments")).toArray();
     if (segments.isEmpty()) {
@@ -2224,7 +2218,7 @@ QByteArray StudioWindow::ensureReviewAssetBytes(const QJsonObject& asset) {
     for (const QJsonValue& value : segments) {
         const QJsonObject segment = value.toObject();
         QString error;
-        const QImage page = renderPdfReviewPage(
+        const QImage page = reviewPdfCache_.renderPage(
             sourcePath, segment.value(QStringLiteral("sourcePage")).toInt(), &error);
         if (page.isNull())
             return {};
@@ -2235,11 +2229,17 @@ QByteArray StudioWindow::ensureReviewAssetBytes(const QJsonObject& asset) {
             return {};
         pieces.append(piece);
         width = qMax(width, piece.width());
+        if (piece.height() > (std::numeric_limits<int>::max)() - height)
+            return {};
         height += piece.height();
     }
     if (pieces.isEmpty())
         return {};
+    if (!pdfImageAllocationAllowed(QSize(width, height)))
+        return {};
     QImage combined(width, height, QImage::Format_RGB32);
+    if (combined.isNull())
+        return {};
     combined.fill(Qt::white);
     QPainter painter(&combined);
     int y = 0;
@@ -2252,7 +2252,7 @@ QByteArray StudioWindow::ensureReviewAssetBytes(const QJsonObject& asset) {
     QBuffer buffer(&png);
     if (!buffer.open(QIODevice::WriteOnly) || !combined.save(&buffer, "PNG"))
         return {};
-    reviewAssets_.insert(path, png);
+    lazyReviewAssets_.insert(cacheKey, new QByteArray(png), int((png.size() + 1023) / 1024));
     diagnostic::event(QStringLiteral("studio"), QStringLiteral("review-image-lazy-rendered"),
         {{QStringLiteral("segments"), segments.size()},
          {QStringLiteral("pngBytes"), png.size()}});
@@ -2273,7 +2273,13 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
         validAssets.append(asset);
     }
     if (validAssets.isEmpty()) {
-        reviewVisualPanel_->setVisible(false);
+        if (!assets.isEmpty()) {
+            auto* message = mutedLabel(QStringLiteral(
+                "原卷图片暂时无法显示，请确认源文件仍在原位置，或关闭其他程序后重新选择本题。"));
+            message->setWordWrap(true);
+            reviewVisualLayout_->addWidget(message);
+        }
+        reviewVisualPanel_->setVisible(!assets.isEmpty());
         return;
     }
 
@@ -2310,9 +2316,7 @@ void StudioWindow::displayReviewAssets(const QList<QJsonObject>& assets) {
     const auto showAsset = [this, validAssets, title, image, recrop](int index) {
         const QJsonObject asset = validAssets.at(index);
         QPixmap pixmap;
-        const QString path = asset.value(QStringLiteral("path")).toString();
-        const QByteArray bytes = reviewAssets_.contains(path)
-            ? reviewAssets_.value(path) : generatedAssets_.value(path);
+        const QByteArray bytes = ensureReviewAssetBytes(asset);
         pixmap.loadFromData(bytes, "PNG");
         image->setPixmap(pixmap.scaledToWidth(520, Qt::SmoothTransformation));
         image->setToolTip(asset.value(QStringLiteral("path")).toString());
@@ -2350,7 +2354,7 @@ void StudioWindow::recropReviewAsset(const QJsonObject& asset) {
         return;
     }
     QString error;
-    const QImage pageImage = renderPdfReviewPage(sourcePath, page, &error);
+    const QImage pageImage = reviewPdfCache_.renderPage(sourcePath, page, &error);
     if (pageImage.isNull()) {
         QMessageBox::warning(this, QStringLiteral("无法重新裁切"), error);
         return;

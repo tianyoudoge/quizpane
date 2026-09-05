@@ -5,6 +5,7 @@
 #endif
 #include "../platform/global_hotkey.hpp"
 #include "../platform/window_pinning.hpp"
+#include "../platform/update_asset.hpp"
 #include "app_dialogs.hpp"
 #include "quizpane/diagnostic_logger.hpp"
 #include "quizpane/provider_response_router.hpp"
@@ -182,23 +183,13 @@ int compareVersionTags(QString left, QString right) {
 }
 
 QString updateAssetForCurrentPlatform() {
-#if defined(Q_OS_WIN)
-// 资产名跟随实际链接的 Qt 大版本：CMake 允许 Qt5 + WINDOWS7_COMPAT=OFF 的
-// 组合，这种构建同样必须找 Win7 包（Qt 5 运行时不支持 Win10/11 的 Qt 6 包），
-// 因此两个条件取或，而不是只看兼容开关。
 #if defined(QUIZPANE_WINDOWS7_COMPAT) || QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-    return QStringLiteral("QuizPane-windows7-x64-portable.zip");
+    constexpr bool qt5OrWin7 = true;
 #else
-    return QStringLiteral("QuizPane-windows-x64-portable.zip");
+    constexpr bool qt5OrWin7 = false;
 #endif
-#elif defined(Q_OS_MACOS)
-    const QString arch = QSysInfo::currentCpuArchitecture().toLower();
-    return arch.contains(QStringLiteral("arm"))
-        ? QStringLiteral("QuizPane-macos-arm64.dmg")
-        : QStringLiteral("QuizPane-macos-x86_64.dmg");
-#else
-    return {};
-#endif
+    return quizpane::updateAssetForPlatform(
+        quizpane::ProviderInstaller::currentPlatformKey(), qt5OrWin7);
 }
 
 QString updateWorkingDirectory(const QString& tag) {
@@ -1547,7 +1538,12 @@ void MainWindow::showSolution(int index) {
 }
 
 void MainWindow::exportAttemptResults() {
-    if (questions_.isEmpty())
+    const auto exportQuestions = questions_;
+    const auto exportAnswers = answers_;
+    const auto exportMultiAnswers = multiAnswers_;
+    const auto exportTitle = attemptTitle_;
+    const auto exportHasAnswerKey = attemptHasAnswerKey_;
+    if (exportQuestions.isEmpty())
         return;
     const int imageWidth = ui::resultImagePixelWidth();
     constexpr int padding = 32;
@@ -1555,24 +1551,24 @@ void MainWindow::exportAttemptResults() {
     constexpr int maxRowsPerImage = 72;
     constexpr int headerHeight = 190;
     constexpr int gap = 12;
-    QList<QImage> resultImages;
-    const auto answerText = [this](qsizetype index, const QJsonObject& question) {
+
+    const auto answerText = [&](qsizetype index, const QJsonObject& question) {
         if (question.value("type").toString() == QStringLiteral("multiple_choice")) {
             QStringList choices;
-            for (const int choice : multiAnswers_.value(index)) choices.append(choiceLabel(choice));
+            for (const int choice : exportMultiAnswers.value(index)) choices.append(choiceLabel(choice));
             std::sort(choices.begin(), choices.end());
             return choices.isEmpty() ? QStringLiteral("未作答") : choices.join(QStringLiteral("、"));
         }
-        return choiceLabel(answers_.value(index, -1));
+        return choiceLabel(exportAnswers.value(index, -1));
     };
     // 无答案题库只承担“记录选择”的职责。五题起按每五题一组汇总，避免
     // 大题库生成数百张宽卡片；多选用方括号保留边界，未作答用 ? 标记。
-    const bool compactMode = !attemptHasAnswerKey_ && questions_.size() >= 5;
+    const bool compactMode = !exportHasAnswerKey && exportQuestions.size() >= 5;
     QStringList compactTokens;
     if (compactMode) {
-        compactTokens.reserve(questions_.size());
-        for (int index = 0; index < questions_.size(); ++index) {
-            QString token = answerText(index, questions_.at(index).toObject());
+        compactTokens.reserve(exportQuestions.size());
+        for (int index = 0; index < exportQuestions.size(); ++index) {
+            QString token = answerText(index, exportQuestions.at(index).toObject());
             if (token == QStringLiteral("未作答")) {
                 token = QStringLiteral("?");
             } else if (token.contains(QStringLiteral("、"))) {
@@ -1583,16 +1579,24 @@ void MainWindow::exportAttemptResults() {
         }
     }
     const QList<ui::CompactResultRow> compactRows = ui::compactResultRows(compactTokens);
-    const int displayItemCount = compactMode ? compactRows.size() : int(questions_.size());
+    const int displayItemCount = compactMode ? compactRows.size() : int(exportQuestions.size());
     const int rowHeight = compactMode ? 66 : 74;
     const int itemCapacity = columns * maxRowsPerImage;
     const int pageCount = (displayItemCount + itemCapacity - 1) / itemCapacity;
-    for (int page = 0; page < pageCount; ++page) {
+    if (pageCount == 0) return;
+    int answered = 0;
+    for (int index = 0; index < exportQuestions.size(); ++index) {
+        if (exportAnswers.value(index, -1) >= 0 || !exportMultiAnswers.value(index).isEmpty())
+            ++answered;
+    }
+    const QString exportedAt = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"));
+    const auto renderPage = [&](int page) -> QImage {
         const int first = page * itemCapacity;
         const int count = qMin(itemCapacity, displayItemCount - first);
         const int rows = (count + columns - 1) / columns;
         QImage image(imageWidth, headerHeight + rows * rowHeight + padding,
                      QImage::Format_ARGB32_Premultiplied);
+        if (image.isNull()) return {};
         image.fill(QColor(QStringLiteral("#10151c")));
         QPainter painter(&image);
         painter.setRenderHint(QPainter::Antialiasing);
@@ -1607,16 +1611,11 @@ void MainWindow::exportAttemptResults() {
         detailFont.setBold(false);
         painter.setFont(detailFont);
         painter.setPen(QColor(QStringLiteral("#aeb8c3")));
-        painter.drawText(padding, 104, attemptTitle_.isEmpty() ? QStringLiteral("题库练习") : attemptTitle_);
-        int answered = 0;
-        for (int index = 0; index < questions_.size(); ++index) {
-            if (answers_.value(index, -1) >= 0 || !multiAnswers_.value(index).isEmpty())
-                ++answered;
-        }
+        painter.drawText(padding, 104, exportTitle.isEmpty() ? QStringLiteral("题库练习") : exportTitle);
         painter.drawText(padding, 140, QStringLiteral("已作答 %1 / %2 题 · %3")
-            .arg(answered).arg(questions_.size())
-            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))));
-        painter.drawText(padding, 174, attemptHasAnswerKey_
+            .arg(answered).arg(exportQuestions.size())
+            .arg(exportedAt));
+        painter.drawText(padding, 174, exportHasAnswerKey
             ? QStringLiteral("仅汇总你的选择，便于快速对照答案")
             : QStringLiteral("无答案题库：仅记录你的选择，不提供判分"));
         if (pageCount > 1)
@@ -1660,7 +1659,7 @@ void MainWindow::exportAttemptResults() {
                 continue;
             }
 
-            const QJsonObject question = questions_.at(index).toObject();
+            const QJsonObject question = exportQuestions.at(index).toObject();
             const int sourceNumber = question.value("sourceQuestionNumber").toInt();
             const QString sectionTitle = question.value("sourceSectionTitle").toString();
             QString sourceLabel = question.value("sourceQuestionLabel").toString();
@@ -1690,10 +1689,8 @@ void MainWindow::exportAttemptResults() {
             painter.drawText(card.adjusted(16, 8, -16, -8), Qt::AlignRight | Qt::AlignVCenter, choice);
         }
         painter.end();
-        resultImages.append(image);
-    }
-    if (resultImages.isEmpty())
-        return;
+        return image;
+    };
 
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("作答结果"));
@@ -1735,26 +1732,35 @@ void MainWindow::exportAttemptResults() {
     scroll->setWidget(preview);
     layout->addWidget(scroll, 1);
     int currentImage = 0;
+    QImage displayedImage;
     const auto showImage = [&] {
-        ui::setResultPreviewImage(preview, resultImages.at(currentImage));
-        pageLabel->setText(QStringLiteral("%1 / %2").arg(currentImage + 1).arg(resultImages.size()));
+        // Release the previous image/pixmap before allocating the next page.
+        displayedImage = {};
+        preview->clear();
+        displayedImage = renderPage(currentImage);
+        if (displayedImage.isNull())
+            preview->setText(QStringLiteral("内存不足，无法生成当前图片，请减少练习题量后重试。"));
+        else
+            ui::setResultPreviewImage(preview, displayedImage);
+        save->setEnabled(!displayedImage.isNull());
+        pageLabel->setText(QStringLiteral("%1 / %2").arg(currentImage + 1).arg(pageCount));
         previous->setEnabled(currentImage > 0);
-        next->setEnabled(currentImage + 1 < resultImages.size());
+        next->setEnabled(currentImage + 1 < pageCount);
     };
     connect(previous, &QPushButton::clicked, &dialog, [&] {
         if (currentImage > 0) { --currentImage; showImage(); }
     });
     connect(next, &QPushButton::clicked, &dialog, [&] {
-        if (currentImage + 1 < resultImages.size()) { ++currentImage; showImage(); }
+        if (currentImage + 1 < pageCount) { ++currentImage; showImage(); }
     });
     connect(save, &QPushButton::clicked, &dialog, [&] {
-        const QString suffix = resultImages.size() > 1
+        const QString suffix = pageCount > 1
             ? QStringLiteral("-%1").arg(currentImage + 1) : QString();
         const QString suggested = QDir(QStandardPaths::writableLocation(
             QStandardPaths::PicturesLocation)).filePath(QStringLiteral("作答结果%1.png").arg(suffix));
         const QString path = QFileDialog::getSaveFileName(&dialog, QStringLiteral("保存作答结果"),
             suggested, QStringLiteral("PNG 图片 (*.png)"));
-        if (!path.isEmpty() && !resultImages.at(currentImage).save(path, "PNG"))
+        if (!path.isEmpty() && !displayedImage.save(path, "PNG"))
             QMessageBox::warning(&dialog, QStringLiteral("保存失败"),
                                  QStringLiteral("无法写入图片：%1").arg(path));
     });
@@ -2532,6 +2538,35 @@ void MainWindow::completeUpdateDownload() {
 bool MainWindow::startDownloadedUpdate() {
     const QString workDirectory = QFileInfo(updateDownloadPath_).absolutePath();
 #if defined(Q_OS_WIN)
+    // Win7 may only have PowerShell 2.0. Check the actual commands before
+    // quitting; starting powershell.exe alone does not mean it can install ZIPs.
+    const QString powershell = QStandardPaths::findExecutable(QStringLiteral("powershell.exe"));
+    QProcess probe;
+    if (!powershell.isEmpty()) {
+        probe.start(powershell, {QStringLiteral("-NoProfile"), QStringLiteral("-NonInteractive"),
+            QStringLiteral("-Command"), QStringLiteral(
+                "$a = Get-Command Expand-Archive -ErrorAction SilentlyContinue; "
+                "$w = Get-Command Wait-Process -ErrorAction SilentlyContinue; "
+                "if ($a -and $w -and $w.Parameters.ContainsKey('Timeout')) { exit 0 }; exit 1")});
+    }
+    const bool canInstall = !powershell.isEmpty() && probe.waitForFinished(5000) &&
+        probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0;
+    if (!canInstall) {
+        if (probe.state() != QProcess::NotRunning) {
+            probe.kill();
+            probe.waitForFinished(1000);
+        }
+        QMessageBox message(QMessageBox::Information, QStringLiteral("请手动完成更新"),
+            QStringLiteral("当前系统缺少自动解压更新所需的组件。更新包已下载并校验，"
+                           "请退出程序后，将包中的 QuizPane 文件夹解压到新目录使用。\n\n%1")
+                .arg(updateDownloadPath_), QMessageBox::NoButton, this);
+        auto* openFolder = message.addButton(QStringLiteral("打开更新包所在目录"), QMessageBox::AcceptRole);
+        message.addButton(QStringLiteral("稍后处理"), QMessageBox::RejectRole);
+        message.exec();
+        if (message.clickedButton() == openFolder)
+            QDesktopServices::openUrl(QUrl::fromLocalFile(workDirectory));
+        return false;
+    }
     const QString scriptPath = QDir(workDirectory).filePath(
         QStringLiteral("apply-update.ps1"));
     const QString destination = QCoreApplication::applicationDirPath();
@@ -2568,13 +2603,12 @@ try {
 )PS");
     QFile scriptFile(scriptPath);
     if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text) ||
-        scriptFile.write(script.toUtf8()) < 0) {
+        scriptFile.write(QByteArray::fromHex("efbbbf") + script.toUtf8()) < 0) {
         QMessageBox::warning(this, QStringLiteral("无法安装更新"),
             QStringLiteral("无法创建更新脚本。"));
         return false;
     }
     scriptFile.close();
-    const QString powershell = QStandardPaths::findExecutable(QStringLiteral("powershell.exe"));
     if (powershell.isEmpty() || !QProcess::startDetached(powershell,
             {QStringLiteral("-NoProfile"), QStringLiteral("-WindowStyle"),
              QStringLiteral("Hidden"), QStringLiteral("-ExecutionPolicy"),
