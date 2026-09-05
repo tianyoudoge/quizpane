@@ -300,9 +300,9 @@ Visual Studio 2019 Developer Prompt 中执行。x64 使用 Qt 5.15.2 `msvc2019_6
 产物分别为 `dist/windows7/QuizPane-windows7-x64-portable.zip` 和
 `dist/windows7/QuizPane-windows7-x86-portable.zip`。兼容包会将 v142 VC++ 与 UCRT
 运行库一并放入应用目录，无需另外安装 Visual C++ 运行库。制作器支持 TXT、Markdown、
-DOCX 和 PDF；PDF 功能使用随包的 Qt5Pdf。Win7 x86/x64 默认启用本地 OCR，
+DOCX 和 PDF；PDF 功能使用随包的 Qt5Pdf。Win7 x86/x64 强制包含本地 OCR，
 扫描或转曲 PDF 可通过随包的 Tesseract 与中英文模型离线提取文字，无需另外安装 OCR。
-仅在专门排查无 OCR 路径时使用 `-EnableOcr:$false`；正常构建无需传开关。
+Win7 不提供无 OCR 构建：脚本和 Actions 没有关闭入口，CMake 拒绝关闭制作器、PDF 或 OCR。
 
 首次构建联网下载并校验固定的 Tesseract 5.5.2、Leptonica 1.85.0 和中英文模型；
 运行识别不联网。依赖使用同一 v142 工具链按目标架构单独编译为静态库，关闭
@@ -310,7 +310,7 @@ x86 SIMD、OpenMP、网络、压缩包和外部图片解码依赖，避免混用
 本地默认产物统一输出到 `dist/windows7/`，文件名按 x64/x86 区分。
 当前上游不承诺 Win7 支持，因此固定源码构建和 CI 通过均不能代替 Win7 SP1 实机验收。
 
-手动触发 `Test Windows 7 desktop package` 时，`enable_ocr` 默认开启；PR 测试也覆盖 OCR。
+`Test Windows 7 desktop package` 无 OCR 开关；手动构建、普通 CI、PR 和 Release 均强制包含 OCR。
 流水线在中文路径解压 ZIP，清空模型环境变量，验证实际扫描页 OCR、损坏模型错误和已知
 Win8+ API 导入；测试 Artifact 名含 `ocr-test`。正式 Release 同样启用 OCR 并验证解压后的包。
 OCR 只补充正文提取能力，复杂题本的题号、答案表和共享材料仍需复核。

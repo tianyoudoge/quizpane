@@ -36,6 +36,10 @@ add_executable(windows_compatibility_test windows_compatibility_test.cpp)
 target_link_libraries(windows_compatibility_test PRIVATE
     quizpane_provider_host ${QUIZPANE_QT_PACKAGE}::Core)
 add_test(NAME windows_compatibility_test COMMAND windows_compatibility_test)
+add_test(NAME win7_required_features_test
+    COMMAND ${CMAKE_COMMAND}
+        -DPOLICY_SCRIPT=${PROJECT_SOURCE_DIR}/cmake/windows7-required-features.cmake
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/win7_required_features_test.cmake)
 
 add_executable(running_app_handoff_test running_app_handoff_test.cpp)
 target_link_libraries(running_app_handoff_test PRIVATE

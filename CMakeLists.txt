@@ -52,6 +52,10 @@ set_property(CACHE QUIZPANE_QT_MAJOR_VERSION PROPERTY STRINGS 5 6)
 option(QUIZPANE_WINDOWS7_COMPAT
        "Target the Windows 7 SP1 API baseline (requires Qt 5.15 and MSVC 2019)" OFF)
 
+option(QUIZPANE_ENABLE_TESSERACT_OCR
+       "Enable the native Tesseract OCR backend in Question Maker" ON)
+include(cmake/windows7-required-features.cmake)
+
 if(QUIZPANE_WINDOWS7_COMPAT)
     if(NOT WIN32)
         message(FATAL_ERROR "QUIZPANE_WINDOWS7_COMPAT is only valid on Windows")
@@ -207,8 +211,6 @@ function(quizpane_apply_windows7_manifest target)
     endif()
 endfunction()
 
-option(QUIZPANE_ENABLE_TESSERACT_OCR
-       "Enable the native Tesseract OCR backend in Question Maker" ON)
 if(QUIZPANE_BUILD_BANK_STUDIO AND QUIZPANE_ENABLE_TESSERACT_OCR)
     # vcpkg（Windows）提供原生 CMake package；Homebrew 和多数 Linux
     # 发行版仍主要提供 pkg-config。统一成一个 target 供子目录链接。

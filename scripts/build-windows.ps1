@@ -19,6 +19,9 @@ param(
     [switch]$VerboseLogs
 )
 $ErrorActionPreference = "Stop"
+if ($Windows7Compat -and ($DisableOcr -or $DisablePdf)) {
+  throw "Win7 构建必须包含 PDF 和本地 OCR，不能使用 -DisableOcr 或 -DisablePdf"
+}
 if (-not $QtRoot) { throw "请通过 -QtRoot 或 QT_ROOT 指定 Qt 的 MSVC 目录" }
 if ($Windows7Compat -and $QtMajorVersion -ne "5") {
   throw "Windows 7 兼容构建必须使用 -QtMajorVersion 5"

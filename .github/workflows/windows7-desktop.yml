@@ -2,12 +2,7 @@ name: Test Windows 7 desktop package
 
 on:
   workflow_dispatch:
-    inputs:
-      enable_ocr:
-        description: "包含离线 OCR（默认开启；仍需 Win7 SP1 实机验收）"
-        type: boolean
-        required: false
-        default: true
+  workflow_call:
   push:
     branches:
       - refeactor_win7_support
@@ -19,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows7-desktop-${{ github.ref }}
+  group: windows7-desktop-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -129,7 +124,6 @@ jobs:
           }
 
       - name: Cache pinned OCR dependencies
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.enable_ocr }}
         uses: actions/cache@v4
         with:
           path: build/windows7-ocr-${{ matrix.arch }}
@@ -143,12 +137,9 @@ jobs:
 
       - name: Build, test and package
         shell: pwsh
-        env:
-          ENABLE_OCR: ${{ github.event_name != 'workflow_dispatch' || inputs.enable_ocr }}
         run: |
-          $EnableOcr = $env:ENABLE_OCR -eq "true"
           ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }} `
-            -EnableOcr:$EnableOcr -EnableDiagnosticLogging `
+            -EnableDiagnosticLogging `
             -BuildDir build/windows7-desktop -DistDir dist/windows7
 
       - name: Inspect portable ZIP
@@ -209,7 +200,6 @@ jobs:
           }
 
       - name: Verify offline OCR in extracted ZIP
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.enable_ocr }}
         timeout-minutes: 5
         shell: pwsh
         run: |
@@ -230,7 +220,7 @@ jobs:
       - name: Upload desktop test package
         uses: actions/upload-artifact@v7
         with:
-          name: QuizPane-windows7-${{ matrix.arch }}-${{ (github.event_name != 'workflow_dispatch' || inputs.enable_ocr) && 'ocr-test' || 'desktop' }}-${{ github.sha }}
+          name: QuizPane-windows7-${{ matrix.arch }}-ocr-test-${{ github.sha }}
           path: release-assets/*
           if-no-files-found: error
           retention-days: 14

@@ -302,7 +302,7 @@ jobs:
 
       - name: Build, test and package Win7
         shell: pwsh
-        run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }} -EnableOcr
+        run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }}
 
       - name: Inspect portable ZIP
         shell: pwsh

@@ -1,10 +1,10 @@
+[CmdletBinding()]
 param(
     [string]$QtRoot = $env:QT_ROOT,
     [string]$BuildDir = "build/release-windows7",
     [string]$DistDir = "dist/windows7",
     [ValidateSet("x64", "x86")]
     [string]$Architecture = "x64",
-    [switch]$EnableOcr = $true,
     [switch]$DebugBuild,
     [switch]$EnableDiagnosticLogging,
     [switch]$VerboseLogs
@@ -12,14 +12,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $BuildScript = Join-Path $PSScriptRoot "build-windows.ps1"
-$OcrPrefix = ""
-if ($EnableOcr) {
-    # Keep OCR build caches separate; all normal Win7 packages include OCR.
-    if (-not $PSBoundParameters.ContainsKey("BuildDir")) { $BuildDir = "build/release-windows7-ocr-$Architecture" }
-    $OcrBuild = Join-Path (Resolve-Path "$PSScriptRoot/..").Path "build/windows7-ocr-$Architecture"
-    & "$PSScriptRoot/build-windows7-ocr.ps1" -Architecture $Architecture -BuildDir $OcrBuild
-    $OcrPrefix = Join-Path $OcrBuild "install"
-}
+# Win7 packages always include PDF + offline OCR and both language models.
+if (-not $PSBoundParameters.ContainsKey("BuildDir")) { $BuildDir = "build/release-windows7-ocr-$Architecture" }
+$OcrBuild = Join-Path (Resolve-Path "$PSScriptRoot/..").Path "build/windows7-ocr-$Architecture"
+& "$PSScriptRoot/build-windows7-ocr.ps1" -Architecture $Architecture -BuildDir $OcrBuild
+$OcrPrefix = Join-Path $OcrBuild "install"
 
 # Qt 5.15.2 loads OpenSSL dynamically. windeployqt only deploys Qt libraries,
 # so prepare the matching x86/x64 OpenSSL 1.1.1 runtime explicitly.
@@ -34,15 +31,13 @@ $Arguments = @{
     QtMajorVersion = "5"
     Architecture = $Architecture
     Windows7Compat = $true
-    DisableOcr = -not $EnableOcr
+    DisableOcr = $false
+    TessdataDir = Join-Path $OcrPrefix "tessdata"
     OcrPrefix = $OcrPrefix
     OpenSslRoot = $OpenSslRoot
     DebugBuild = $DebugBuild
     EnableDiagnosticLogging = $EnableDiagnosticLogging
     VerboseLogs = $VerboseLogs
-}
-if ($EnableOcr) {
-    $Arguments.TessdataDir = Join-Path $OcrPrefix "tessdata"
 }
 
 & $BuildScript @Arguments
