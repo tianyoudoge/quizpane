@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       enable_ocr:
-        description: "构建实验性离线 OCR 包（仍需 Win7 SP1 实机验收）"
+        description: "包含离线 OCR（默认开启；仍需 Win7 SP1 实机验收）"
         type: boolean
         required: false
         default: true

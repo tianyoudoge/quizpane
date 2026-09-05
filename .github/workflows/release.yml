@@ -288,6 +288,12 @@ jobs:
             }
           }
 
+      - name: Cache pinned OCR dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/windows7-ocr-${{ matrix.arch }}
+          key: win7-ocr-v142-${{ matrix.arch }}-${{ hashFiles('cmake/win7-ocr/**', 'scripts/build-windows7-ocr.ps1') }}
+
       - name: Cache Win7 OpenSSL runtime
         uses: actions/cache@v4
         with:
@@ -296,7 +302,7 @@ jobs:
 
       - name: Build, test and package Win7
         shell: pwsh
-        run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }}
+        run: ./scripts/build-windows7.ps1 -QtRoot "$env:QT_ROOT_DIR" -Architecture ${{ matrix.arch }} -EnableOcr
 
       - name: Inspect portable ZIP
         shell: pwsh
@@ -313,7 +319,8 @@ jobs:
             "libcrypto-1_1$OpenSslSuffix.dll", "libssl-1_1$OpenSslSuffix.dll",
             "licenses/OpenSSL-1.1.1w.txt",
             "MSVCP140.dll", "VCRUNTIME140.dll", "ucrtbase.dll",
-            "api-ms-win-crt-runtime-l1-1-0.dll", "platforms/qwindows.dll"
+            "api-ms-win-crt-runtime-l1-1-0.dll", "platforms/qwindows.dll",
+            "tessdata/chi_sim.traineddata", "tessdata/eng.traineddata"
           )
           foreach ($RelativePath in $Required) {
             if (-not (Test-Path (Join-Path $Root $RelativePath))) {
@@ -333,6 +340,14 @@ jobs:
           if (Get-ChildItem $Root -Recurse -Filter "Qt6*.dll") {
             throw "Windows 7 package unexpectedly contains Qt 6 DLLs"
           }
+
+      - name: Verify offline OCR in extracted ZIP
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          ./scripts/test-windows7-ocr-package.ps1 `
+            -PackageRoot (Join-Path $env:RUNNER_TEMP "quizpane-windows7-inspect/QuizPane") `
+            -BuildDir build/release-windows7-ocr-${{ matrix.arch }}
 
       - name: Prepare checksums
         shell: pwsh

@@ -4,7 +4,7 @@ param(
     [string]$DistDir = "dist/windows7",
     [ValidateSet("x64", "x86")]
     [string]$Architecture = "x64",
-    [switch]$EnableOcr,
+    [switch]$EnableOcr = $true,
     [switch]$DebugBuild,
     [switch]$EnableDiagnosticLogging,
     [switch]$VerboseLogs
@@ -14,9 +14,8 @@ $ErrorActionPreference = "Stop"
 $BuildScript = Join-Path $PSScriptRoot "build-windows.ps1"
 $OcrPrefix = ""
 if ($EnableOcr) {
-    # Keep experimental artifacts/build caches separate from the no-OCR release.
+    # Keep OCR build caches separate; all normal Win7 packages include OCR.
     if (-not $PSBoundParameters.ContainsKey("BuildDir")) { $BuildDir = "build/release-windows7-ocr-$Architecture" }
-    if (-not $PSBoundParameters.ContainsKey("DistDir")) { $DistDir = "dist/windows7-ocr-$Architecture" }
     $OcrBuild = Join-Path (Resolve-Path "$PSScriptRoot/..").Path "build/windows7-ocr-$Architecture"
     & "$PSScriptRoot/build-windows7-ocr.ps1" -Architecture $Architecture -BuildDir $OcrBuild
     $OcrPrefix = Join-Path $OcrBuild "install"
