@@ -7,18 +7,20 @@ add_library(question_maker_engine STATIC
     engine/include/quizpane/studio/qt_pdf_compat.hpp
     engine/include/quizpane/studio/rule_based_generator.hpp
     engine/include/quizpane/studio/review_result.hpp
-    src/review_draft_bank.hpp
+    src/review/review_draft_bank.hpp
     engine/src/document_extractor.cpp
     engine/src/generation_workflow.cpp
     engine/src/mineru_client.cpp
     engine/src/mineru_output_adapter.cpp
     engine/src/option_label.cpp
     engine/src/rule_based_generator.cpp
-    src/review_draft_bank.cpp
+    src/review/review_draft_bank.cpp
 )
 target_include_directories(question_maker_engine PUBLIC
     engine/include
     src
+    src/review
+    src/ui
 )
 target_link_libraries(question_maker_engine PUBLIC
     quizpane_core miniz
@@ -46,23 +48,25 @@ endif()
 
 quizpane_add_executable(quizpane_bank_studio
     src/main.cpp
-    src/mineru_settings_dialog.cpp
-    src/mineru_settings_dialog.hpp
-    src/review_draft_bank.hpp
-    src/source_row_widget.cpp
-    src/source_row_widget.hpp
-    src/source_validation.hpp
-    src/styled_dropdown.cpp
-    src/styled_dropdown.hpp
-    src/review_image_utils.cpp
-    src/review_image_utils.hpp
+    src/ui/mineru_settings_dialog.cpp
+    src/ui/mineru_settings_dialog.hpp
+    src/review/review_draft_bank.hpp
+    src/ui/source_row_widget.cpp
+    src/ui/source_row_widget.hpp
+    src/review/source_validation.hpp
+    src/ui/styled_dropdown.cpp
+    src/ui/styled_dropdown.hpp
+    src/review/review_image_utils.cpp
+    src/review/review_image_utils.hpp
+    src/review/review_page_controller.cpp
+    src/review/review_page_controller.hpp
     src/studio_window.cpp
     src/studio_window.hpp
     resources/resources.qrc
 )
 # 两个 UI 文件各有匿名命名空间 helper；单独编译云解析设置，避免 Unity
 # 把同名内部函数合并到同一翻译单元。
-set_source_files_properties(src/mineru_settings_dialog.cpp PROPERTIES
+set_source_files_properties(src/ui/mineru_settings_dialog.cpp PROPERTIES
     SKIP_UNITY_BUILD_INCLUSION ON)
 if(WIN32)
     target_sources(quizpane_bank_studio PRIVATE resources/windows.rc)

@@ -1,3 +1,7 @@
+// 职责：用 Metal 把捕获到的视频帧（CVPixelBuffer）渲染到 QPMirrorView。
+// 只负责"帧数据 -> 屏幕像素"，不涉及帧从何而来（capture.mm）或
+// 用户输入如何处理（input.mm）。
+
 #include "mac_window_replica_controller.hpp"
 #include "quizpane/diagnostic_logger.hpp"
 

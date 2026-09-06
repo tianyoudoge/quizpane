@@ -14,6 +14,12 @@ namespace {
 // 下面大量用 continue 而不是提前 return，每个 continue 前
 // 都已经把这一项的错误 append 进 errors。
 
+// 以下这组"允许字段/取值"访问器是本文件与 schemas/declarative-provider.schema.json
+// 之间唯一的真相来源：函数名对应 schema 里的对象或枚举名字。之前这些集合是
+// 散落在各校验函数内部的匿名字面量，容易改了校验器却忘了同步 schema（或反过来）。
+// 提炼成具名函数后，本文件内部校验逻辑和 bankSchemaKeySets()（暴露给一致性测试）
+// 共用同一份数据，两边"应该长一样"这件事由测试强制保证，而不是靠人记住。
+
 const QStringList& practiceModes() {
     static const QStringList modes{"all", "sequential", "random"};
     return modes;
@@ -22,6 +28,106 @@ const QStringList& practiceModes() {
 const QStringList& questionTypes() {
     static const QStringList types{"single_choice", "multiple_choice", "true_false"};
     return types;
+}
+
+const QStringList& answerPolicyValues() {
+    static const QStringList values{"included", "none"};
+    return values;
+}
+
+const QStringList& riskLevels() {
+    static const QStringList levels{"hard", "soft"};
+    return levels;
+}
+
+// 题库顶层字段。对应 schema 顶层 "properties"。
+const QSet<QString>& bankKeys() {
+    static const QSet<QString> keys{
+        "schemaVersion", "title", "description", "answerPolicy", "catalogs", "materials", "questions"};
+    return keys;
+}
+
+// 对应 schema $defs 里 catalogs.items 的 "properties"。
+const QSet<QString>& catalogKeys() {
+    static const QSet<QString> keys{"id", "title", "description", "practice"};
+    return keys;
+}
+
+// 对应 schema catalogs.items.properties.practice 的 "properties"。
+const QSet<QString>& catalogPracticeKeys() {
+    static const QSet<QString> keys{"mode", "questionCount", "preferMistakes"};
+    return keys;
+}
+
+// 对应 schema $defs.material 的 "properties"。
+const QSet<QString>& materialKeys() {
+    static const QSet<QString> keys{
+        "id", "catalogId", "title", "body", "images", "source", "review", "underlines"};
+    return keys;
+}
+
+// 对应 schema $defs.materialSource 的 "properties"（题目 source 的子集：材料来源
+// 只记录文档名和页码，不像题目 source 那样还带 questionNumber/sectionId 等字段）。
+const QSet<QString>& materialSourceKeys() {
+    static const QSet<QString> keys{"document", "page"};
+    return keys;
+}
+
+// 对应 schema $defs.source 的 "properties"（题目的来源信息，比材料来源多出
+// 原卷题号/题标签/章节字段，供制作器复核和长图展示原始出处）。
+const QSet<QString>& questionSourceKeys() {
+    static const QSet<QString> keys{"document", "page", "questionNumber", "questionLabel",
+                                    "sectionId", "sectionTitle"};
+    return keys;
+}
+
+// 对应 schema $defs.asset 的 "properties"。sourceDocument/sourcePage/autoCrop/crop
+// 是题库制作器复核阶段写入、随打包一起保留的"回到原卷位置"信息，不认识这些
+// 可选字段的旧版消费者仍可只读取 path/alt。
+const QSet<QString>& assetKeys() {
+    static const QSet<QString> keys{"path", "alt", "sourceDocument", "sourcePage",
+                                    "autoCrop", "crop"};
+    return keys;
+}
+
+// 对应 schema $defs.normalizedCrop 的 "properties"（asset.autoCrop / asset.crop
+// 复用同一形状：图片内的归一化裁剪框）。
+const QSet<QString>& normalizedCropKeys() {
+    static const QSet<QString> keys{"x", "y", "width", "height"};
+    return keys;
+}
+
+// 对应 schema 里 underlines 数组每一项的 "properties"（材料 underlines 和
+// 题目 stemUnderlines 复用同一形状，schema 用 $ref 指向同一处定义）。
+const QSet<QString>& underlineKeys() {
+    static const QSet<QString> keys{"start", "length"};
+    return keys;
+}
+
+// 对应 schema 里 material.review 与 question.review 的 "properties"（两处内联定义
+// 结构相同，这里合并成一份，避免校验器里维护两份内容一致的字面量）。
+const QSet<QString>& reviewKeys() {
+    static const QSet<QString> keys{"confidence", "needsReview", "reason", "riskLevel", "signals"};
+    return keys;
+}
+
+// 对应 schema $defs.option 的 "properties"。
+const QSet<QString>& optionKeys() {
+    static const QSet<QString> keys{"id", "text", "image"};
+    return keys;
+}
+
+// 对应 schema $defs.question 的 "properties"。
+const QSet<QString>& questionKeys() {
+    static const QSet<QString> keys{"id", "catalogId", "materialId", "type", "stem", "stemUnderlines",
+        "stemImage", "options", "answer", "solution", "source", "review"};
+    return keys;
+}
+
+// 对应 schema $defs.question.properties.answer 的 "properties"。
+const QSet<QString>& answerKeys() {
+    static const QSet<QString> keys{"optionIds"};
+    return keys;
 }
 
 bool validId(const QString& id) {
@@ -54,7 +160,7 @@ bool validTextUnderlines(const QJsonValue& value, int textLength) {
         const auto range = item.toObject();
         const int start = range.value("start").toInt(-1);
         const int length = range.value("length").toInt();
-        if (!hasOnlyKeys(range, {"start", "length"}) ||
+        if (!hasOnlyKeys(range, underlineKeys()) ||
             !range.value("start").isDouble() || range.value("start").toDouble() != start ||
             !range.value("length").isDouble() || range.value("length").toDouble() != length ||
             start < previousEnd || start > textLength || length <= 0 || length > textLength - start)
@@ -67,8 +173,7 @@ bool validTextUnderlines(const QJsonValue& value, int textLength) {
 bool validNormalizedCrop(const QJsonValue& value) {
     if (!value.isObject()) return false;
     const QJsonObject crop = value.toObject();
-    static const QSet<QString> keys{"x", "y", "width", "height"};
-    if (!hasOnlyKeys(crop, keys)) return false;
+    if (!hasOnlyKeys(crop, normalizedCropKeys())) return false;
     const double x = crop.value("x").toDouble(-1.0);
     const double y = crop.value("y").toDouble(-1.0);
     const double width = crop.value("width").toDouble(-1.0);
@@ -82,13 +187,11 @@ bool validNormalizedCrop(const QJsonValue& value) {
 bool validAsset(const QJsonValue& value) {
     if (!value.isObject()) return false;
     const QJsonObject asset = value.toObject();
-    static const QSet<QString> keys{"path", "alt", "sourceDocument", "sourcePage",
-                                    "autoCrop", "crop"};
     static const QRegularExpression pathPattern(
         QStringLiteral("^assets/[A-Za-z0-9._/-]+$"));
     const int sourcePage = asset.value("sourcePage").toInt();
     const bool hasSource = asset.contains("sourceDocument") || asset.contains("sourcePage");
-    return hasOnlyKeys(asset, keys) && asset.value("path").isString() &&
+    return hasOnlyKeys(asset, assetKeys()) && asset.value("path").isString() &&
         pathPattern.match(asset.value("path").toString()).hasMatch() &&
         (!asset.contains("alt") || (asset.value("alt").isString() &&
                                     asset.value("alt").toString().size() <= 500)) &&
@@ -110,8 +213,6 @@ QSet<QString> validateCatalogs(const QJsonArray& catalogs, QList<BankValidationE
             continue;
         }
         const auto catalog = value.toObject();
-        static const QSet<QString> catalogKeys{"id", "title", "description", "practice"};
-        static const QSet<QString> practiceKeys{"mode", "questionCount", "preferMistakes"};
         const QString id = catalog.value("id").toString();
         const QString title = catalog.value("title").toString();
         const QJsonObject practice = catalog.value("practice").toObject();
@@ -122,8 +223,8 @@ QSet<QString> validateCatalogs(const QJsonArray& catalogs, QList<BankValidationE
         const auto reject = [&](const QString& reason) {
             errors->append({-1, {}, QStringLiteral("分类 %1：%2").arg(id.isEmpty() ? QStringLiteral("（无标识）") : id, reason), {}});
         };
-        if (!hasOnlyKeys(catalog, catalogKeys)) { reject(QStringLiteral("包含 Schema 未声明的字段")); continue; }
-        if (!hasOnlyKeys(practice, practiceKeys)) { reject(QStringLiteral("组卷配置包含未声明字段")); continue; }
+        if (!hasOnlyKeys(catalog, catalogKeys())) { reject(QStringLiteral("包含 Schema 未声明的字段")); continue; }
+        if (!hasOnlyKeys(practice, catalogPracticeKeys())) { reject(QStringLiteral("组卷配置包含未声明字段")); continue; }
         if (!validId(id)) { reject(QStringLiteral("标识不符合规范")); continue; }
         if (catalogIds.contains(id)) { reject(QStringLiteral("标识重复")); continue; }
         if (!catalog.value("title").isString() || title.trimmed().isEmpty()) { reject(QStringLiteral("标题为空")); continue; }
@@ -156,7 +257,6 @@ QHash<QString, QJsonObject> validateMaterials(const QJsonArray& materials, const
             continue;
         }
         const auto material = value.toObject();
-        static const QSet<QString> materialKeys{"id", "catalogId", "title", "body", "images", "source", "review", "underlines"};
         const QString id = material.value("id").toString();
         const QString title = material.value("title").toString();
         const QString body = material.value("body").toString();
@@ -172,7 +272,7 @@ QHash<QString, QJsonObject> validateMaterials(const QJsonArray& materials, const
                     const QJsonObject underline = underlineValue.toObject();
                     const int start = underline.value("start").toInt(-1);
                     const int length = underline.value("length").toInt();
-                    if (!underlineValue.isObject() || !hasOnlyKeys(underline, {"start", "length"}) ||
+                    if (!underlineValue.isObject() || !hasOnlyKeys(underline, underlineKeys()) ||
                         !underline.value("start").isDouble() || !underline.value("length").isDouble() ||
                         start < previousEnd || length <= 0 || start + length > body.size()) {
                         underlinesValid = false;
@@ -192,23 +292,21 @@ QHash<QString, QJsonObject> validateMaterials(const QJsonArray& materials, const
         const bool hasImages = material.contains("images") && !images.isEmpty();
         bool reviewValid = true;
         if (material.contains("review")) {
-            static const QSet<QString> reviewKeys{"confidence", "needsReview", "reason", "riskLevel", "signals"};
-            static const QSet<QString> riskLevels{"hard", "soft"};
             const double confidence = review.value("confidence").toDouble(-1);
-            reviewValid = material.value("review").isObject() && hasOnlyKeys(review, reviewKeys) &&
+            reviewValid = material.value("review").isObject() && hasOnlyKeys(review, reviewKeys()) &&
                 (!review.contains("confidence") || (confidence >= 0 && confidence <= 1)) &&
                 (!review.contains("needsReview") || review.value("needsReview").isBool()) &&
                 (!review.contains("reason") || (review.value("reason").isString() &&
                                                   review.value("reason").toString().size() <= 1000)) &&
                 (!review.contains("riskLevel") || (review.value("riskLevel").isString() &&
-                    riskLevels.contains(review.value("riskLevel").toString()))) &&
+                    riskLevels().contains(review.value("riskLevel").toString()))) &&
                 (!review.contains("signals") || review.value("signals").isArray());
             if (reviewValid) {
                 for (const QJsonValue& signal : review.value("signals").toArray())
                     if (!signal.isString()) { reviewValid = false; break; }
             }
         }
-        if (!hasOnlyKeys(material, materialKeys) || !validId(id) || materialsById.contains(id) ||
+        if (!hasOnlyKeys(material, materialKeys()) || !validId(id) || materialsById.contains(id) ||
             !catalogIds.contains(material.value("catalogId").toString()) ||
             (material.contains("title") &&
                 (!material.value("title").isString() || title.size() > 200)) ||
@@ -220,9 +318,8 @@ QHash<QString, QJsonObject> validateMaterials(const QJsonArray& materials, const
         }
         if (material.contains("source")) {
             const QJsonObject source = material.value("source").toObject();
-            static const QSet<QString> sourceKeys{"document", "page"};
             const int page = source.value("page").toInt();
-            if (!material.value("source").isObject() || !hasOnlyKeys(source, sourceKeys) ||
+            if (!material.value("source").isObject() || !hasOnlyKeys(source, materialSourceKeys()) ||
                 (source.contains("document") && (!source.value("document").isString() ||
                     source.value("document").toString().size() > 300)) ||
                 (source.contains("page") && (!source.value("page").isDouble() ||
@@ -253,10 +350,9 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
             break;
         }
         const auto option = optionValue.toObject();
-        static const QSet<QString> optionKeys{"id", "text", "image"};
         const QString optionId = option.value("id").toString();
         const QString optionText = option.value("text").toString();
-        if (!hasOnlyKeys(option, optionKeys) || !validId(optionId) || optionIds.contains(optionId) ||
+        if (!hasOnlyKeys(option, optionKeys()) || !validId(optionId) || optionIds.contains(optionId) ||
             !option.value("text").isString() || optionText.trimmed().isEmpty() ||
             optionText.size() > 4000 || (option.contains("image") && !validAsset(option.value("image")))) {
             errors->append({index, id, QStringLiteral("第 %1 题存在空白或重复选项").arg(index + 1), {}});
@@ -276,8 +372,6 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
         }
     if (question.contains("review")) {
         const QJsonObject review = question.value("review").toObject();
-        static const QSet<QString> reviewKeys{"confidence", "needsReview", "reason", "riskLevel", "signals"};
-        static const QSet<QString> riskLevels{"hard", "soft"};
         const double confidence = review.value("confidence").toDouble(-1);
         bool signalsValid = true;
         if (review.contains("signals")) {
@@ -288,23 +382,21 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
                     if (!signal.isString()) { signalsValid = false; break; }
             }
         }
-        if (!question.value("review").isObject() || !hasOnlyKeys(review, reviewKeys) ||
+        if (!question.value("review").isObject() || !hasOnlyKeys(review, reviewKeys()) ||
             (review.contains("confidence") && (confidence < 0 || confidence > 1)) ||
             (review.contains("needsReview") && !review.value("needsReview").isBool()) ||
             (review.contains("reason") && !review.value("reason").isString()) ||
             review.value("reason").toString().size() > 1000 ||
             (review.contains("riskLevel") && (!review.value("riskLevel").isString() ||
-                !riskLevels.contains(review.value("riskLevel").toString()))) ||
+                !riskLevels().contains(review.value("riskLevel").toString()))) ||
             !signalsValid) {
             errors->append({index, id, QStringLiteral("第 %1 题的复核信息无效").arg(index + 1), {}});
         }
     }
     if (question.contains("source")) {
         const QJsonObject source = question.value("source").toObject();
-        static const QSet<QString> sourceKeys{"document", "page", "questionNumber", "questionLabel",
-                                              "sectionId", "sectionTitle"};
         const int page = source.value("page").toInt();
-        if (!question.value("source").isObject() || !hasOnlyKeys(source, sourceKeys) ||
+        if (!question.value("source").isObject() || !hasOnlyKeys(source, questionSourceKeys()) ||
             (source.contains("document") && (!source.value("document").isString() ||
                 source.value("document").toString().size() > 300)) ||
             (source.contains("page") && (!source.value("page").isDouble() ||
@@ -327,9 +419,7 @@ void validateQuestionCommon(const QJsonObject& question, int index, const QStrin
 
 QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
     QList<BankValidationError> errors;
-    static const QSet<QString> bankKeys{
-        "schemaVersion", "title", "description", "answerPolicy", "catalogs", "materials", "questions"};
-    if (!hasOnlyKeys(bank, bankKeys))
+    if (!hasOnlyKeys(bank, bankKeys()))
         errors.append({-1, {}, QStringLiteral("题库包含 Schema 未声明的字段"), {}});
     const QString bankTitle = bank.value("title").toString();
     const int schemaVersion = bank.value("schemaVersion").toInt();
@@ -339,8 +429,7 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
     }
     const QString answerPolicy = schemaVersion == 2
         ? QStringLiteral("included") : bank.value("answerPolicy").toString();
-    if (schemaVersion == 3 && (answerPolicy != QStringLiteral("included") &&
-                               answerPolicy != QStringLiteral("none")))
+    if (schemaVersion == 3 && !answerPolicyValues().contains(answerPolicy))
         errors.append({-1, {}, QStringLiteral("schemaVersion=3 的题库必须声明 answerPolicy 为 included 或 none"), {}});
     if (schemaVersion == 2 && bank.contains("answerPolicy"))
         errors.append({-1, {}, QStringLiteral("schemaVersion=2 不支持 answerPolicy，请升级为 schemaVersion=3"), {}});
@@ -371,13 +460,10 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
             continue;
         }
         const auto question = questions.at(index).toObject();
-        static const QSet<QString> questionKeys{"id", "catalogId", "materialId", "type", "stem", "stemUnderlines",
-            "stemImage", "options", "answer", "solution", "source", "review"};
         const QString id = question.value("id").toString();
         const QString type = question.value("type").toString();
         const QString stem = question.value("stem").toString();
         const auto options = question.value("options").toArray();
-        static const QSet<QString> answerKeys{"optionIds"};
         const auto answers = question.value("answer").toObject().value("optionIds").toArray();
 
         const auto reject = [&](const QString& reason) {
@@ -388,7 +474,7 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
         const auto require = [&](bool condition, const QString& reason) {
             if (!condition && !invalid) { reject(reason); invalid = true; }
         };
-        require(hasOnlyKeys(question, questionKeys), QStringLiteral("包含 Schema 未声明的字段"));
+        require(hasOnlyKeys(question, questionKeys()), QStringLiteral("包含 Schema 未声明的字段"));
         require(validId(id), QStringLiteral("题目标识不符合规范"));
         require(!questionIds.contains(id), QStringLiteral("题目标识重复"));
         require(catalogIds.contains(question.value("catalogId").toString()), QStringLiteral("引用了不存在的分类"));
@@ -405,7 +491,7 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
         const bool multiple = type == QStringLiteral("multiple_choice");
         if (hasAnswerKey) {
             require(question.value("answer").isObject() &&
-                    hasOnlyKeys(question.value("answer").toObject(), answerKeys) &&
+                    hasOnlyKeys(question.value("answer").toObject(), answerKeys()) &&
                     question.value("answer").toObject().value("optionIds").isArray() &&
                     (multiple ? answers.size() >= 2 : answers.size() == 1),
                     multiple ? QStringLiteral("多选答案至少需要两个 optionId")
@@ -471,6 +557,35 @@ bool validateBank(const QJsonObject& bank, QString* error) {
     }
     if (error) *error = errors.first().message;
     return false;
+}
+
+const BankSchemaKeySets& bankSchemaKeySets() {
+    static const BankSchemaKeySets keySets = [] {
+        BankSchemaKeySets result;
+        result.objectFields = {
+            {QStringLiteral("bank"), bankKeys()},
+            {QStringLiteral("catalog"), catalogKeys()},
+            {QStringLiteral("practice"), catalogPracticeKeys()},
+            {QStringLiteral("material"), materialKeys()},
+            {QStringLiteral("materialSource"), materialSourceKeys()},
+            {QStringLiteral("source"), questionSourceKeys()},
+            {QStringLiteral("asset"), assetKeys()},
+            {QStringLiteral("normalizedCrop"), normalizedCropKeys()},
+            {QStringLiteral("underline"), underlineKeys()},
+            {QStringLiteral("review"), reviewKeys()},
+            {QStringLiteral("option"), optionKeys()},
+            {QStringLiteral("question"), questionKeys()},
+            {QStringLiteral("answer"), answerKeys()},
+        };
+        result.enumValues = {
+            {QStringLiteral("practiceMode"), QSet<QString>(practiceModes().cbegin(), practiceModes().cend())},
+            {QStringLiteral("questionType"), QSet<QString>(questionTypes().cbegin(), questionTypes().cend())},
+            {QStringLiteral("riskLevel"), QSet<QString>(riskLevels().cbegin(), riskLevels().cend())},
+            {QStringLiteral("answerPolicy"), QSet<QString>(answerPolicyValues().cbegin(), answerPolicyValues().cend())},
+        };
+        return result;
+    }();
+    return keySets;
 }
 
 }  // namespace quizpane

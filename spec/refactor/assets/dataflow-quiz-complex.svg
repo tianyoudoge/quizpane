@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 760" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <rect width="1160" height="760" fill="#FFFFFF"/>
+  <text x="580" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1A1A2E">用户做题流程（复杂版）· 三方泳道时序</text>
+  <text x="580" y="55" text-anchor="middle" font-size="12" fill="#6B7280">UI 层 MainWindow ⇄ 应用服务 ProviderLoader ⇄ 领域层 DeclarativeProvider（JSON-RPC over C ABI，回包携带 generation 代号防错路由）</text>
+
+  <!-- lanes -->
+  <rect x="30" y="76" width="360" height="650" rx="10" fill="#F5F9FF" stroke="#A8C7FA"/>
+  <rect x="400" y="76" width="360" height="650" rx="10" fill="#F7F4FF" stroke="#C4B5FD"/>
+  <rect x="770" y="76" width="360" height="650" rx="10" fill="#F1FBF6" stroke="#8EE0BC"/>
+  <text x="210" y="98" text-anchor="middle" font-size="13.5" font-weight="700" fill="#2563EB">UI · MainWindow</text>
+  <text x="580" y="98" text-anchor="middle" font-size="13.5" font-weight="700" fill="#7C3AED">服务 · ProviderLoader</text>
+  <text x="950" y="98" text-anchor="middle" font-size="13.5" font-weight="700" fill="#059669">领域 · DeclarativeProvider</text>
+
+  <defs>
+    <marker id="q1" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#5B6472"/></marker>
+    <marker id="q2" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#059669"/></marker>
+  </defs>
+
+  <!-- helper boxes -->
+  <g font-size="11" text-anchor="middle">
+    <!-- row1 loadProvider -->
+    <rect x="50" y="116" width="320" height="40" rx="7" fill="#E7F0FE" stroke="#7CA6F5"/><text x="210" y="141" fill="#1E3A8A">loadProvider(path) → sendInitialize()</text>
+    <rect x="420" y="116" width="320" height="40" rx="7" fill="#F0EBFE" stroke="#B29CF3"/><text x="580" y="135" fill="#4C1D95">request({method:"provider.initialize"})</text><text x="580" y="150" fill="#8B7BC4" font-size="9.5">generation_++ · qp_provider_request</text>
+    <rect x="790" y="116" width="320" height="40" rx="7" fill="#E4F7EE" stroke="#5FD0A0"/><text x="950" y="135" fill="#065F46">load() 校验 manifest+bank</text><text x="950" y="150" fill="#5A9E82" font-size="9.5">validateBankDetailed · expandSectionCatalogs</text>
+
+    <!-- row2 catalog -->
+    <rect x="50" y="186" width="320" height="40" rx="7" fill="#E7F0FE" stroke="#7CA6F5"/><text x="210" y="205" fill="#1E3A8A">requestCatalog() → populateCatalog(nodes)</text><text x="210" y="220" fill="#5573A8" font-size="9.5">显示分类·可选题量·掌握度</text>
+    <rect x="420" y="186" width="320" height="40" rx="7" fill="#F0EBFE" stroke="#B29CF3"/><text x="580" y="211" fill="#4C1D95">catalog.list</text>
+    <rect x="790" y="186" width="320" height="40" rx="7" fill="#E4F7EE" stroke="#5FD0A0"/><text x="950" y="205" fill="#065F46">遍历题目一次累计掌握度</text><text x="950" y="220" fill="#5A9E82" font-size="9.5">questionCountByCatalog 查表 O(题+类)</text>
+
+    <!-- row3 create -->
+    <rect x="50" y="256" width="320" height="40" rx="7" fill="#E7F0FE" stroke="#7CA6F5"/><text x="210" y="281" fill="#1E3A8A">startAttempt(categoryId, count)</text>
+    <rect x="420" y="256" width="320" height="40" rx="7" fill="#F0EBFE" stroke="#B29CF3"/><text x="580" y="281" fill="#4C1D95">attempt.create</text>
+    <rect x="790" y="256" width="320" height="52" rx="7" fill="#E4F7EE" stroke="#5FD0A0"/><text x="950" y="275" fill="#065F46">buildUnits 组卷</text><text x="950" y="290" fill="#5A9E82" font-size="9.5">题组整体加入·掌握题过滤·random→shuffle</text><text x="950" y="303" fill="#5A9E82" font-size="9.5">无答案卷收紧 sequential</text>
+
+    <!-- row4 questions -->
+    <rect x="50" y="322" width="320" height="40" rx="7" fill="#E7F0FE" stroke="#7CA6F5"/><text x="210" y="341" fill="#1E3A8A">requestQuestions() → updateMaterialsCache</text><text x="210" y="356" fill="#5573A8" font-size="9.5">materialsById_ 缓存·showQuestion(0)</text>
+    <rect x="420" y="322" width="320" height="40" rx="7" fill="#F0EBFE" stroke="#B29CF3"/><text x="580" y="347" fill="#4C1D95">attempt.questions</text>
+    <rect x="790" y="322" width="320" height="40" rx="7" fill="#E4F7EE" stroke="#5FD0A0"/><text x="950" y="341" fill="#065F46">hostQuestions(false)+hostMaterials()</text><text x="950" y="356" fill="#5A9E82" font-size="9.5">stem/options 转 HTML·仅引用到的材料</text>
+
+    <!-- row5 answer loop -->
+    <rect x="50" y="392" width="320" height="52" rx="7" fill="#E7F0FE" stroke="#7CA6F5"/><text x="210" y="411" fill="#1E3A8A" font-weight="600">作答循环（本地）</text><text x="210" y="427" fill="#5573A8" font-size="9.5">chooseAnswer → answers_/multiAnswers_</text><text x="210" y="441" fill="#5573A8" font-size="9.5">QuestionNavigator 跳题·上/下一题</text>
+    <rect x="420" y="392" width="320" height="52" rx="7" fill="#F0EBFE" stroke="#B29CF3"/><text x="580" y="417" fill="#4C1D95">attempt.saveAnswers（批量）</text><text x="580" y="433" fill="#8B7BC4" font-size="9.5">切题/退出时同步，非每次点击</text>
+    <rect x="790" y="392" width="320" height="52" rx="7" fill="#E4F7EE" stroke="#5FD0A0"/><text x="950" y="417" fill="#065F46">answers_ 内存累积</text><text x="950" y="433" fill="#5A9E82" font-size="9.5">QSet&lt;int&gt; 支持多选</text>
+
+    <!-- row6 draft -->
+    <rect x="50" y="466" width="320" height="40" rx="7" fill="#FEF3E2" stroke="#F7CE8A"/><text x="210" y="485" fill="#B45309">saveDraft() 周期/切题触发</text><text x="210" y="500" fill="#B98A4A" font-size="9.5">DraftStore.save → drafts/&lt;sha&gt;/&lt;sha&gt;.json</text>
+
+    <!-- row7 submit -->
+    <rect x="50" y="530" width="320" height="46" rx="7" fill="#E7F0FE" stroke="#7CA6F5"/><text x="210" y="549" fill="#1E3A8A">confirmSubmit → sendSubmit → requestResults</text><text x="210" y="565" fill="#5573A8" font-size="9.5">气泡二次确认</text>
+    <rect x="420" y="530" width="320" height="46" rx="7" fill="#F0EBFE" stroke="#B29CF3"/><text x="580" y="549" fill="#4C1D95">attempt.submit → attempt.report</text>
+    <rect x="790" y="530" width="320" height="46" rx="7" fill="#E4F7EE" stroke="#5FD0A0"/><text x="950" y="549" fill="#065F46">判分 answers_==expected</text><text x="950" y="565" fill="#5A9E82" font-size="9.5">回写 QSettings history correct/wrong</text>
+
+    <!-- row8 solutions -->
+    <rect x="50" y="600" width="320" height="46" rx="7" fill="#E7F0FE" stroke="#7CA6F5"/><text x="210" y="619" fill="#1E3A8A">showSolution / exportAttemptResults</text><text x="210" y="635" fill="#5573A8" font-size="9.5">结果长图懒生成·翻页释放旧图</text>
+    <rect x="420" y="600" width="320" height="46" rx="7" fill="#F0EBFE" stroke="#B29CF3"/><text x="580" y="625" fill="#4C1D95">attempt.solutions</text>
+    <rect x="790" y="600" width="320" height="46" rx="7" fill="#E4F7EE" stroke="#5FD0A0"/><text x="950" y="619" fill="#065F46">hostQuestions(true)</text><text x="950" y="635" fill="#5A9E82" font-size="9.5">仅含答案库返回 correctChoices/solution</text>
+
+    <!-- clear draft -->
+    <rect x="50" y="668" width="320" height="40" rx="7" fill="#FEF3E2" stroke="#F7CE8A"/><text x="210" y="687" fill="#B45309">交卷成功 → clearAttempt 删草稿</text><text x="210" y="702" fill="#B98A4A" font-size="9.5">兼容 0.2.4 遗留单文件草稿</text>
+  </g>
+
+  <!-- request arrows UI->service->domain and back -->
+  <g stroke="#5B6472" stroke-width="1.5">
+    <line x1="370" y1="136" x2="418" y2="136" marker-end="url(#q1)"/>
+    <line x1="740" y1="136" x2="788" y2="136" marker-end="url(#q1)"/>
+    <line x1="370" y1="206" x2="418" y2="206" marker-end="url(#q1)"/>
+    <line x1="740" y1="206" x2="788" y2="206" marker-end="url(#q1)"/>
+    <line x1="370" y1="276" x2="418" y2="276" marker-end="url(#q1)"/>
+    <line x1="740" y1="276" x2="788" y2="276" marker-end="url(#q1)"/>
+    <line x1="370" y1="342" x2="418" y2="342" marker-end="url(#q1)"/>
+    <line x1="740" y1="342" x2="788" y2="342" marker-end="url(#q1)"/>
+    <line x1="370" y1="418" x2="418" y2="418" marker-end="url(#q1)"/>
+    <line x1="740" y1="418" x2="788" y2="418" marker-end="url(#q1)"/>
+    <line x1="370" y1="549" x2="418" y2="549" marker-end="url(#q1)"/>
+    <line x1="740" y1="549" x2="788" y2="549" marker-end="url(#q1)"/>
+    <line x1="370" y1="622" x2="418" y2="622" marker-end="url(#q1)"/>
+    <line x1="740" y1="622" x2="788" y2="622" marker-end="url(#q1)"/>
+  </g>
+  <!-- responseThunk back (green dashed, right to left) -->
+  <g stroke="#059669" stroke-width="1.3" stroke-dasharray="4 3">
+    <path d="M 788 152 L 742 152" marker-end="url(#q2)"/>
+    <path d="M 418 152 L 372 152" marker-end="url(#q2)"/>
+  </g>
+  <text x="580" y="170" text-anchor="middle" font-size="9.5" fill="#059669">responseThunk 回调 → Qt 信号 responseReceived（校验 generation 代号）</text>
+
+  <!-- draft side arrow -->
+  <line x1="210" y1="444" x2="210" y2="464" stroke="#B45309" stroke-width="1.4" stroke-dasharray="3 2" marker-end="url(#q1)"/>
+</svg>

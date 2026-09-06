@@ -92,6 +92,13 @@ target_compile_definitions(bank_validator_test PRIVATE
 )
 add_test(NAME bank_validator_test COMMAND bank_validator_test)
 
+add_executable(bank_validator_schema_consistency_test bank_validator_schema_consistency_test.cpp)
+target_link_libraries(bank_validator_schema_consistency_test PRIVATE quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
+target_compile_definitions(bank_validator_schema_consistency_test PRIVATE
+    DECLARATIVE_PROVIDER_SCHEMA_PATH="${PROJECT_SOURCE_DIR}/schemas/declarative-provider.schema.json"
+)
+add_test(NAME bank_validator_schema_consistency_test COMMAND bank_validator_schema_consistency_test)
+
 add_executable(material_card_test
     material_card_test.cpp
     ../apps/desktop-qt/src/ui/material_card.cpp
@@ -142,10 +149,11 @@ if(TARGET question_maker_engine)
         studio_review_ui_test.cpp
         ../apps/bank-studio/src/studio_window.cpp
         ../apps/bank-studio/src/studio_window.hpp
-        ../apps/bank-studio/src/mineru_settings_dialog.cpp
-        ../apps/bank-studio/src/source_row_widget.cpp
-        ../apps/bank-studio/src/styled_dropdown.cpp
-        ../apps/bank-studio/src/review_image_utils.cpp
+        ../apps/bank-studio/src/ui/mineru_settings_dialog.cpp
+        ../apps/bank-studio/src/ui/source_row_widget.cpp
+        ../apps/bank-studio/src/ui/styled_dropdown.cpp
+        ../apps/bank-studio/src/review/review_image_utils.cpp
+        ../apps/bank-studio/src/review/review_page_controller.cpp
         ../apps/bank-studio/resources/resources.qrc
     )
     set_target_properties(studio_review_ui_test PROPERTIES AUTORCC TRUE)

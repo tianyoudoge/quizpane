@@ -65,13 +65,28 @@
   ],
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
+    "normalizedCrop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0 },
+        "y": { "type": "number", "minimum": 0 },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
     "asset": {
       "type": "object",
       "additionalProperties": false,
       "required": ["path"],
       "properties": {
         "path": { "type": "string", "pattern": "^assets/[A-Za-z0-9._/-]+$" },
-        "alt": { "type": "string", "maxLength": 500 }
+        "alt": { "type": "string", "maxLength": 500 },
+        "sourceDocument": { "type": "string", "maxLength": 300 },
+        "sourcePage": { "type": "integer", "minimum": 1 },
+        "autoCrop": { "$ref": "#/$defs/normalizedCrop" },
+        "crop": { "$ref": "#/$defs/normalizedCrop" }
       }
     },
     "source": {
@@ -89,6 +104,14 @@
         "questionLabel": { "type": "string", "maxLength": 40 },
         "sectionId": { "$ref": "#/$defs/id" },
         "sectionTitle": { "type": "string", "minLength": 1, "maxLength": 120 }
+      }
+    },
+    "materialSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "document": { "type": "string", "maxLength": 300 },
+        "page": { "type": "integer", "minimum": 1 }
       }
     },
     "material": {
@@ -117,7 +140,7 @@
           "maxItems": 20,
           "items": { "$ref": "#/$defs/asset" }
         },
-        "source": { "$ref": "#/$defs/source" },
+        "source": { "$ref": "#/$defs/materialSource" },
         "review": {
           "type": "object",
           "additionalProperties": false,

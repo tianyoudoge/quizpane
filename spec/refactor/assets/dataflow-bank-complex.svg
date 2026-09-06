@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 820" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <rect width="1200" height="820" fill="#FFFFFF"/>
+  <text x="600" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1A1A2E">题库创建与识别（复杂版）· 两条提取链路 + 规则引擎细节</text>
+  <text x="600" y="55" text-anchor="middle" font-size="12" fill="#6B7280">GenerationWorkflow 对每个 SourceMaterialGroup 执行；QtConcurrent 工作线程 + 进度信号驱动 UI</text>
+
+  <defs>
+    <marker id="b1" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#5B6472"/></marker>
+    <marker id="b2" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#B45309"/></marker>
+  </defs>
+
+  <!-- step1 -->
+  <rect x="40" y="76" width="1120" height="70" rx="10" fill="#FEF3E2" stroke="#F7CE8A"/>
+  <text x="56" y="98" font-size="12.5" font-weight="700" fill="#B45309">① 第一步：选择资料（StudioWindow · SourceRowWidget）</text>
+  <text x="56" y="118" font-size="10.5" fill="#B98A4A">每行：文件 + 答案策略(自动检测/含答案/无答案) + 答案文件配对 → sourcePaths_ / answerPolicyByQuestion_（Auto 默认，人工覆盖）</text>
+  <text x="56" y="136" font-size="10.5" fill="#B98A4A">可选：为 PDF 指定 MinerU ZIP（mineruZipPath / mineruAnswerZipPath）走云端提取</text>
+
+  <!-- step2 workflow -->
+  <rect x="40" y="166" width="1120" height="330" rx="10" fill="#F1FBF6" stroke="#8EE0BC"/>
+  <text x="56" y="188" font-size="12.5" font-weight="700" fill="#065F46">② 第二步：自动整理 GenerationWorkflow（每个 SourceMaterialGroup）</text>
+
+  <!-- extraction A -->
+  <rect x="60" y="204" width="520" height="120" rx="9" fill="#FFF" stroke="#5FD0A0"/>
+  <text x="320" y="225" text-anchor="middle" font-size="12" font-weight="700" fill="#065F46">链路A · 本地提取 DocumentExtractor</text>
+  <g font-size="10.5" fill="#5A9E82" text-anchor="middle">
+    <text x="320" y="246">TXT/DOCX 直读文本层</text>
+    <text x="320" y="264">PDF 逐页判定：有文字层→直读；扫描页→OCR（Tesseract）</text>
+    <text x="320" y="282">版面锚点：questionAnchors / optionLabelAnchors / lineAnchors</text>
+    <text x="320" y="300">下划线检测 underlineDecorations（按需）· usedOcr 软复核信号</text>
+    <text x="320" y="317" fill="#8CBBA6" font-size="9.5">扫描页立即保留 PNG；文字页 ensurePdfPageImages 懒加载</text>
+  </g>
+
+  <!-- extraction B -->
+  <rect x="620" y="204" width="520" height="120" rx="9" fill="#FFF" stroke="#7CA6F5"/>
+  <text x="880" y="225" text-anchor="middle" font-size="12" font-weight="700" fill="#1E3A8A">链路B · 云端提取 MinerU（可选）</text>
+  <g font-size="10.5" fill="#5573A8" text-anchor="middle">
+    <text x="880" y="246">MinerUClient 上传 PDF / 或直接读取离线 ZIP</text>
+    <text x="880" y="264">MinerUOutputAdapter 解析版面 JSON + 图片</text>
+    <text x="880" y="282">映射为同一 ExtractedDocument（extractionBackend=mineru-*）</text>
+    <text x="880" y="300">规则引擎据此启用"经云端坐标验证"能力</text>
+    <text x="880" y="317" fill="#93B4F0" font-size="9.5">提取失败 → 该文件 Failed，不降级到规则/模型</text>
+  </g>
+
+  <!-- converge -->
+  <rect x="360" y="336" width="480" height="44" rx="9" fill="#F3F4F6" stroke="#C0C5CE"/>
+  <text x="600" y="356" text-anchor="middle" font-size="11.5" font-weight="700" fill="#374151">ExtractedDocument（统一产物，下游只认它）</text>
+  <text x="600" y="372" text-anchor="middle" font-size="9.5" fill="#9AA3AF">plainText · hasPageBoundaries · pageImages · *Anchors · companionAnswerText</text>
+
+  <!-- rule engine detail -->
+  <rect x="60" y="392" width="1080" height="94" rx="9" fill="#E4F7EE" stroke="#5FD0A0"/>
+  <text x="76" y="412" font-size="12" font-weight="700" fill="#065F46">RuleBasedBankGenerator::generate（纯函数·确定性·NFC 归一化）</text>
+  <g font-size="10.5" fill="#065F46" text-anchor="middle">
+    <rect x="76" y="422" width="190" height="52" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="171" y="443">套题切分</text><text x="171" y="459" font-size="9" fill="#5A9E82">单套/多套·section 元信息</text>
+    <rect x="278" y="422" width="190" height="52" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="373" y="443">切题算法</text><text x="373" y="459" font-size="9" fill="#5A9E82">题号识别·漏题号恢复</text>
+    <rect x="480" y="422" width="190" height="52" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="575" y="443">答案定位</text><text x="575" y="459" font-size="9" fill="#5A9E82">四种位置·数量不匹配→复核</text>
+    <rect x="682" y="422" width="190" height="52" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="777" y="443">题型识别</text><text x="777" y="459" font-size="9" fill="#5A9E82">单选/多选/判断</text>
+    <rect x="884" y="422" width="240" height="52" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="1004" y="443">三级复核分级</text><text x="1004" y="459" font-size="9" fill="#5A9E82">ok / soft / hard（宁缺毋滥）</text>
+  </g>
+
+  <!-- ReviewResult -->
+  <rect x="40" y="516" width="1120" height="70" rx="10" fill="#F7F4FF" stroke="#C4B5FD"/>
+  <text x="56" y="538" font-size="12.5" font-weight="700" fill="#4C1D95">ReviewResult（两条链路共用产物）</text>
+  <g font-size="10.5" fill="#8B7BC4">
+    <text x="56" y="558">questions（ok+soft，默认勾选） · needsReviewQuestions（hard，禁止猜答案） · materials · assets（正式附件）</text>
+    <text x="56" y="575">reviewAssets（校对裁图，不进包） · hasAnswerKey（整库二选一） · answerEvidenceDetected（供 Auto 决策）</text>
+  </g>
+
+  <!-- step3 review UI -->
+  <rect x="40" y="606" width="550" height="90" rx="10" fill="#E7F0FE" stroke="#7CA6F5"/>
+  <text x="56" y="628" font-size="12.5" font-weight="700" fill="#1E3A8A">③ 第三步：检查问题（复核 UI）</text>
+  <g font-size="10.5" fill="#5573A8">
+    <text x="56" y="648">QTreeWidget 材料分组+独立题（复选框=收录开关）</text>
+    <text x="56" y="665">右侧详情：题干/选项/答案/解析编辑器 + CropDialog 图片重裁</text>
+    <text x="56" y="682">编辑原地改 QJsonObject（不产生新 id）· 原 PDF 永不修改</text>
+  </g>
+
+  <!-- step4 package -->
+  <rect x="610" y="606" width="550" height="90" rx="10" fill="#FEF3E2" stroke="#F7CE8A"/>
+  <text x="626" y="628" font-size="12.5" font-weight="700" fill="#B45309">④ 第四步：完成打包 packageProvider()</text>
+  <g font-size="10.5" fill="#B98A4A">
+    <text x="626" y="648">组 bank.json → validateBank（C++ 校验器权威）</text>
+    <text x="626" y="665">→ manifest.json → ZIP(.quizpane-provider) → 三重自检</text>
+    <text x="626" y="682">→ ProviderInstaller 安装 → RunningAppHandoff 交刷题端</text>
+  </g>
+
+  <!-- output -->
+  <rect x="440" y="726" width="320" height="54" rx="10" fill="#E7F0FE" stroke="#7CA6F5"/>
+  <text x="600" y="750" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1E3A8A">已安装题库 → 小窗刷题</text>
+  <text x="600" y="769" text-anchor="middle" font-size="10" fill="#5573A8">见 dataflow-quiz-complex.svg</text>
+
+  <!-- arrows -->
+  <g stroke="#5B6472" stroke-width="1.5" marker-end="url(#b1)">
+    <line x1="320" y1="146" x2="320" y2="200"/>
+    <line x1="880" y1="146" x2="880" y2="200"/>
+    <path d="M 320 324 L 420 334" fill="none"/>
+    <path d="M 880 324 L 780 334" fill="none"/>
+    <line x1="600" y1="380" x2="600" y2="390"/>
+    <line x1="600" y1="486" x2="600" y2="514"/>
+    <line x1="315" y1="586" x2="315" y2="604"/>
+    <line x1="885" y1="586" x2="885" y2="604"/>
+  </g>
+  <g stroke="#B45309" stroke-width="1.6" marker-end="url(#b2)">
+    <path d="M 590 651 L 606 651" fill="none"/>
+    <line x1="885" y1="696" x2="700" y2="726"/>
+  </g>
+</svg>

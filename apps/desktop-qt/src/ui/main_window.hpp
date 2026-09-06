@@ -1,19 +1,20 @@
 #pragma once
 
-#include <QHash>
-#include <QJsonArray>
 #include <QMainWindow>
 #include <QElapsedTimer>
 #include <QKeySequence>
-#include <QVector>
-#include <QSet>
 
 #include "../app_services.hpp"
+#include "attempt_session.hpp"
+#include "catalog_page_controller.hpp"
+#include "practice_page_controller.hpp"
+#include "quizpane/provider_response_router.hpp"
+#include "solution_page_controller.hpp"
+#include "ui_size.hpp"
 
 class QLabel;
 class QLayout;
 class QAction;
-class QButtonGroup;
 class QMenu;
 class QFrame;
 class QFile;
@@ -22,16 +23,9 @@ class QNetworkReply;
 class QProgressDialog;
 class QShowEvent;
 class QPushButton;
-class QScrollArea;
 class QStackedWidget;
 class QTimer;
-class QVBoxLayout;
 class QSystemTrayIcon;
-
-namespace quizpane::ui {
-class MaterialCard;
-class QuestionNavigator;
-}
 
 namespace quizpane {
 
@@ -43,8 +37,11 @@ struct BrowserStatus;
 }
 #endif
 
-// MainWindow 负责装配页面并把题库请求交给应用服务。成员中的控件指针均为
-// Qt 父子对象树持有的非拥有引用。
+// MainWindow 负责装配页面并把题库请求交给应用服务。做题页/解析页/目录页的
+// 控件、状态和交互逻辑已分别拆分到 PracticePageController/
+// SolutionPageController/CatalogPageController；MainWindow 只保留跨页面服务
+// 引用、桌面外壳（托盘、热键、更新下载）、顶层页面装配/切换和登录页逻辑。
+// 成员中的控件指针均为 Qt 父子对象树持有的非拥有引用。
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 
@@ -67,7 +64,6 @@ protected:
 private:
     // ActionMode 是登录/引导页主按钮的有限状态机，避免用多组 bool 拼状态。
     enum class ActionMode { InstallProvider, ConnectAccount, CancelLogin, OpenCatalog };
-    enum class UiSize { Small, Medium, Large };
 
     void chooseProviderPackage();
     void openBankStudio();
@@ -78,37 +74,23 @@ private:
     void setQrContent(const QString& content);
     void setActionMode(ActionMode mode, const QString& text);
     void handleProviderResponse(const QJsonObject& response);
-    void populateCatalog(const QJsonArray& nodes);
-    void startAttempt(const QString& categoryId, const QString& title, int count,
-                      bool includePreviouslyAnswered = false);
-    void requestQuestions();
-    void updateMaterialsCache(const QJsonArray& materials);
-    void showQuestion(int index);
-    void chooseAnswer(int choice, bool checked = true);
-    void toggleQuestionNavigator();
-    void refreshQuestionNavigator();
-    QJsonArray answerPayload() const;
-    void submitAttempt();
-    void confirmSubmitAttempt();
-    void hideSubmitConfirmation();
-    void positionSubmitConfirmation();
-    void sendSubmit();
-    void requestResults();
-    void showSolution(int index);
-    void exportAttemptResults();
-    void clearLayout(QLayout* layout);
+    void handleProviderError(const ProviderResponseEnvelope& envelope);
+    void handleInitializeResponse(const QJsonObject& result);
+    void handleAuthBeginResponse(const QJsonObject& result);
+    void handleAuthPollResponse(const QJsonObject& result);
+    void handleCatalogResponse(const QJsonObject& result);
+    void handleAttemptCreateResponse(const QJsonObject& result);
+    void handleQuestionsResponse(const QJsonObject& result);
+    void handleReportResponse(const QJsonObject& result);
+    void handleSolutionsResponse(const QJsonObject& result);
     void setPinned(bool pinned);
     void showUiSizeMenu();
     void applyUiSize(UiSize size);
     void showBackgroundVisibilityDialog();
     void applyBackgroundVisibility(int value);
-    void lockCompactPracticeHeight();
-    int answerViewportMaximumHeight() const;
     void initializeDesktopShell();
     void toggleWindowVisibility();
     void returnToCatalog();
-    void saveDraft();
-    bool maybeRestoreDraft();
     void sendInitialize();
     void applyCardStyle();
     void adjustWindowForCurrentPage();
@@ -193,62 +175,22 @@ private:
     QPushButton* actionButton_ = nullptr;
     QPushButton* createBankButton_ = nullptr;
     QTimer* loginPollTimer_ = nullptr;
-    QVBoxLayout* catalogListLayout_ = nullptr;
-    QLabel* practiceTitleLabel_ = nullptr;
-    QLabel* practiceProgressLabel_ = nullptr;
-    QLabel* questionLabel_ = nullptr;
-    QScrollArea* questionScroll_ = nullptr;
-    QWidget* questionContent_ = nullptr;
-    QVBoxLayout* questionContentLayout_ = nullptr;
-    QVBoxLayout* optionsLayout_ = nullptr;
-    QButtonGroup* optionButtonGroup_ = nullptr;
-    ui::MaterialCard* practiceMaterialCard_ = nullptr;
-    ui::MaterialCard* solutionMaterialCard_ = nullptr;
-    QVBoxLayout* solutionContentLayout_ = nullptr;
-    QWidget* practiceControlBar_ = nullptr;
-    QPushButton* previousQuestionButton_ = nullptr;
-    QPushButton* nextQuestionButton_ = nullptr;
-    QPushButton* questionListButton_ = nullptr;
-    QPushButton* submitButton_ = nullptr;
-    ui::QuestionNavigator* questionNavigator_ = nullptr;
-    QFrame* submitConfirmationBubble_ = nullptr;
-    QLabel* submitConfirmationLabel_ = nullptr;
-    QLabel* resultSummaryLabel_ = nullptr;
-    QLabel* solutionProgressLabel_ = nullptr;
-    QLabel* solutionQuestionLabel_ = nullptr;
-    QLabel* solutionAnswerLabel_ = nullptr;
-    QLabel* selectedAnswerLabel_ = nullptr;
-    QLabel* correctAnswerLabel_ = nullptr;
-    QLabel* answerStatusLabel_ = nullptr;
-    QLabel* solutionExplanationLabel_ = nullptr;
-    QPushButton* previousSolutionButton_ = nullptr;
-    QPushButton* nextSolutionButton_ = nullptr;
-    QPushButton* exportResultsButton_ = nullptr;
-    QWidget* solutionControlBar_ = nullptr;
     QWidget* resizeHandle_ = nullptr;
+
+    // ---- 三个页面控制器：各自持有对应页面的控件与状态 ----
+    AttemptSession session_;
+    CatalogPageController catalogController_;
+    PracticePageController practiceController_;
+    SolutionPageController solutionController_;
+
     // ---- 当前页面会话状态：切换题库时会重置，安全凭据不在这里 ----
     ActionMode actionMode_ = ActionMode::InstallProvider;
     QString loginSessionId_;
     QString providerId_;
-    QString attemptId_;
-    QString attemptTitle_;
-    QJsonArray questions_;
-    QJsonArray solutions_;
-    bool attemptHasAnswerKey_ = true;
-    // materialId -> material（title/contentHtml）。attempt.questions 和
-    // attempt.solutions 各自返回去重后的材料数组，这里合并成一份缓存供两个
-    // 页面共用，避免每次切题都重新在数组里线性查找。
-    QHash<QString, QJsonObject> materialsById_;
-    QVector<int> answers_;
-    // 单选仍用 answers_ 保持草稿兼容；多选保存完整集合，判分和 RPC 不会丢项。
-    QVector<QSet<int>> multiAnswers_;
-    int currentQuestionIndex_ = 0;
-    int currentSolutionIndex_ = 0;
     // ---- 用户偏好与窗口几何 ----
     bool pinned_ = true;
     UiSize uiSize_ = UiSize::Medium;
     int backgroundVisibility_ = 100;
-    int lockedPracticeViewportHeight_ = 0;
     bool draftRestoreChecked_ = false;
     QElapsedTimer visibilityToggleDebounce_;
     QSize standardWindowSize_{380, 560};

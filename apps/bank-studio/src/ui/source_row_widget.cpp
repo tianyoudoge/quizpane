@@ -1,5 +1,5 @@
 #include "source_row_widget.hpp"
-#include "source_validation.hpp"
+#include "../review/source_validation.hpp"
 
 #include <QDragEnterEvent>
 #include <QDropEvent>

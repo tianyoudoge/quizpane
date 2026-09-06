@@ -88,11 +88,16 @@ void ExternalWindowManager::attach(const AttachRequest& request) {
     d_->windowsAttachElapsed.start();
     tryAttachWindows();
 #else
+    // Linux（含 UOS/银河麒麟）明确不支持：BackendType 里的
+    // LinuxX11NativeTopmost / LinuxWaylandPortalReplica 只是预留的
+    // 枚举值，没有对应实现。X11 和 Wayland 的窗口置顶/画面捕获 API
+    // 差异很大，且没有 Chromium 扩展消息通道之外的稳定探测手段，
+    // 这里直接返回 Unsupported，不做静默降级。
     d_->state = State::Failed;
     AttachResult result;
     result.sessionId = request.sessionId;
     result.errorCode = AttachError::Unsupported;
-    result.error = QStringLiteral("当前平台的网页小窗置顶后端尚未启用");
+    result.error = QStringLiteral("当前平台（Linux）暂不支持网课伴侣小窗视频功能");
     emit stateChanged(d_->state, result.error);
     emit attachFinished(result);
 #endif

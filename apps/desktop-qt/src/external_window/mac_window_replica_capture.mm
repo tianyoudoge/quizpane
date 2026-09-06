@@ -1,3 +1,7 @@
+// 职责：QPMacReplicaController 的核心实现——用 ScreenCaptureKit 定位并捕获
+// 源窗口画面。窗口生命周期（attach/detach/权限判定）与帧回调都在这里；
+// 渲染（renderer.mm）和手势转发（input.mm）拆在独立文件的 Category 中。
+
 #include "mac_window_replica_controller.hpp"
 #include "quizpane/diagnostic_logger.hpp"
 

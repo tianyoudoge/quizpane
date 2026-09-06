@@ -8,7 +8,13 @@ namespace quizpane::external_window {
 
 // 同一套接口下四种平台实现：Windows 直接控制原生窗口置顶
 // （不复制画面），macOS 用 ScreenCaptureKit 把源窗口画面镜像
-// 渲染到自己的窗口，Linux 两种合成协议各一套（目前未启用）。
+// 渲染到自己的窗口。
+//
+// LinuxX11NativeTopmost / LinuxWaylandPortalReplica 目前只是占位声明，
+// 没有对应的后端实现——ExternalWindowManager::attach 在 Linux 上直接
+// 返回 AttachError::Unsupported（见 external_window_manager.cpp）。
+// 网课伴侣小窗视频功能在 Linux/UOS/银河麒麟上暂不可用；X11 与 Wayland
+// 的窗口置顶/画面捕获 API 差异很大，需要分别实现才能启用。
 enum class BackendType {
     Unsupported,
     WindowsNativeTopmost,

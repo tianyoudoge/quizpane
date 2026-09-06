@@ -73,6 +73,9 @@ Method methodForName(const QString& name) {
         {QStringLiteral("attempt.solutions"), Method::Solutions}};
     return methods.value(name, Method::Unknown);
 }
+QString historyKey(const QString& providerId, const QString& questionId) {
+    return QStringLiteral("practice/history/%1/%2").arg(providerId, questionId);
+}
 }  // namespace
 
 bool DeclarativeProvider::load(const QString& bankPath, QString* errorOutput) {
@@ -125,6 +128,7 @@ void DeclarativeProvider::unload() {
     catalogs_ = {}; questions_ = {}; materials_ = {}; activeQuestions_ = {};
     materialsById_.clear(); questionCountByCatalog_.clear(); answers_.clear(); bankDirectory_.clear();
     hasAnswerKey_ = true;
+    solutionsCache_ = {}; solutionsCacheValid_ = false;
 }
 
 QJsonObject DeclarativeProvider::descriptor() const {
@@ -358,131 +362,186 @@ QJsonArray DeclarativeProvider::hostMaterials() const {
     return result;
 }
 
+QHash<QString, QString> DeclarativeProvider::practiceHistoryByQuestion() const {
+    // 一次遍历全量题目、逐题查一次 QSettings，把结果记到内存表；catalog.list
+    // 的掌握度统计和 attempt.create 的掌握题过滤都基于同一份题目集合读同一路径
+    // 前缀，合并成一次遍历可以避免两处各自触发一遍高频注册表读取（Win7 尤其慢）。
+    QHash<QString, QString> history;
+    QSettings settings;
+    for (const auto& value : questions_) {
+        const QString questionId = value.toObject().value("id").toString();
+        const QString state = settings.value(historyKey(providerId_, questionId)).toString();
+        if (state == QStringLiteral("correct") || state == QStringLiteral("wrong"))
+            history.insert(questionId, state);
+    }
+    return history;
+}
+
+QJsonArray DeclarativeProvider::solutionsView() const {
+    // attempt.report 判分和 attempt.solutions 展示都需要“带答案”的题目视图；
+    // 同一个 attempt 内两者常常先后被请求，缓存一份避免重复跑 hostQuestions(true)
+    // 的 HTML 转换和答案匹配。attempt.create 换卷时通过 solutionsCacheValid_ 失效。
+    if (!solutionsCacheValid_) {
+        solutionsCache_ = hostQuestions(true);
+        solutionsCacheValid_ = true;
+    }
+    return solutionsCache_;
+}
+
+QJsonObject DeclarativeProvider::handleInitialize(const QJsonValue& id) const {
+    return {{"id", id}, {"result", QJsonObject{
+        {"providerId", providerId_}, {"providerVersion", providerVersion_},
+        {"requiresLogin", false}, {"sessionRestored", true}}}};
+}
+
+QJsonObject DeclarativeProvider::handleCapabilities(const QJsonValue& id) const {
+    return {{"id", id}, {"result", QJsonObject{
+        {"loginMethods", QJsonArray{"none"}}, {"hasAnswerKey", hasAnswerKey_},
+        {"solutions", hasAnswerKey_}}}};
+}
+
+QJsonObject DeclarativeProvider::handleCatalogList(const QJsonValue& id) const {
+    // 逐分类对全量题目做一次 QSettings::value() 是 O(分类数 × 题数)：大题库
+    // 多分类时，进入目录页会触发成千上万次 Windows 注册表读取，在 Win7 低配
+    // 机上是明显卡顿。这里改为对题目只遍历一次，按 catalogId 累计到内存表，
+    // 分类循环再各自查表，整体降到 O(题数 + 分类数)。
+    QHash<QString, QPair<int, int>> masteryByCatalog;
+    {
+        const QHash<QString, QString> history = practiceHistoryByQuestion();
+        for (const auto& questionValue : questions_) {
+            const QJsonObject question = questionValue.toObject();
+            const QString state = history.value(question.value("id").toString());
+            if (state.isEmpty()) continue;
+            QPair<int, int>& tally = masteryByCatalog[question.value("catalogId").toString()];
+            if (state == QStringLiteral("correct")) ++tally.first;
+            else ++tally.second;
+        }
+    }
+    QJsonArray nodes;
+    for (const auto& value : catalogs_) {
+        const QJsonObject catalog = value.toObject(); const QString catalogId = catalog.value("id").toString();
+        const int count = questionCountByCatalog_.value(catalogId, 0);
+        const QJsonObject practice = catalog.value("practice").toObject();
+        const QString configuredMode = practice.value("mode").toString();
+        const QString effectiveMode = !hasAnswerKey_ && configuredMode == QStringLiteral("random")
+            ? QStringLiteral("sequential") : configuredMode;
+        int suggested = effectiveMode == QStringLiteral("all")
+            ? count : practice.value("questionCount").toInt(qMin(15, count));
+        suggested = qBound(1, suggested, qMax(1, count));
+        const QPair<int, int> tally = masteryByCatalog.value(catalogId);
+        nodes.append(QJsonObject{{"id", catalogId}, {"title", catalog.value("title")},
+            {"availableQuestionCount", count}, {"canStartAttempt", count > 0},
+            {"practiceMode", effectiveMode},
+            {"suggestedCounts", QJsonArray{suggested}}, {"masteredCount", tally.first},
+            {"mistakeCount", tally.second}});
+    }
+    return {{"id", id}, {"result", QJsonObject{{"nodes", nodes}}}};
+}
+
+QJsonObject DeclarativeProvider::handleAttemptCreate(const QJsonValue& id, const QJsonObject& params) {
+    const QJsonObject catalog = findCatalog(params.value("categoryId").toString());
+    if (catalog.isEmpty()) return error(id, QStringLiteral("练习分类不存在"));
+    QVector<QJsonArray> units = buildUnits(catalog.value("id").toString());
+    if (!params.value("includePreviouslyAnswered").toBool(false)) {
+        const QHash<QString, QString> history = practiceHistoryByQuestion();
+        QVector<QJsonArray> filtered;
+        for (const QJsonArray& unit : units) {
+            bool allMastered = true;
+            for (const auto& value : unit)
+                allMastered = allMastered &&
+                    history.value(value.toObject().value("id").toString()) == QStringLiteral("correct");
+            if (!allMastered) filtered.append(unit);
+        }
+        units = filtered;
+    }
+    // 无答案卷需要按原卷次序作答、完成后再自行对答案；即使旧题库曾配置
+    // random，也在运行时收紧为 sequential，不要求用户重新制作题库。
+    if (hasAnswerKey_ &&
+        catalog.value("practice").toObject().value("mode") == QStringLiteral("random"))
+        std::shuffle(units.begin(), units.end(), *QRandomGenerator::global());
+    int totalQuestions = 0;
+    for (const auto& unit : units) totalQuestions += static_cast<int>(unit.size());
+    const int target = qBound(1, params.value("count").toInt(totalQuestions), qMax(1, totalQuestions));
+    // 逐个单元整体加入，直到题量达到或超过目标；题组永远整体加入，
+    // 即使最后一个题组会让总题量超过目标也不截断（见交接方案 8.3）。
+    QJsonArray selected;
+    for (const auto& unit : units) {
+        if (selected.size() >= target) break;
+        for (const auto& question : unit) selected.append(question);
+    }
+    activeQuestions_ = selected;
+    answers_.clear(); activeCatalogTitle_ = catalog.value("title").toString(bankTitle_);
+    solutionsCache_ = {}; solutionsCacheValid_ = false;
+    return {{"id", id}, {"result", QJsonObject{{"attemptId", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+        {"title", activeCatalogTitle_}, {"status", "active"}, {"questionCount", selected.size()},
+        {"hasAnswerKey", hasAnswerKey_}}}};
+}
+
+QJsonObject DeclarativeProvider::handleAttemptQuestions(const QJsonValue& id) const {
+    return {{"id", id}, {"result", QJsonObject{
+        {"materials", hostMaterials()}, {"questions", hostQuestions(false)}}}};
+}
+
+QJsonObject DeclarativeProvider::handleSaveAnswers(const QJsonValue& id, const QJsonObject& params) {
+    for (const auto& value : params.value("answers").toArray()) {
+        const auto answer = value.toObject(); QSet<int> choices;
+        const QJsonValue choice = answer.value("answer").toObject().value("choice");
+        const QJsonArray array = choice.toArray();
+        if (!array.isEmpty()) for (const auto& item : array) { bool ok = false; const int index = item.toString().toInt(&ok); if (ok) choices.insert(index); }
+        else { bool ok = false; const int index = choice.toString().toInt(&ok); if (ok) choices.insert(index); }
+        const int index = answer.value("questionIndex").toInt(-1);
+        if (index >= 0) { if (choices.isEmpty()) answers_.remove(index); else answers_.insert(index, choices); }
+    }
+    return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
+}
+
+QJsonObject DeclarativeProvider::handleSubmit(const QJsonValue& id) const {
+    return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
+}
+
+QJsonObject DeclarativeProvider::handleReport(const QJsonValue& id) const {
+    QJsonObject report{{"questionCount", activeQuestions_.size()},
+                       {"answerCount", answers_.size()}, {"hasAnswerKey", hasAnswerKey_}};
+    if (hasAnswerKey_) {
+        int correct = 0;
+        const auto solutions = solutionsView();
+        QSettings settings;
+        for (qsizetype i = 0; i < solutions.size(); ++i) {
+            QSet<int> expected;
+            for (const auto& choice : solutions.at(i).toObject().value("correctChoices").toArray())
+                expected.insert(choice.toInt());
+            const bool passed = answers_.value(static_cast<int>(i)) == expected;
+            if (passed) ++correct;
+            settings.setValue(historyKey(providerId_, solutions.at(i).toObject().value("id").toString()),
+                passed ? QStringLiteral("correct") : QStringLiteral("wrong"));
+        }
+        report.insert("correctCount", correct);
+    }
+    return {{"id", id}, {"result", report}};
+}
+
+QJsonObject DeclarativeProvider::handleSolutions(const QJsonValue& id) const {
+    return {{"id", id}, {"result", QJsonObject{
+        {"materials", hostMaterials()}, {"solutions", hasAnswerKey_ ? solutionsView() : QJsonArray{}}}}};
+}
+
 QJsonObject DeclarativeProvider::request(const QJsonObject& requestValue) {
     const QJsonValue id = requestValue.value("id");
     const QString method = requestValue.value("method").toString();
     const Method dispatch = methodForName(method);
     const QJsonObject params = requestValue.value("params").toObject();
-    if (dispatch == Method::Initialize) return {{"id", id}, {"result", QJsonObject{
-        {"providerId", providerId_}, {"providerVersion", providerVersion_}, {"requiresLogin", false}, {"sessionRestored", true}}}};
-    if (dispatch == Method::Capabilities) return {{"id", id}, {"result", QJsonObject{
-        {"loginMethods", QJsonArray{"none"}}, {"hasAnswerKey", hasAnswerKey_},
-        {"solutions", hasAnswerKey_}}}};
-    if (dispatch == Method::CatalogList) {
-        QJsonArray nodes;
-        // 逐分类对全量题目做一次 QSettings::value() 是 O(分类数 × 题数)：大题库
-        // 多分类时，进入目录页会触发成千上万次 Windows 注册表读取，在 Win7 低配
-        // 机上是明显卡顿。这里改为对题目只遍历一次，按 catalogId 累计到内存表，
-        // 分类循环再各自查表，整体降到 O(题数 + 分类数)。
-        QHash<QString, QPair<int, int>> masteryByCatalog;
-        {
-            QSettings settings;
-            for (const auto& questionValue : questions_) {
-                const QJsonObject question = questionValue.toObject();
-                const QString state = settings.value(QStringLiteral("practice/history/%1/%2")
-                    .arg(providerId_, question.value("id").toString())).toString();
-                if (state != QStringLiteral("correct") && state != QStringLiteral("wrong")) continue;
-                QPair<int, int>& tally = masteryByCatalog[question.value("catalogId").toString()];
-                if (state == QStringLiteral("correct")) ++tally.first;
-                else ++tally.second;
-            }
-        }
-        for (const auto& value : catalogs_) {
-            const QJsonObject catalog = value.toObject(); const QString catalogId = catalog.value("id").toString();
-            const int count = questionCountByCatalog_.value(catalogId, 0);
-            const QJsonObject practice = catalog.value("practice").toObject();
-            const QString configuredMode = practice.value("mode").toString();
-            const QString effectiveMode = !hasAnswerKey_ && configuredMode == QStringLiteral("random")
-                ? QStringLiteral("sequential") : configuredMode;
-            int suggested = effectiveMode == QStringLiteral("all")
-                ? count : practice.value("questionCount").toInt(qMin(15, count));
-            suggested = qBound(1, suggested, qMax(1, count));
-            const QPair<int, int> tally = masteryByCatalog.value(catalogId);
-            nodes.append(QJsonObject{{"id", catalogId}, {"title", catalog.value("title")},
-                {"availableQuestionCount", count}, {"canStartAttempt", count > 0},
-                {"practiceMode", effectiveMode},
-                {"suggestedCounts", QJsonArray{suggested}}, {"masteredCount", tally.first},
-                {"mistakeCount", tally.second}});
-        }
-        return {{"id", id}, {"result", QJsonObject{{"nodes", nodes}}}};
+    switch (dispatch) {
+    case Method::Initialize: return handleInitialize(id);
+    case Method::Capabilities: return handleCapabilities(id);
+    case Method::CatalogList: return handleCatalogList(id);
+    case Method::AttemptCreate: return handleAttemptCreate(id, params);
+    case Method::AttemptQuestions: return handleAttemptQuestions(id);
+    case Method::SaveAnswers: return handleSaveAnswers(id, params);
+    case Method::Submit: return handleSubmit(id);
+    case Method::Report: return handleReport(id);
+    case Method::Solutions: return handleSolutions(id);
+    case Method::Unknown: break;
     }
-    if (dispatch == Method::AttemptCreate) {
-        const QJsonObject catalog = findCatalog(params.value("categoryId").toString());
-        if (catalog.isEmpty()) return error(id, QStringLiteral("练习分类不存在"));
-        QVector<QJsonArray> units = buildUnits(catalog.value("id").toString());
-        if (!params.value("includePreviouslyAnswered").toBool(false)) {
-            QSettings settings;
-            QVector<QJsonArray> filtered;
-            for (const QJsonArray& unit : units) {
-                bool allMastered = true;
-                for (const auto& value : unit)
-                    allMastered = allMastered && settings.value(
-                        QStringLiteral("practice/history/%1/%2").arg(
-                            providerId_, value.toObject().value("id").toString())).toString() ==
-                        QStringLiteral("correct");
-                if (!allMastered) filtered.append(unit);
-            }
-            units = filtered;
-        }
-        // 无答案卷需要按原卷次序作答、完成后再自行对答案；即使旧题库曾配置
-        // random，也在运行时收紧为 sequential，不要求用户重新制作题库。
-        if (hasAnswerKey_ &&
-            catalog.value("practice").toObject().value("mode") == QStringLiteral("random"))
-            std::shuffle(units.begin(), units.end(), *QRandomGenerator::global());
-        int totalQuestions = 0;
-        for (const auto& unit : units) totalQuestions += static_cast<int>(unit.size());
-        const int target = qBound(1, params.value("count").toInt(totalQuestions), qMax(1, totalQuestions));
-        // 逐个单元整体加入，直到题量达到或超过目标；题组永远整体加入，
-        // 即使最后一个题组会让总题量超过目标也不截断（见交接方案 8.3）。
-        QJsonArray selected;
-        for (const auto& unit : units) {
-            if (selected.size() >= target) break;
-            for (const auto& question : unit) selected.append(question);
-        }
-        activeQuestions_ = selected;
-        answers_.clear(); activeCatalogTitle_ = catalog.value("title").toString(bankTitle_);
-        return {{"id", id}, {"result", QJsonObject{{"attemptId", QUuid::createUuid().toString(QUuid::WithoutBraces)},
-            {"title", activeCatalogTitle_}, {"status", "active"}, {"questionCount", selected.size()},
-            {"hasAnswerKey", hasAnswerKey_}}}};
-    }
-    if (dispatch == Method::AttemptQuestions) return {{"id", id}, {"result", QJsonObject{
-        {"materials", hostMaterials()}, {"questions", hostQuestions(false)}}}};
-    if (dispatch == Method::SaveAnswers) {
-        for (const auto& value : params.value("answers").toArray()) {
-            const auto answer = value.toObject(); QSet<int> choices;
-            const QJsonValue choice = answer.value("answer").toObject().value("choice");
-            const QJsonArray array = choice.toArray();
-            if (!array.isEmpty()) for (const auto& item : array) { bool ok = false; const int index = item.toString().toInt(&ok); if (ok) choices.insert(index); }
-            else { bool ok = false; const int index = choice.toString().toInt(&ok); if (ok) choices.insert(index); }
-            const int index = answer.value("questionIndex").toInt(-1);
-            if (index >= 0) { if (choices.isEmpty()) answers_.remove(index); else answers_.insert(index, choices); }
-        }
-        return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
-    }
-    if (dispatch == Method::Submit) return {{"id", id}, {"result", QJsonObject{{"ok", true}}}};
-    if (dispatch == Method::Report) {
-        QJsonObject report{{"questionCount", activeQuestions_.size()},
-                           {"answerCount", answers_.size()}, {"hasAnswerKey", hasAnswerKey_}};
-        if (hasAnswerKey_) {
-            int correct = 0;
-            const auto solutions = hostQuestions(true);
-            QSettings settings;
-            for (qsizetype i = 0; i < solutions.size(); ++i) {
-                QSet<int> expected;
-                for (const auto& choice : solutions.at(i).toObject().value("correctChoices").toArray())
-                    expected.insert(choice.toInt());
-                const bool passed = answers_.value(static_cast<int>(i)) == expected;
-                if (passed) ++correct;
-                settings.setValue(QStringLiteral("practice/history/%1/%2").arg(
-                    providerId_, solutions.at(i).toObject().value("id").toString()),
-                    passed ? QStringLiteral("correct") : QStringLiteral("wrong"));
-            }
-            report.insert("correctCount", correct);
-        }
-        return {{"id", id}, {"result", report}};
-    }
-    if (dispatch == Method::Solutions) return {{"id", id}, {"result", QJsonObject{
-        {"materials", hostMaterials()}, {"solutions", hasAnswerKey_ ? hostQuestions(true) : QJsonArray{}}}}};
     return error(id, QStringLiteral("声明式题库不支持此操作：%1").arg(method));
 }
 

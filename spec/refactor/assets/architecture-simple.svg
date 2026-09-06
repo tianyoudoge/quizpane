@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 640" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <rect width="980" height="640" fill="#FFFFFF"/>
+  <text x="490" y="40" text-anchor="middle" font-size="24" font-weight="700" fill="#1A1A2E">QuizPane 分层架构（简单版）</text>
+  <text x="490" y="64" text-anchor="middle" font-size="13" fill="#6B7280">类比服务端：桌面外壳=网关/接入层，UI=表现层，应用服务=Controller，领域逻辑=Service，数据契约=Repository/DTO</text>
+
+  <!-- 桌面外壳层 -->
+  <rect x="30" y="86" width="920" height="72" rx="10" fill="#EEF1F5" stroke="#CBD2DB"/>
+  <text x="46" y="112" font-size="13" font-weight="700" fill="#4B5563">桌面外壳层 / Shell</text>
+  <text x="46" y="132" font-size="11" fill="#9AA3AF">进程接入·系统集成</text>
+  <g font-size="12" fill="#374151">
+    <rect x="300" y="100" width="140" height="44" rx="7" fill="#FFF" stroke="#B8C0CC"/><text x="370" y="127" text-anchor="middle">全局热键 / 老板键</text>
+    <rect x="452" y="100" width="140" height="44" rx="7" fill="#FFF" stroke="#B8C0CC"/><text x="522" y="127" text-anchor="middle">系统托盘</text>
+    <rect x="604" y="100" width="150" height="44" rx="7" fill="#FFF" stroke="#B8C0CC"/><text x="679" y="121" text-anchor="middle">窗口置顶 / 透明</text><text x="679" y="137" text-anchor="middle" font-size="10" fill="#9AA3AF">window_pinning</text>
+    <rect x="766" y="100" width="160" height="44" rx="7" fill="#FFF" stroke="#B8C0CC"/><text x="846" y="127" text-anchor="middle">自动更新</text>
+  </g>
+
+  <!-- 展示层 -->
+  <rect x="30" y="170" width="920" height="80" rx="10" fill="#E7F0FE" stroke="#A8C7FA"/>
+  <text x="46" y="196" font-size="13" font-weight="700" fill="#2563EB">展示层 / UI (Qt Widgets)</text>
+  <text x="46" y="216" font-size="11" fill="#93B4F0">表现层</text>
+  <g font-size="12.5" fill="#1E3A8A">
+    <rect x="300" y="184" width="190" height="52" rx="7" fill="#FFF" stroke="#7CA6F5"/><text x="395" y="205" text-anchor="middle" font-weight="600">刷题主窗口 MainWindow</text><text x="395" y="223" text-anchor="middle" font-size="10" fill="#7C93B8">desktop-qt</text>
+    <rect x="502" y="184" width="190" height="52" rx="7" fill="#FFF" stroke="#7CA6F5"/><text x="597" y="205" text-anchor="middle" font-weight="600">题库制作器 bank-studio</text><text x="597" y="223" text-anchor="middle" font-size="10" fill="#7C93B8">四步向导 StudioWindow</text>
+    <rect x="704" y="184" width="222" height="52" rx="7" fill="#FFF" stroke="#7CA6F5"/><text x="815" y="205" text-anchor="middle" font-weight="600">小窗视频镜像</text><text x="815" y="223" text-anchor="middle" font-size="10" fill="#7C93B8">ExternalWindowManager</text>
+  </g>
+
+  <!-- 应用服务层 -->
+  <rect x="30" y="262" width="920" height="80" rx="10" fill="#F0EBFE" stroke="#C4B5FD"/>
+  <text x="46" y="288" font-size="13" font-weight="700" fill="#7C3AED">应用服务层 / Services</text>
+  <text x="46" y="308" font-size="11" fill="#B7A5EC">Controller 编排</text>
+  <g font-size="12" fill="#4C1D95">
+    <rect x="300" y="276" width="150" height="52" rx="7" fill="#FFF" stroke="#B29CF3"/><text x="375" y="297" text-anchor="middle" font-weight="600">ProviderLoader</text><text x="375" y="315" text-anchor="middle" font-size="10" fill="#8B7BC4">RPC 适配 + 信号</text>
+    <rect x="462" y="276" width="150" height="52" rx="7" fill="#FFF" stroke="#B29CF3"/><text x="537" y="297" text-anchor="middle" font-weight="600">DraftStore</text><text x="537" y="315" text-anchor="middle" font-size="10" fill="#8B7BC4">草稿持久化</text>
+    <rect x="624" y="276" width="150" height="52" rx="7" fill="#FFF" stroke="#B29CF3"/><text x="699" y="297" text-anchor="middle" font-weight="600">BrowserBridge</text><text x="699" y="315" text-anchor="middle" font-size="10" fill="#8B7BC4">WebSocket 桥</text>
+    <rect x="786" y="276" width="140" height="52" rx="7" fill="#FFF" stroke="#B29CF3"/><text x="856" y="297" text-anchor="middle" font-weight="600">ProviderInstaller</text><text x="856" y="315" text-anchor="middle" font-size="10" fill="#8B7BC4">安装/校验</text>
+  </g>
+
+  <!-- 领域逻辑层 -->
+  <rect x="30" y="354" width="920" height="80" rx="10" fill="#E4F7EE" stroke="#8EE0BC"/>
+  <text x="46" y="380" font-size="13" font-weight="700" fill="#059669">领域逻辑层 / Domain</text>
+  <text x="46" y="400" font-size="11" fill="#7ECBA8">纯逻辑·可测试</text>
+  <g font-size="12" fill="#065F46">
+    <rect x="300" y="368" width="160" height="52" rx="7" fill="#FFF" stroke="#5FD0A0"/><text x="380" y="389" text-anchor="middle" font-weight="600">DeclarativeProvider</text><text x="380" y="407" text-anchor="middle" font-size="10" fill="#5A9E82">声明式题库 RPC</text>
+    <rect x="472" y="368" width="150" height="52" rx="7" fill="#FFF" stroke="#5FD0A0"/><text x="547" y="389" text-anchor="middle" font-weight="600">规则引擎</text><text x="547" y="407" text-anchor="middle" font-size="10" fill="#5A9E82">RuleBasedGenerator</text>
+    <rect x="634" y="368" width="150" height="52" rx="7" fill="#FFF" stroke="#5FD0A0"/><text x="709" y="389" text-anchor="middle" font-weight="600">文档提取</text><text x="709" y="407" text-anchor="middle" font-size="10" fill="#5A9E82">DocumentExtractor</text>
+    <rect x="796" y="368" width="130" height="52" rx="7" fill="#FFF" stroke="#5FD0A0"/><text x="861" y="389" text-anchor="middle" font-weight="600">bank_validator</text><text x="861" y="407" text-anchor="middle" font-size="10" fill="#5A9E82">契约校验</text>
+  </g>
+
+  <!-- 数据契约层 -->
+  <rect x="30" y="446" width="920" height="72" rx="10" fill="#FEF3E2" stroke="#F7CE8A"/>
+  <text x="46" y="472" font-size="13" font-weight="700" fill="#D97706">数据 / 契约层</text>
+  <text x="46" y="492" font-size="11" fill="#E3B67A">Repository·DTO</text>
+  <g font-size="12" fill="#92400E">
+    <rect x="300" y="460" width="140" height="44" rx="7" fill="#FFF" stroke="#F3C67C"/><text x="370" y="487" text-anchor="middle">bank.json</text>
+    <rect x="452" y="460" width="170" height="44" rx="7" fill="#FFF" stroke="#F3C67C"/><text x="537" y="481" text-anchor="middle">.quizpane-provider 包</text><text x="537" y="497" text-anchor="middle" font-size="10" fill="#B98A4A">manifest+bank+assets</text>
+    <rect x="634" y="460" width="140" height="44" rx="7" fill="#FFF" stroke="#F3C67C"/><text x="704" y="487" text-anchor="middle">草稿 JSON</text>
+    <rect x="786" y="460" width="140" height="44" rx="7" fill="#FFF" stroke="#F3C67C"/><text x="856" y="481" text-anchor="middle">QSettings</text><text x="856" y="497" text-anchor="middle" font-size="10" fill="#B98A4A">做题历史</text>
+  </g>
+
+  <!-- 平台外部层 -->
+  <rect x="30" y="530" width="920" height="72" rx="10" fill="#F3F4F6" stroke="#C0C5CE"/>
+  <text x="46" y="556" font-size="13" font-weight="700" fill="#4B5563">平台 / 外部依赖</text>
+  <text x="46" y="576" font-size="11" fill="#9AA3AF">系统 API·云服务</text>
+  <g font-size="12" fill="#374151">
+    <rect x="300" y="544" width="150" height="44" rx="7" fill="#FFF" stroke="#C0C5CE"/><text x="375" y="565" text-anchor="middle">C ABI 动态库插件</text><text x="375" y="580" text-anchor="middle" font-size="10" fill="#9AA3AF">provider_abi.h</text>
+    <rect x="462" y="544" width="140" height="44" rx="7" fill="#FFF" stroke="#C0C5CE"/><text x="532" y="571" text-anchor="middle">MinerU 云服务</text>
+    <rect x="614" y="544" width="160" height="44" rx="7" fill="#FFF" stroke="#C0C5CE"/><text x="694" y="565" text-anchor="middle">ScreenCaptureKit</text><text x="694" y="580" text-anchor="middle" font-size="10" fill="#9AA3AF">macOS 捕获</text>
+    <rect x="786" y="544" width="140" height="44" rx="7" fill="#FFF" stroke="#C0C5CE"/><text x="856" y="565" text-anchor="middle">Win32 置顶</text><text x="856" y="580" text-anchor="middle" font-size="10" fill="#9AA3AF">SetWindowPos</text>
+  </g>
+
+  <!-- 依赖方向箭头 -->
+  <defs><marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#9AA3AF"/></marker></defs>
+  <line x1="150" y1="170" x2="150" y2="600" stroke="#9AA3AF" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+  <text x="140" y="380" font-size="11" fill="#9AA3AF" transform="rotate(-90 140 380)">依赖方向（上层依赖下层，下层不反向依赖）</text>
+</svg>

@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 780" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <rect width="1180" height="780" fill="#FFFFFF"/>
+  <text x="590" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1A1A2E">接口类题库实现（复杂版）· C ABI 边界与异步回包</text>
+  <text x="590" y="55" text-anchor="middle" font-size="12" fill="#6B7280">provider_abi.h 定义 6 个导出符号 + Host 能力表；ProviderLoader 用静态 thunk 在 C 函数指针与 C++ 成员间桥接</text>
+
+  <defs>
+    <marker id="i1" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#5B6472"/></marker>
+    <marker id="i2" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#059669"/></marker>
+    <marker id="i3" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#7C3AED"/></marker>
+  </defs>
+
+  <!-- Host side -->
+  <rect x="30" y="76" width="500" height="640" rx="12" fill="#F5F9FF" stroke="#A8C7FA" stroke-width="1.5"/>
+  <text x="46" y="100" font-size="14" font-weight="700" fill="#2563EB">Host 进程（apps/desktop-qt）</text>
+
+  <rect x="50" y="116" width="460" height="70" rx="8" fill="#E7F0FE" stroke="#7CA6F5"/>
+  <text x="280" y="138" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1E3A8A">MainWindow</text>
+  <text x="280" y="157" text-anchor="middle" font-size="10.5" fill="#5573A8">connect(provider_, responseReceived, this, handleProviderResponse)</text>
+  <text x="280" y="173" text-anchor="middle" font-size="10.5" fill="#5573A8">request(QJsonObject) 发起 · 按 response.id 路由</text>
+
+  <rect x="50" y="200" width="460" height="150" rx="8" fill="#F0EBFE" stroke="#B29CF3"/>
+  <text x="280" y="222" text-anchor="middle" font-size="12.5" font-weight="700" fill="#4C1D95">ProviderLoader（C ABI ↔ Qt 适配器）</text>
+  <g font-size="10.5" fill="#4C1D95">
+    <text x="66" y="244">· QLibrary 加载 .dll/.so，resolve 6 个符号</text>
+    <text x="66" y="262">· request()：QJsonObject → UTF-8 → qp_provider_request(handle,...)</text>
+    <text x="66" y="280">· pendingRequests_：requestId → {method, 耗时}（不存题目/答案）</text>
+    <text x="66" y="298">· generation_：每次 load 递增；回包带旧代号则丢弃（防错路由）</text>
+    <text x="66" y="316">· responseThunk(userData) → 找回 this → acceptResponse</text>
+    <text x="66" y="334">· acceptResponse → emit responseReceived（主线程事件循环）</text>
+  </g>
+
+  <rect x="50" y="364" width="460" height="80" rx="8" fill="#E4F7EE" stroke="#5FD0A0"/>
+  <text x="280" y="386" text-anchor="middle" font-size="12.5" font-weight="700" fill="#065F46">Host 能力表 qp_host_api_v1（注入给 Provider）</text>
+  <g font-size="10.5" fill="#065F46">
+    <text x="66" y="406">· logThunk → DiagnosticLogger    · struct_size 保证向前兼容</text>
+    <text x="66" y="424">· secureRead/Write/DeleteThunk → SecretStore（Keychain/DPAPI）</text>
+    <text x="66" y="440" font-size="9.5" fill="#5A9E82">Provider 因而不直接依赖平台凭据 API，登录 Cookie 不进 Host 逻辑层</text>
+  </g>
+
+  <rect x="50" y="458" width="460" height="70" rx="8" fill="#FFF7E6" stroke="#F3C67C"/>
+  <text x="280" y="480" text-anchor="middle" font-size="12" font-weight="700" fill="#B45309">ProviderInstaller / DraftStore / QSettings</text>
+  <text x="280" y="499" text-anchor="middle" font-size="10.5" fill="#B98A4A">安装校验题库包 · 做题草稿 · 做题历史</text>
+  <text x="280" y="515" text-anchor="middle" font-size="10.5" fill="#B98A4A">凭据永不写入草稿文件</text>
+
+  <!-- ABI boundary -->
+  <rect x="548" y="90" width="64" height="620" rx="8" fill="#FEECEC" stroke="#F0A6A6"/>
+  <text x="580" y="400" text-anchor="middle" font-size="13" font-weight="700" fill="#B91C1C" transform="rotate(-90 580 400)">C ABI 边界（provider_abi.h · extern "C" · UTF-8 JSON）</text>
+
+  <!-- Provider side -->
+  <rect x="630" y="76" width="520" height="640" rx="12" fill="#F1FBF6" stroke="#8EE0BC" stroke-width="1.5"/>
+  <text x="646" y="100" font-size="14" font-weight="700" fill="#059669">Provider 动态库（独立编译单元）</text>
+
+  <rect x="650" y="116" width="480" height="120" rx="8" fill="#E4F7EE" stroke="#5FD0A0"/>
+  <text x="890" y="138" text-anchor="middle" font-size="12.5" font-weight="700" fill="#065F46">导出 6 个 C 符号</text>
+  <g font-size="10.5" fill="#065F46">
+    <text x="666" y="160">· qp_provider_abi_version() → 1u（版本协商）</text>
+    <text x="666" y="178">· qp_provider_descriptor_json() → 元信息</text>
+    <text x="666" y="196">· qp_provider_create(host, &amp;handle) → 注入能力表，建实例</text>
+    <text x="666" y="214">· qp_provider_request(handle, json, cb, userData) → 异步应答</text>
+    <text x="666" y="232">· qp_provider_cancel(handle, requestId) · qp_provider_destroy(handle)</text>
+  </g>
+
+  <!-- built-in declarative -->
+  <rect x="650" y="250" width="480" height="180" rx="8" fill="#FFF" stroke="#5FD0A0"/>
+  <text x="890" y="272" text-anchor="middle" font-size="12.5" font-weight="700" fill="#065F46">实现A · 内置 DeclarativeProvider（bank.json 驱动）</text>
+  <g font-size="10.5" fill="#065F46">
+    <text x="666" y="294">load()：findManifest → readObject(bank) → validateBankDetailed</text>
+    <text x="666" y="312">expandSectionCatalogs：单 catalog+sectionId 内存展开成每套一 catalog</text>
+    <text x="666" y="330">questionCountByCatalog_ 预算索引（catalog.list O(题+类)）</text>
+    <text x="666" y="348">request() 分发 9 方法（同步返回，见做题复杂版泳道图）：</text>
+    <text x="682" y="366" font-size="9.5" fill="#5A9E82">initialize/capabilities/catalog.list/attempt.create/</text>
+    <text x="682" y="382" font-size="9.5" fill="#5A9E82">attempt.questions/saveAnswers/submit/report/solutions</text>
+    <text x="666" y="402">buildUnits：题组(materialId)整体成不可拆单元，不重排</text>
+    <text x="666" y="420" font-size="9.5" fill="#5A9E82">hostQuestions 把 stem/options 转 HTML；仅含答案库返回 solution</text>
+  </g>
+
+  <!-- 3rd party -->
+  <rect x="650" y="444" width="480" height="140" rx="8" fill="#FFF" stroke="#7CA6F5"/>
+  <text x="890" y="466" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1E3A8A">实现B · 第三方插件（如 providers/demo）</text>
+  <g font-size="10.5" fill="#5573A8">
+    <text x="666" y="488">· 自行维护 handle 状态与登录会话</text>
+    <text x="666" y="506">· request() 内发起 HTTP 抓远端题库，异步返回</text>
+    <text x="666" y="524">· 通过 host->secure_* 让 Host 代管凭据</text>
+    <text x="666" y="542">· cancel() 按 requestId 取消未完成网络操作</text>
+    <text x="666" y="560" font-size="9.5" fill="#7C93B8">回包在网络线程 → callback；Loader 用 generation 代号过滤陈旧响应</text>
+  </g>
+
+  <rect x="650" y="598" width="480" height="100" rx="8" fill="#FFF7E6" stroke="#F3C67C"/>
+  <text x="890" y="620" text-anchor="middle" font-size="12" font-weight="700" fill="#B45309">异步回包机制</text>
+  <g font-size="10.5" fill="#B98A4A">
+    <text x="666" y="642">Provider 完成 → 调用传入的 qp_response_callback(userData, json, size)</text>
+    <text x="666" y="660">→ responseThunk 从 userData 找回 ProviderLoader 实例</text>
+    <text x="666" y="678">→ acceptResponse(json, generation) → 校验代号 → emit Qt 信号</text>
+  </g>
+
+  <!-- arrows across boundary -->
+  <path d="M 510 240 L 648 176" stroke="#5B6472" stroke-width="1.6" marker-end="url(#i1)"/>
+  <text x="540" y="205" font-size="10" fill="#5B6472">request</text>
+  <path d="M 648 640 L 510 260" stroke="#059669" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#i2)"/>
+  <text x="600" y="470" font-size="10" fill="#059669" transform="rotate(-64 600 470)">callback 回包</text>
+  <path d="M 648 500 L 512 400" stroke="#7C3AED" stroke-width="1.4" stroke-dasharray="3 2" marker-end="url(#i3)"/>
+  <text x="560" y="455" font-size="10" fill="#7C3AED">host-&gt;secure_*</text>
+</svg>

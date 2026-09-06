@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 520" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <rect width="940" height="520" fill="#FFFFFF"/>
+  <text x="470" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1A1A2E">小窗视频镜像（简单版）· macOS vs Windows</text>
+  <text x="470" y="56" text-anchor="middle" font-size="12" fill="#6B7280">同一 ExternalWindowManager 接口，两平台后端策略不同</text>
+
+  <defs><marker id="va" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#5B6472"/></marker></defs>
+
+  <!-- browser + bridge -->
+  <rect x="330" y="80" width="280" height="56" rx="10" fill="#FDEEF4" stroke="#F0A6C6"/>
+  <text x="470" y="103" text-anchor="middle" font-size="12.5" font-weight="700" fill="#BE185D">浏览器扩展 → BrowserBridge</text>
+  <text x="470" y="122" text-anchor="middle" font-size="10.5" fill="#9D174D">WebSocket 上报视频/窗口状态</text>
+
+  <rect x="330" y="160" width="280" height="56" rx="10" fill="#E7F0FE" stroke="#7CA6F5"/>
+  <text x="470" y="183" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1E3A8A">ExternalWindowManager</text>
+  <text x="470" y="202" text-anchor="middle" font-size="10.5" fill="#5573A8">attach(request) · 统一入口（PIMPL）</text>
+
+  <!-- split -->
+  <line x1="470" y1="136" x2="470" y2="156" stroke="#5B6472" stroke-width="1.6" marker-end="url(#va)"/>
+  <path d="M 400 216 L 250 256" stroke="#5B6472" stroke-width="1.6" fill="none" marker-end="url(#va)"/>
+  <path d="M 540 216 L 690 256" stroke="#5B6472" stroke-width="1.6" fill="none" marker-end="url(#va)"/>
+
+  <!-- macOS -->
+  <rect x="60" y="266" width="380" height="200" rx="12" fill="#F1FBF6" stroke="#8EE0BC"/>
+  <text x="250" y="290" text-anchor="middle" font-size="13.5" font-weight="700" fill="#059669">macOS · 画面捕获镜像</text>
+  <text x="250" y="311" text-anchor="middle" font-size="10.5" fill="#0F9D6B">MacCapturedReplica</text>
+  <g font-size="11" fill="#065F46" text-anchor="middle">
+    <rect x="82" y="326" width="336" height="34" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="250" y="348">ScreenCaptureKit 捕获源窗口画面</text>
+    <rect x="82" y="368" width="336" height="34" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="250" y="390">渲染到自己的置顶窗口（镜像帧）</text>
+    <rect x="82" y="410" width="336" height="42" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="250" y="428">需"屏幕录制"权限</text><text x="250" y="444" font-size="9.5" fill="#5A9E82">可交互：手势转发回浏览器控制播放</text>
+  </g>
+
+  <!-- Windows -->
+  <rect x="500" y="266" width="380" height="200" rx="12" fill="#F5F9FF" stroke="#A8C7FA"/>
+  <text x="690" y="290" text-anchor="middle" font-size="13.5" font-weight="700" fill="#2563EB">Windows · 原生窗口置顶</text>
+  <text x="690" y="311" text-anchor="middle" font-size="10.5" fill="#3B7DDD">WindowsNativeTopmost</text>
+  <g font-size="11" fill="#1E3A8A" text-anchor="middle">
+    <rect x="522" y="326" width="336" height="34" rx="6" fill="#FFF" stroke="#7CA6F5"/><text x="690" y="348">EnumWindows 定位浏览器 popup</text>
+    <rect x="522" y="368" width="336" height="34" rx="6" fill="#FFF" stroke="#7CA6F5"/><text x="690" y="390">SetWindowPos(HWND_TOPMOST) 直接置顶</text>
+    <rect x="522" y="410" width="336" height="42" rx="6" fill="#FFF" stroke="#7CA6F5"/><text x="690" y="428">不复制画面（无需录屏权限）</text><text x="690" y="444" font-size="9.5" fill="#5573A8">50ms 轮询重试至 2s：等 popup 就绪</text>
+  </g>
+
+  <text x="470" y="498" text-anchor="middle" font-size="11" fill="#9AA3AF">两者都：单向状态机 Idle→ResolvingTarget→Active；源窗口丢失→Recovering 自动重连；Linux 后端预留未启用</text>
+</svg>

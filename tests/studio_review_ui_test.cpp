@@ -1,6 +1,6 @@
 #include "studio_window.hpp"
-#include "mineru_settings_dialog.hpp"
-#include "review_image_utils.hpp"
+#include "ui/mineru_settings_dialog.hpp"
+#include "review/review_image_utils.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -178,33 +178,33 @@ public:
         candidate.needsReviewQuestions = {
             question("q4", "hard", "missing-answer", QStringLiteral("未识别到答案")),
             question("q5", "hard", "duplicate", QStringLiteral("疑似重复"))};
-        window.populateReview(candidate);
+        window.reviewController_.populateReview(candidate);
         window.pages_->setCurrentIndex(2);
         window.resize(1040, 800);
         window.show();
         app.processEvents();
-        if (window.reviewTree_->header()->viewport()->height() <
-            window.reviewTree_->header()->fontMetrics().height()) return 14;
-        auto* group = window.reviewTree_->topLevelItem(0);
+        if (window.reviewController_.reviewTree_->header()->viewport()->height() <
+            window.reviewController_.reviewTree_->header()->fontMetrics().height()) return 14;
+        auto* group = window.reviewController_.reviewTree_->topLevelItem(0);
         auto chips = window.findChildren<QPushButton*>(QStringLiteral("reviewCategoryChip"));
         if (!chips.isEmpty()) return 1;
-        if (!window.allReviewButton_->isChecked() ||
-            !window.allReviewButton_->text().endsWith("2") ||
-            !window.allQuestionsButton_->text().endsWith("5") ||
+        if (!window.reviewController_.allReviewButton_->isChecked() ||
+            !window.reviewController_.allReviewButton_->text().endsWith("2") ||
+            !window.reviewController_.allQuestionsButton_->text().endsWith("5") ||
             !group->child(0)->isHidden() || !group->child(1)->isHidden() ||
             group->child(3)->isHidden() || group->child(4)->isHidden() ||
             group->child(1)->checkState(0) != Qt::Checked) return 2;
-        window.allReviewButton_->click();  // Active tabs cannot silently toggle filtering off.
-        if (!window.allReviewButton_->isChecked() || !group->child(0)->isHidden()) return 3;
-        if (!window.missingAnswerButton_->isHidden() || !window.duplicateButton_->isHidden()) return 4;
-        window.allQuestionsButton_->click();
+        window.reviewController_.allReviewButton_->click();  // Active tabs cannot silently toggle filtering off.
+        if (!window.reviewController_.allReviewButton_->isChecked() || !group->child(0)->isHidden()) return 3;
+        if (!window.reviewController_.missingAnswerButton_->isHidden() || !window.reviewController_.duplicateButton_->isHidden()) return 4;
+        window.reviewController_.allQuestionsButton_->click();
         for (int i = 0; i < group->childCount(); ++i)
             if (group->child(i)->isHidden()) return 7;
 
         // 精确回归真实事故：大量图片/OCR 软提示题必须保持收录；用户编辑并
         // 确认一个硬问题后，不能让最终打包输入退化成只剩当前这一题。
-        window.showReviewQuestion(group->child(3));
-        window.confirmCurrentReviewQuestion();
+        window.reviewController_.showReviewQuestion(group->child(3));
+        window.reviewController_.confirmCurrentReviewQuestion();
         int selectedAfterSingleEdit = 0;
         for (int i = 0; i < group->childCount(); ++i)
             if (group->child(i)->checkState(0) == Qt::Checked)
@@ -212,11 +212,11 @@ public:
         if (selectedAfterSingleEdit != 4 ||
             group->child(1)->checkState(0) != Qt::Checked ||
             group->child(2)->checkState(0) != Qt::Checked ||
-            window.currentReviewItem_ != group->child(4) ||
-            window.confirmReviewButton_->text() != QStringLiteral("保存并收录")) return 25;
+            window.reviewController_.currentReviewItem_ != group->child(4) ||
+            window.reviewController_.confirmReviewButton_->text() != QStringLiteral("保存并收录")) return 25;
 
         bool hasSimpleSummary = false;
-        for (auto* label : window.riskCategoryPanel_->findChildren<QLabel*>())
+        for (auto* label : window.reviewController_.riskCategoryPanel_->findChildren<QLabel*>())
             if (label->text().contains(QStringLiteral("还有 1 题需要决定")) && label->wordWrap())
                 hasSimpleSummary = true;
         if (!hasSimpleSummary || window.nextButton_->text() != QStringLiteral("继续生成（收录 4 题） →") ||
@@ -225,8 +225,8 @@ public:
         // Optional real-widget screenshots, without adding user fixtures to the repository.
         const QString previewDir = qEnvironmentVariable("QUIZPANE_UI_PREVIEW_DIR");
         if (!previewDir.isEmpty()) {
-            window.allReviewButton_->click();
-            window.reviewTree_->setCurrentItem(group->child(4));
+            window.reviewController_.allReviewButton_->click();
+            window.reviewController_.reviewTree_->setCurrentItem(group->child(4));
             for (const QString& theme : {QStringLiteral("dark"), QStringLiteral("light")}) {
                 QSettings settings(QStringLiteral("QuizPane Project"), QStringLiteral("题库制作器"));
                 settings.setValue(QStringLiteral("ui/colorTheme"), theme);
@@ -235,20 +235,20 @@ public:
                 if (!window.grab().save(QDir(previewDir).filePath(theme + ".png"))) return 9;
             }
         }
-        window.excludeCurrentReviewQuestion();
-        if (!window.allQuestionsButton_->isChecked() ||
-            window.allReviewButton_->text() != QStringLiteral("需要处理  0") ||
+        window.reviewController_.excludeCurrentReviewQuestion();
+        if (!window.reviewController_.allQuestionsButton_->isChecked() ||
+            window.reviewController_.allReviewButton_->text() != QStringLiteral("需要处理  0") ||
             window.nextButton_->text() != QStringLiteral("继续生成（收录 4 题） →")) return 30;
         // Rebuilding must delete old nested rows/buttons and their group membership.
-        window.populateReview(candidate);
+        window.reviewController_.populateReview(candidate);
         if (!window.findChildren<QPushButton*>(QStringLiteral("reviewCategoryChip")).isEmpty() ||
-            window.reviewFilterGroup_->buttons().size() != 4) return 11;
+            window.reviewController_.reviewFilterGroup_->buttons().size() != 4) return 11;
         candidate.questions = {question("q1")};
         candidate.needsReviewQuestions = {};
         candidate.hasAnswerKey = false;
-        window.populateReview(candidate);
-        if (window.riskCategoryPanel_->isHidden() || !window.missingAnswerButton_->isHidden() ||
-            !window.allQuestionsButton_->isChecked() || window.reviewFilterGroup_->buttons().size() != 4)
+        window.reviewController_.populateReview(candidate);
+        if (window.reviewController_.riskCategoryPanel_->isHidden() || !window.reviewController_.missingAnswerButton_->isHidden() ||
+            !window.reviewController_.allQuestionsButton_->isChecked() || window.reviewController_.reviewFilterGroup_->buttons().size() != 4)
             return 12;
 
         // A matching material must not hide its own matching child questions.
@@ -258,9 +258,9 @@ public:
         candidate.materials = {QJsonObject{{"id", "m1"}, {"title", "材料"}, {"text", "材料正文"},
             {"review", QJsonObject{{"needsReview", true}, {"riskLevel", "soft"},
                 {"signals", QJsonArray{"image-content"}}}}}};
-        window.populateReview(candidate);
-        window.allQuestionsButton_->click();
-        auto* material = window.reviewTree_->topLevelItem(0);
+        window.reviewController_.populateReview(candidate);
+        window.reviewController_.allQuestionsButton_->click();
+        auto* material = window.reviewController_.reviewTree_->topLevelItem(0);
         if (material->isHidden() || material->child(0)->isHidden()) return 13;
         candidate.materials = {};
         candidate.questions = {};
@@ -270,13 +270,13 @@ public:
                 QStringLiteral("原第 152 题 · 同号第 %1 处").arg(i)}});
             candidate.questions.append(q);
         }
-        window.populateReview(candidate);
-        auto* first = window.reviewTree_->topLevelItem(0)->child(0);
-        auto* second = window.reviewTree_->topLevelItem(0)->child(1);
+        window.reviewController_.populateReview(candidate);
+        auto* first = window.reviewController_.reviewTree_->topLevelItem(0)->child(0);
+        auto* second = window.reviewController_.reviewTree_->topLevelItem(0)->child(1);
         if (first->text(0) == second->text(0) || !second->text(0).contains(QStringLiteral("同号第 2 处"))) return 15;
-        window.showReviewQuestion(second);
-        if (window.reviewDetailTitle_->text() != second->text(0)) return 16;
-        if (window.reviewTree_->textElideMode() != Qt::ElideMiddle ||
+        window.reviewController_.showReviewQuestion(second);
+        if (window.reviewController_.reviewDetailTitle_->text() != second->text(0)) return 16;
+        if (window.reviewController_.reviewTree_->textElideMode() != Qt::ElideMiddle ||
             first->toolTip(0) != first->text(0) || second->toolTip(0) != second->text(0)) return 18;
         if (!previewDir.isEmpty()) {
             app.processEvents();
@@ -287,7 +287,7 @@ public:
         if (removeButtons.size() != 2 || removeButtons.first()->text() != QStringLiteral("删除")) return 5;
         removeButtons.first()->click();
         app.processEvents();
-        if (window.reviewOptionEditors_.size() != 1) return 6;
+        if (window.reviewController_.reviewOptionEditors_.size() != 1) return 6;
 
         // 内部填空标记在校对页必须显示为真实横线，且未编辑直接保存时仍写回
         // 稳定的 schema 标记，不能把“〔填空〕”文案直接暴露给用户。
@@ -295,12 +295,12 @@ public:
         fill.insert(QStringLiteral("stem"), QStringLiteral("青色文化〔填空〕，又显得〔填空〕了。"));
         candidate.questions = {fill};
         candidate.needsReviewQuestions = {};
-        window.populateReview(candidate);
-        auto* fillItem = window.reviewTree_->topLevelItem(0)->child(0);
-        window.showReviewQuestion(fillItem);
-        if (window.reviewStemEditor_->toPlainText().contains(QStringLiteral("〔填空〕")) ||
-            window.reviewStemEditor_->toPlainText().count(QStringLiteral("＿＿＿＿")) != 2 ||
-            window.reviewQuestionIsDirty() || !window.saveCurrentReviewQuestion() ||
+        window.reviewController_.populateReview(candidate);
+        auto* fillItem = window.reviewController_.reviewTree_->topLevelItem(0)->child(0);
+        window.reviewController_.showReviewQuestion(fillItem);
+        if (window.reviewController_.reviewStemEditor_->toPlainText().contains(QStringLiteral("〔填空〕")) ||
+            window.reviewController_.reviewStemEditor_->toPlainText().count(QStringLiteral("＿＿＿＿")) != 2 ||
+            window.reviewController_.reviewQuestionIsDirty() || !window.reviewController_.saveCurrentReviewQuestion() ||
             fillItem->data(0, Qt::UserRole).toJsonObject().value(QStringLiteral("stem"))
                 .toString().count(QStringLiteral("〔填空〕")) != 2) return 32;
 
@@ -320,10 +320,10 @@ public:
         candidate.needsReviewQuestions = {};
         candidate.reviewSourceImages = {{QStringLiteral("q7"), preview}};
         candidate.reviewAssets = {{previewPath, sourceBytes}};
-        window.populateReview(candidate);
-        auto* previewItem = window.reviewTree_->topLevelItem(0)->child(0);
-        window.reviewTree_->setCurrentItem(previewItem);
-        window.showReviewQuestion(previewItem);
+        window.reviewController_.populateReview(candidate);
+        auto* previewItem = window.reviewController_.reviewTree_->topLevelItem(0)->child(0);
+        window.reviewController_.reviewTree_->setCurrentItem(previewItem);
+        window.reviewController_.showReviewQuestion(previewItem);
         auto* recrop = window.findChild<QPushButton*>(QStringLiteral("reviewActionButton"));
         if (!recrop || recrop->isHidden() || !recrop->isEnabled() ||
             recrop->text() != QStringLiteral("调整原卷区域")) return 34;
@@ -338,11 +338,11 @@ public:
         const QImage flattenedPage = flattenReviewPage(transparentPage);
         if (flattenedPage.hasAlphaChannel() || flattenedPage.pixelColor(0, 0) != QColor(Qt::white) ||
             flattenedPage.pixelColor(10, 10) != QColor(Qt::black)) return 38;
-        if (!window.commitReviewCrop(preview, sourcePage, QRectF(0.10, 0.10, 0.50, 0.50)) ||
-            window.reviewAssets_.value(previewPath) == sourceBytes ||
-            window.reviewSourceImages_.value(QStringLiteral("q7")).value(QStringLiteral("crop"))
+        if (!window.reviewController_.commitReviewCrop(preview, sourcePage, QRectF(0.10, 0.10, 0.50, 0.50)) ||
+            window.reviewController_.reviewAssets_.value(previewPath) == sourceBytes ||
+            window.reviewController_.reviewSourceImages_.value(QStringLiteral("q7")).value(QStringLiteral("crop"))
                 .toObject().value(QStringLiteral("width")).toDouble() != 0.50 ||
-            window.generatedAssets_.contains(previewPath)) return 35;
+            window.reviewController_.generatedAssets_.contains(previewPath)) return 35;
 
 #ifdef QUIZPANE_HAS_QT_PDF
         // 大题本的普通题只携带页码和 bbox；选中题目时才渲染当前校对图，
@@ -369,24 +369,24 @@ public:
         candidate.needsReviewQuestions = {};
         candidate.reviewSourceImages = {{QStringLiteral("q8"), lazyPreview}};
         candidate.reviewAssets = {};
-        window.populateReview(candidate);
-        auto* lazyItem = window.reviewTree_->topLevelItem(0)->child(0);
-        window.showReviewQuestion(lazyItem);
-        if (window.reviewAssets_.contains(lazyPath) ||
-            window.lazyReviewAssets_.isEmpty() ||
-            window.ensureReviewAssetBytes(lazyPreview).isEmpty() ||
-            window.reviewVisualPanel_->isHidden()) return 43;
-        const QByteArray lazyBytes = window.ensureReviewAssetBytes(lazyPreview);
-        window.lazyReviewAssets_.setMaxCost(0);
-        if (!window.lazyReviewAssets_.isEmpty() ||
-            window.ensureReviewAssetBytes(lazyPreview) != lazyBytes ||
-            !window.lazyReviewAssets_.isEmpty()) return 44;
+        window.reviewController_.populateReview(candidate);
+        auto* lazyItem = window.reviewController_.reviewTree_->topLevelItem(0)->child(0);
+        window.reviewController_.showReviewQuestion(lazyItem);
+        if (window.reviewController_.reviewAssets_.contains(lazyPath) ||
+            window.reviewController_.lazyReviewAssets_.isEmpty() ||
+            window.reviewController_.ensureReviewAssetBytes(lazyPreview).isEmpty() ||
+            window.reviewController_.reviewVisualPanel_->isHidden()) return 43;
+        const QByteArray lazyBytes = window.reviewController_.ensureReviewAssetBytes(lazyPreview);
+        window.reviewController_.lazyReviewAssets_.setMaxCost(0);
+        if (!window.reviewController_.lazyReviewAssets_.isEmpty() ||
+            window.reviewController_.ensureReviewAssetBytes(lazyPreview) != lazyBytes ||
+            !window.reviewController_.lazyReviewAssets_.isEmpty()) return 44;
         // Manual edits are not disposable, even if the descriptor still carries
         // lazyReview from its original automatic preview.
-        window.reviewAssets_.insert(lazyPath, sourceBytes);
-        if (window.ensureReviewAssetBytes(lazyPreview) != sourceBytes) return 45;
-        window.reviewAssets_.remove(lazyPath);
-        window.lazyReviewAssets_.setMaxCost(16 * 1024);
+        window.reviewController_.reviewAssets_.insert(lazyPath, sourceBytes);
+        if (window.reviewController_.ensureReviewAssetBytes(lazyPreview) != sourceBytes) return 45;
+        window.reviewController_.reviewAssets_.remove(lazyPath);
+        window.reviewController_.lazyReviewAssets_.setMaxCost(16 * 1024);
 
         ReviewPdfCache pages(24 * 1024);
         QString pageError;
@@ -404,23 +404,23 @@ public:
         // Invalid sources must never reuse a previously cached PDF page.
         if (!pages.renderPage(sourceDir.filePath("missing.pdf"), 1, &pageError).isNull() ||
             pageError.isEmpty()) return 50;
-        if (!window.reviewTree_->updatesEnabled()) return 51;
+        if (!window.reviewController_.reviewTree_->updatesEnabled()) return 51;
 #endif
 
         // 开始下一次整理前必须释放上一批完整候选与逐题校对图，避免低内存
         // Windows 在“旧复核结果 + 新任务中间产物”同时驻留时触发分配失败。
-        window.generatedAssets_.insert(QStringLiteral("assets/formal.png"), sourceBytes);
-        window.pendingCropAsset_ = preview;
-        window.pendingCropPage_ = sourcePage;
-        window.discardPreviousGenerationForNewTask();
-        if (!window.generatedMaterials_.isEmpty() || !window.generatedQuestions_.isEmpty() ||
-            !window.reviewQuestions_.isEmpty() || !window.generatedAssets_.isEmpty() ||
-            !window.reviewSourceImages_.isEmpty() || !window.reviewAssets_.isEmpty() ||
-            !window.lazyReviewAssets_.isEmpty() || window.reviewPdfCache_.cachedKiB() != 0 ||
-            !window.pendingCropAsset_.isEmpty() || !window.pendingCropPage_.isNull() ||
-            window.currentReviewItem_ || window.currentMaterialItem_ ||
-            window.reviewTree_->topLevelItemCount() != 0 ||
-            !window.reviewOptionEditors_.isEmpty() || !window.reviewVisualPanel_->isHidden())
+        window.reviewController_.generatedAssets_.insert(QStringLiteral("assets/formal.png"), sourceBytes);
+        window.reviewController_.pendingCropAsset_ = preview;
+        window.reviewController_.pendingCropPage_ = sourcePage;
+        window.reviewController_.discardForNewTask();
+        if (!window.reviewController_.generatedMaterials_.isEmpty() || !window.reviewController_.generatedQuestions_.isEmpty() ||
+            !window.reviewController_.reviewQuestions_.isEmpty() || !window.reviewController_.generatedAssets_.isEmpty() ||
+            !window.reviewController_.reviewSourceImages_.isEmpty() || !window.reviewController_.reviewAssets_.isEmpty() ||
+            !window.reviewController_.lazyReviewAssets_.isEmpty() || window.reviewController_.reviewPdfCache_.cachedKiB() != 0 ||
+            !window.reviewController_.pendingCropAsset_.isEmpty() || !window.reviewController_.pendingCropPage_.isNull() ||
+            window.reviewController_.currentReviewItem_ || window.reviewController_.currentMaterialItem_ ||
+            window.reviewController_.reviewTree_->topLevelItemCount() != 0 ||
+            !window.reviewController_.reviewOptionEditors_.isEmpty() || !window.reviewController_.reviewVisualPanel_->isHidden())
             return 40;
         return 0;
     }

@@ -1,34 +1,26 @@
 #pragma once
 
 #include <QHash>
-#include <QCache>
-#include "review_image_utils.hpp"
-#include <QImage>
 #include <QMainWindow>
-#include "mineru_settings_dialog.hpp"
 #include "quizpane/studio/generation_workflow.hpp"
 #include "quizpane/studio/review_result.hpp"
+#include "review/review_page_controller.hpp"
+#include "ui/mineru_settings_dialog.hpp"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
-#include <QSet>
 #include <QStringList>
 
-#include <memory>
 #include <optional>
 
 class QLabel;
-class QButtonGroup;
 class QCheckBox;
 class QFrame;
 class QLineEdit;
-class QPlainTextEdit;
-class QTextEdit;
 class QProgressBar;
 class QPushButton;
 class QScrollArea;
 class QStackedWidget;
-class QTreeWidget;
 class QTreeWidgetItem;
 class QVBoxLayout;
 class QHBoxLayout;
@@ -63,7 +55,6 @@ private:
     friend class StudioWindowReviewTest;
     QWidget* buildSourcePage();
     QWidget* buildProgressPage();
-    QWidget* buildReviewPage();
     QWidget* buildFinishPage();
     QWidget* pageHeader(const QString& eyebrow, const QString& title,
                         const QString& description);
@@ -137,40 +128,6 @@ private:
     QLabel* reviewCount_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
     QLabel* progressStatus_ = nullptr;
-    QTreeWidget* reviewTree_ = nullptr;
-    QLabel* reviewDetailTitle_ = nullptr;
-    QLabel* reviewDetailStatus_ = nullptr;
-    QLabel* reviewStemLabel_ = nullptr;
-    QTextEdit* reviewStemEditor_ = nullptr;
-    QWidget* reviewQuestionEditorPanel_ = nullptr;
-    QWidget* reviewOptionsPanel_ = nullptr;
-    QVBoxLayout* reviewOptionsLayout_ = nullptr;
-    QList<QLineEdit*> reviewOptionEditors_;
-    QLabel* reviewAnswerLabel_ = nullptr;
-    QLineEdit* reviewAnswerEditor_ = nullptr;
-    QLabel* reviewSolutionLabel_ = nullptr;
-    QPlainTextEdit* reviewSolutionEditor_ = nullptr;
-    QWidget* reviewVisualPanel_ = nullptr;
-    QVBoxLayout* reviewVisualLayout_ = nullptr;
-    QPushButton* confirmReviewButton_ = nullptr;
-    QPushButton* excludeReviewButton_ = nullptr;
-    QTreeWidgetItem* currentReviewItem_ = nullptr;
-    QTreeWidgetItem* currentMaterialItem_ = nullptr;
-    QPushButton* manualMaterialUnderlineButton_ = nullptr;
-    QJsonObject pendingCropAsset_;
-    QImage pendingCropPage_;
-    QPushButton* allReviewButton_ = nullptr;
-    QPushButton* allQuestionsButton_ = nullptr;
-    QButtonGroup* reviewFilterGroup_ = nullptr;
-    QPushButton* missingAnswerButton_ = nullptr;
-    QPushButton* duplicateButton_ = nullptr;
-    // 顶部分类与风险类别共用一个互斥组；空条件明确对应“全部题目”。
-    QString activeReviewFilter_;
-    // 复核页里按 riskLevel=soft 信号分组展示的批量确认区域，随每次 populateReview
-    // 重建；数量、按钮和信号 key 一一对应，用于点击后批量勾选同类题目。
-    QVBoxLayout* riskCategoryLayout_ = nullptr;
-    QWidget* riskCategoryPanel_ = nullptr;
-    QLabel* reviewSummary_ = nullptr;
     QLabel* finishPath_ = nullptr;
     QLineEdit* bankName_ = nullptr;
     StyledDropdown* questionCount_ = nullptr;
@@ -196,15 +153,9 @@ private:
     QHash<QString, QString> answerPathsByQuestion_;
     QHash<QString, AnswerPolicyHint> answerPolicyByQuestion_;
     QHash<QString, SourceRowWidget*> sourceRows_;
-    QJsonArray generatedMaterials_;
-    QJsonArray generatedQuestions_;
-    QJsonArray reviewQuestions_;
-    QHash<QString, QByteArray> generatedAssets_;
-    QHash<QString, QJsonObject> reviewSourceImages_;
-    QHash<QString, QByteArray> reviewAssets_;
-    QCache<QString, QByteArray> lazyReviewAssets_{16 * 1024}; // KiB; rebuildable only
-    ReviewPdfCache reviewPdfCache_;
-    bool generatedHasAnswerKey_ = true;
+
+    // 第三步复核页及其所有控件、数据和逻辑。
+    ReviewPageController reviewController_;
 };
 
 }  // namespace quizpane::studio

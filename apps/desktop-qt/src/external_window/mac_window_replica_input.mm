@@ -1,3 +1,7 @@
+// 职责：镜像窗口（QPMirrorView）的鼠标/手势事件捕获，以及把这些事件
+// 换算成归一化坐标后转发给 QPMacReplicaController，再由其上抛为
+// videoControlRequested 信号（用于反向控制源网页视频播放）。
+
 #include "mac_window_replica_controller.hpp"
 #include "quizpane/diagnostic_logger.hpp"
 

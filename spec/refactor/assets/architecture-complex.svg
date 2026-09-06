@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 900" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <rect width="1240" height="900" fill="#FFFFFF"/>
+  <text x="620" y="38" text-anchor="middle" font-size="24" font-weight="700" fill="#1A1A2E">QuizPane 组件架构（复杂版）</text>
+  <text x="620" y="60" text-anchor="middle" font-size="12.5" fill="#6B7280">两个可执行程序（desktop-qt 刷题端 · bank-studio 制作端）+ 共享核心库；实线=直接调用/依赖，虚线=进程间/异步通信</text>
+
+  <defs>
+    <marker id="a2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#5B6472"/></marker>
+    <marker id="a2b" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#7C3AED"/></marker>
+    <marker id="a2g" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#059669"/></marker>
+  </defs>
+
+  <!-- ============ desktop-qt 刷题端 ============ -->
+  <rect x="24" y="80" width="600" height="470" rx="12" fill="#F7F9FC" stroke="#B9C4D2" stroke-width="1.5"/>
+  <text x="40" y="104" font-size="15" font-weight="700" fill="#2563EB">apps/desktop-qt · 刷题端（可执行程序）</text>
+
+  <!-- MainWindow -->
+  <rect x="42" y="118" width="264" height="70" rx="8" fill="#E7F0FE" stroke="#7CA6F5"/>
+  <text x="174" y="142" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1E3A8A">MainWindow（主控制器 2987行）</text>
+  <text x="174" y="161" text-anchor="middle" font-size="10.5" fill="#5573A8">登录→目录→做题→交卷→解析 页面状态机</text>
+  <text x="174" y="177" text-anchor="middle" font-size="10.5" fill="#5573A8">QStackedWidget 承载 5 个页面</text>
+
+  <!-- UI 子组件 -->
+  <rect x="322" y="118" width="284" height="70" rx="8" fill="#FFF" stroke="#7CA6F5"/>
+  <text x="464" y="139" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A8A">UI 子组件</text>
+  <text x="464" y="157" text-anchor="middle" font-size="10.5" fill="#5573A8">QuestionNavigator · MaterialCard</text>
+  <text x="464" y="173" text-anchor="middle" font-size="10.5" fill="#5573A8">ResultImagePreview · 长图导出</text>
+
+  <!-- AppServices -->
+  <rect x="42" y="200" width="564" height="88" rx="8" fill="#F0EBFE" stroke="#B29CF3"/>
+  <text x="56" y="221" font-size="12.5" font-weight="700" fill="#4C1D95">AppServices（值成员，析构逆序）</text>
+  <g font-size="11" fill="#4C1D95">
+    <rect x="56" y="230" width="130" height="46" rx="6" fill="#FFF" stroke="#B29CF3"/><text x="121" y="250" text-anchor="middle" font-weight="600">ProviderLoader</text><text x="121" y="266" text-anchor="middle" font-size="9.5" fill="#8B7BC4">C ABI↔Qt信号+代号</text>
+    <rect x="196" y="230" width="120" height="46" rx="6" fill="#FFF" stroke="#B29CF3"/><text x="256" y="250" text-anchor="middle" font-weight="600">DraftStore</text><text x="256" y="266" text-anchor="middle" font-size="9.5" fill="#8B7BC4">QSaveFile 原子写</text>
+    <rect x="326" y="230" width="130" height="46" rx="6" fill="#FFF" stroke="#B29CF3"/><text x="391" y="250" text-anchor="middle" font-weight="600">ProviderInstaller</text><text x="391" y="266" text-anchor="middle" font-size="9.5" fill="#8B7BC4">解包+校验+安装</text>
+    <rect x="466" y="230" width="130" height="46" rx="6" fill="#FFF" stroke="#B29CF3"/><text x="531" y="250" text-anchor="middle" font-weight="600">SecretStore</text><text x="531" y="266" text-anchor="middle" font-size="9.5" fill="#8B7BC4">Keychain/DPAPI</text>
+  </g>
+
+  <!-- 桌面外壳 -->
+  <rect x="42" y="300" width="284" height="80" rx="8" fill="#EEF1F5" stroke="#CBD2DB"/>
+  <text x="56" y="320" font-size="12" font-weight="700" fill="#4B5563">桌面外壳 platform/</text>
+  <g font-size="10.5" fill="#374151">
+    <text x="56" y="340">· GlobalHotkey（老板键 Ctrl+H）</text>
+    <text x="56" y="357">· window_pinning（置顶/半透明）</text>
+    <text x="56" y="374">· 托盘 QSystemTrayIcon · file_association</text>
+  </g>
+
+  <!-- 浏览器/小窗 -->
+  <rect x="342" y="300" width="264" height="80" rx="8" fill="#FDEEF4" stroke="#F0A6C6"/>
+  <text x="356" y="320" font-size="12" font-weight="700" fill="#BE185D">browser/ + external_window/</text>
+  <g font-size="10.5" fill="#9D174D">
+    <text x="356" y="340">· BrowserBridge（WebSocket:49752）</text>
+    <text x="356" y="357">· ExternalWindowManager（PIMPL）</text>
+    <text x="356" y="374">· Win置顶 / macOS捕获镜像 后端</text>
+  </g>
+
+  <!-- 做题 RPC over C ABI -->
+  <rect x="42" y="392" width="564" height="60" rx="8" fill="#FFF7E6" stroke="#F3C67C"/>
+  <text x="324" y="414" text-anchor="middle" font-size="12" font-weight="700" fill="#B45309">做题 RPC：JSON-RPC over C ABI（qp_provider_request）</text>
+  <text x="324" y="434" text-anchor="middle" font-size="10.5" fill="#B98A4A">initialize · catalog.list · attempt.create/questions/saveAnswers/submit/report/solutions</text>
+
+  <!-- Provider 插件 -->
+  <rect x="42" y="464" width="270" height="72" rx="8" fill="#E4F7EE" stroke="#5FD0A0"/>
+  <text x="177" y="485" text-anchor="middle" font-size="12" font-weight="700" fill="#065F46">DeclarativeProvider（内置声明式）</text>
+  <text x="177" y="503" text-anchor="middle" font-size="10.5" fill="#5A9E82">bank.json 驱动，request() 分发 9 方法</text>
+  <text x="177" y="519" text-anchor="middle" font-size="10.5" fill="#5A9E82">buildUnits/expandSectionCatalogs</text>
+
+  <rect x="326" y="464" width="280" height="72" rx="8" fill="#FFF" stroke="#5FD0A0"/>
+  <text x="466" y="485" text-anchor="middle" font-size="12" font-weight="700" fill="#065F46">第三方 .dll/.so 插件（可选）</text>
+  <text x="466" y="503" text-anchor="middle" font-size="10.5" fill="#5A9E82">导出 6 个 C 符号，独立编译</text>
+  <text x="466" y="519" text-anchor="middle" font-size="10.5" fill="#5A9E82">如 providers/demo（HTTP 抓远端题）</text>
+
+  <!-- ============ bank-studio 制作端 ============ -->
+  <rect x="648" y="80" width="568" height="470" rx="12" fill="#F7F9FC" stroke="#B9C4D2" stroke-width="1.5"/>
+  <text x="664" y="104" font-size="15" font-weight="700" fill="#7C3AED">apps/bank-studio · 制作端（可执行程序）</text>
+
+  <rect x="666" y="118" width="532" height="60" rx="8" fill="#F0EBFE" stroke="#B29CF3"/>
+  <text x="932" y="140" text-anchor="middle" font-size="13" font-weight="700" fill="#4C1D95">StudioWindow（四步向导 3112行）</text>
+  <text x="932" y="160" text-anchor="middle" font-size="10.5" fill="#8B7BC4">01 选择资料 → 02 自动整理 → 03 检查问题 → 04 完成打包</text>
+
+  <rect x="666" y="190" width="532" height="52" rx="8" fill="#FFF" stroke="#B29CF3"/>
+  <text x="932" y="211" text-anchor="middle" font-size="12" font-weight="600" fill="#4C1D95">GenerationWorkflow（QtConcurrent 工作线程 + 进度信号）</text>
+  <text x="932" y="229" text-anchor="middle" font-size="10.5" fill="#8B7BC4">每个 SourceMaterialGroup：提取 → 解析 → ReviewResult</text>
+
+  <!-- engine 纯逻辑 -->
+  <rect x="666" y="254" width="532" height="140" rx="8" fill="#E4F7EE" stroke="#5FD0A0"/>
+  <text x="680" y="275" font-size="12.5" font-weight="700" fill="#065F46">engine/（纯逻辑，无 UI 依赖）</text>
+  <g font-size="10.5" fill="#065F46">
+    <rect x="680" y="284" width="240" height="46" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="800" y="304" text-anchor="middle" font-weight="600">DocumentExtractor</text><text x="800" y="320" text-anchor="middle" font-size="9.5" fill="#5A9E82">TXT/DOCX直读·PDF文字层/OCR判定</text>
+    <rect x="930" y="284" width="256" height="46" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="1058" y="304" text-anchor="middle" font-weight="600">MinerUClient + OutputAdapter</text><text x="1058" y="320" text-anchor="middle" font-size="9.5" fill="#5A9E82">云端提取后端（非 fallback）</text>
+    <rect x="680" y="338" width="506" height="46" rx="6" fill="#FFF" stroke="#5FD0A0"/><text x="933" y="358" text-anchor="middle" font-weight="600">RuleBasedBankGenerator（纯函数·确定性·离线）</text><text x="933" y="374" text-anchor="middle" font-size="9.5" fill="#5A9E82">切套/切题/四种答案位置/题型识别/三级复核 → ReviewResult</text>
+  </g>
+
+  <rect x="666" y="406" width="532" height="56" rx="8" fill="#FFF7E6" stroke="#F3C67C"/>
+  <text x="932" y="428" text-anchor="middle" font-size="12" font-weight="700" fill="#B45309">复核 UI → packageProvider() 打包</text>
+  <text x="932" y="447" text-anchor="middle" font-size="10.5" fill="#B98A4A">组 bank.json → validateBank → manifest → ZIP → 三重自检 → 安装/handoff</text>
+
+  <rect x="666" y="474" width="532" height="62" rx="8" fill="#EEF1F5" stroke="#CBD2DB"/>
+  <text x="680" y="495" font-size="11.5" font-weight="700" fill="#4B5563">RunningAppHandoff（跨进程接力）</text>
+  <text x="680" y="514" font-size="10.5" fill="#6B7280">制作完成后把新题库交给正在运行的刷题端小窗，或直接拉起 desktop-qt</text>
+  <text x="680" y="529" font-size="10.5" fill="#6B7280">依赖 sdk：ZipArchive · ProviderInstaller · BankValidator</text>
+
+  <!-- ============ 共享核心库 ============ -->
+  <rect x="24" y="574" width="1192" height="120" rx="12" fill="#F3F4F6" stroke="#C0C5CE" stroke-width="1.5"/>
+  <text x="40" y="598" font-size="15" font-weight="700" fill="#374151">共享库：core/（领域模型+工具） · sdk/（题库运行时+插件框架）</text>
+  <g font-size="11" fill="#374151">
+    <rect x="42" y="612" width="150" height="66" rx="7" fill="#FFF" stroke="#C0C5CE"/><text x="117" y="636" text-anchor="middle" font-weight="600">core: Attempt</text><text x="117" y="654" text-anchor="middle" font-size="9.5" fill="#9AA3AF">领域模型 toJson/fromJson</text><text x="117" y="669" text-anchor="middle" font-size="9.5" fill="#9AA3AF">DraftStore·FeedbackReport</text>
+    <rect x="202" y="612" width="160" height="66" rx="7" fill="#FFF" stroke="#C0C5CE"/><text x="282" y="636" text-anchor="middle" font-weight="600">core: bank_validator</text><text x="282" y="654" text-anchor="middle" font-size="9.5" fill="#9AA3AF">运行时权威契约</text><text x="282" y="669" text-anchor="middle" font-size="9.5" fill="#9AA3AF">题型白名单·附件校验</text>
+    <rect x="372" y="612" width="160" height="66" rx="7" fill="#FFF" stroke="#C0C5CE"/><text x="452" y="636" text-anchor="middle" font-weight="600">core: 隐私/诊断</text><text x="452" y="654" text-anchor="middle" font-size="9.5" fill="#9AA3AF">ImagePrivacyFilter</text><text x="452" y="669" text-anchor="middle" font-size="9.5" fill="#9AA3AF">DiagnosticLogger·io_utils</text>
+    <rect x="560" y="612" width="160" height="66" rx="7" fill="#FFF" stroke="#5FD0A0"/><text x="640" y="636" text-anchor="middle" font-weight="600">sdk: 插件框架</text><text x="640" y="654" text-anchor="middle" font-size="9.5" fill="#9AA3AF">provider_abi.h · Loader</text><text x="640" y="669" text-anchor="middle" font-size="9.5" fill="#9AA3AF">DeclarativeProvider</text>
+    <rect x="730" y="612" width="160" height="66" rx="7" fill="#FFF" stroke="#5FD0A0"/><text x="810" y="636" text-anchor="middle" font-weight="600">sdk: 打包/安装</text><text x="810" y="654" text-anchor="middle" font-size="9.5" fill="#9AA3AF">ZipArchive</text><text x="810" y="669" text-anchor="middle" font-size="9.5" fill="#9AA3AF">ProviderInstaller</text>
+    <rect x="900" y="612" width="150" height="66" rx="7" fill="#FFF" stroke="#5FD0A0"/><text x="975" y="636" text-anchor="middle" font-weight="600">sdk: 安全/接力</text><text x="975" y="654" text-anchor="middle" font-size="9.5" fill="#9AA3AF">SecretStore</text><text x="975" y="669" text-anchor="middle" font-size="9.5" fill="#9AA3AF">RunningAppHandoff</text>
+    <rect x="1060" y="612" width="146" height="66" rx="7" fill="#FFF" stroke="#C0C5CE"/><text x="1133" y="636" text-anchor="middle" font-weight="600">数据落地</text><text x="1133" y="654" text-anchor="middle" font-size="9.5" fill="#9AA3AF">bank.json·草稿</text><text x="1133" y="669" text-anchor="middle" font-size="9.5" fill="#9AA3AF">QSettings 历史</text>
+  </g>
+
+  <!-- ============ 外部依赖 ============ -->
+  <rect x="24" y="714" width="1192" height="70" rx="12" fill="#FAFAFB" stroke="#D5D9E0"/>
+  <text x="40" y="737" font-size="13" font-weight="700" fill="#6B7280">外部系统 / 平台 API</text>
+  <g font-size="10.5" fill="#5B6472">
+    <rect x="200" y="726" width="150" height="44" rx="7" fill="#FFF" stroke="#D5D9E0"/><text x="275" y="747" text-anchor="middle">MinerU 云服务</text><text x="275" y="762" text-anchor="middle" font-size="9" fill="#9AA3AF">HTTP 提取</text>
+    <rect x="366" y="726" width="180" height="44" rx="7" fill="#FFF" stroke="#D5D9E0"/><text x="456" y="747" text-anchor="middle">浏览器扩展</text><text x="456" y="762" text-anchor="middle" font-size="9" fill="#9AA3AF">Chrome/Edge WebSocket</text>
+    <rect x="562" y="726" width="180" height="44" rx="7" fill="#FFF" stroke="#D5D9E0"/><text x="652" y="747" text-anchor="middle">macOS ScreenCaptureKit</text><text x="652" y="762" text-anchor="middle" font-size="9" fill="#9AA3AF">窗口画面捕获</text>
+    <rect x="758" y="726" width="180" height="44" rx="7" fill="#FFF" stroke="#D5D9E0"/><text x="848" y="747" text-anchor="middle">Win32 user32</text><text x="848" y="762" text-anchor="middle" font-size="9" fill="#9AA3AF">SetWindowPos 置顶</text>
+    <rect x="954" y="726" width="180" height="44" rx="7" fill="#FFF" stroke="#D5D9E0"/><text x="1044" y="747" text-anchor="middle">Keychain / DPAPI</text><text x="1044" y="762" text-anchor="middle" font-size="9" fill="#9AA3AF">凭据加密</text>
+  </g>
+
+  <!-- 连接线 -->
+  <line x1="174" y1="188" x2="174" y2="200" stroke="#5B6472" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="121" y1="276" x2="121" y2="392" stroke="#5B6472" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="177" y1="452" x2="177" y2="464" stroke="#B45309" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="466" y1="452" x2="466" y2="464" stroke="#B45309" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#a2)"/>
+  <line x1="932" y1="178" x2="932" y2="190" stroke="#7C3AED" stroke-width="1.5" marker-end="url(#a2b)"/>
+  <line x1="932" y1="242" x2="932" y2="254" stroke="#7C3AED" stroke-width="1.5" marker-end="url(#a2b)"/>
+  <line x1="932" y1="394" x2="932" y2="406" stroke="#059669" stroke-width="1.5" marker-end="url(#a2g)"/>
+  <line x1="932" y1="462" x2="932" y2="474" stroke="#B45309" stroke-width="1.5" marker-end="url(#a2)"/>
+  <!-- handoff desktop<->studio -->
+  <path d="M 666 505 L 624 505" stroke="#7C3AED" stroke-width="1.6" stroke-dasharray="5 3" fill="none" marker-end="url(#a2b)"/>
+  <text x="628" y="498" font-size="9.5" fill="#7C3AED" text-anchor="end">handoff/安装</text>
+  <!-- 核心库依赖 -->
+  <line x1="324" y1="536" x2="324" y2="574" stroke="#5B6472" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#a2)"/>
+  <line x1="932" y1="536" x2="932" y2="574" stroke="#5B6472" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#a2)"/>
+  <!-- 外部依赖 -->
+  <line x1="474" y1="380" x2="474" y2="726" stroke="#F0A6C6" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a2)"/>
+  <line x1="1058" y1="330" x2="1058" y2="360" stroke="#5FD0A0" stroke-width="0" />
+</svg>

@@ -15,6 +15,14 @@ quizpane_add_executable(quizpane
     src/platform/window_pinning.hpp
     src/ui/main_window.cpp
     src/ui/main_window.hpp
+    src/ui/attempt_session.hpp
+    src/ui/catalog_page_controller.cpp
+    src/ui/catalog_page_controller.hpp
+    src/ui/practice_page_controller.cpp
+    src/ui/practice_page_controller.hpp
+    src/ui/solution_page_controller.cpp
+    src/ui/solution_page_controller.hpp
+    src/ui/ui_size.hpp
     src/ui/line_icons.cpp
     src/ui/line_icons.hpp
     src/ui/material_card.cpp

@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 560" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <rect width="760" height="560" fill="#FFFFFF"/>
+  <text x="380" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#1A1A2E">用户做题流程（简单版）</text>
+  <text x="380" y="58" text-anchor="middle" font-size="12" fill="#6B7280">MainWindow 页面状态机主链路</text>
+
+  <defs><marker id="da" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#1E3A8A"/></marker></defs>
+
+  <g font-size="13" fill="#1E3A8A" text-anchor="middle">
+    <rect x="290" y="80" width="180" height="52" rx="10" fill="#E7F0FE" stroke="#7CA6F5"/><text x="380" y="106" font-weight="600">选择/加载题库</text><text x="380" y="122" font-size="10" fill="#5573A8">loadProvider → initialize</text>
+
+    <rect x="290" y="160" width="180" height="52" rx="10" fill="#E7F0FE" stroke="#7CA6F5"/><text x="380" y="186" font-weight="600">目录页</text><text x="380" y="202" font-size="10" fill="#5573A8">catalog.list 选分类/题量</text>
+
+    <rect x="290" y="240" width="180" height="52" rx="10" fill="#F0EBFE" stroke="#B29CF3"/><text x="380" y="266" font-weight="600" fill="#4C1D95">开始练习</text><text x="380" y="282" font-size="10" fill="#8B7BC4">attempt.create + questions</text>
+
+    <rect x="290" y="320" width="180" height="52" rx="10" fill="#E7F0FE" stroke="#7CA6F5"/><text x="380" y="346" font-weight="600">逐题作答</text><text x="380" y="362" font-size="10" fill="#5573A8">showQuestion/chooseAnswer</text>
+
+    <rect x="290" y="400" width="180" height="52" rx="10" fill="#F0EBFE" stroke="#B29CF3"/><text x="380" y="426" font-weight="600" fill="#4C1D95">交卷</text><text x="380" y="442" font-size="10" fill="#8B7BC4">submit + report 判分</text>
+
+    <rect x="290" y="480" width="180" height="52" rx="10" fill="#E7F0FE" stroke="#7CA6F5"/><text x="380" y="506" font-weight="600">结果 / 解析页</text><text x="380" y="522" font-size="10" fill="#5573A8">solutions + 长图导出</text>
+  </g>
+
+  <g stroke="#1E3A8A" stroke-width="1.8" marker-end="url(#da)">
+    <line x1="380" y1="132" x2="380" y2="156"/>
+    <line x1="380" y1="212" x2="380" y2="236"/>
+    <line x1="380" y1="292" x2="380" y2="316"/>
+    <line x1="380" y1="372" x2="380" y2="396"/>
+    <line x1="380" y1="452" x2="380" y2="476"/>
+  </g>
+
+  <!-- draft side -->
+  <rect x="530" y="320" width="200" height="52" rx="10" fill="#E4F7EE" stroke="#5FD0A0"/>
+  <text x="630" y="346" text-anchor="middle" font-size="12" font-weight="600" fill="#065F46">草稿自动保存</text>
+  <text x="630" y="362" text-anchor="middle" font-size="10" fill="#5A9E82">DraftStore.save 原子写</text>
+  <path d="M 470 346 L 526 346" stroke="#059669" stroke-width="1.6" stroke-dasharray="4 3" fill="none" marker-end="url(#da)"/>
+
+  <!-- history side -->
+  <rect x="530" y="400" width="200" height="52" rx="10" fill="#FEF3E2" stroke="#F7CE8A"/>
+  <text x="630" y="426" text-anchor="middle" font-size="12" font-weight="600" fill="#B45309">做题历史回写</text>
+  <text x="630" y="442" text-anchor="middle" font-size="10" fill="#B98A4A">QSettings correct/wrong</text>
+  <path d="M 470 426 L 526 426" stroke="#B45309" stroke-width="1.6" stroke-dasharray="4 3" fill="none" marker-end="url(#da)"/>
+
+  <!-- resume -->
+  <rect x="30" y="160" width="200" height="52" rx="10" fill="#E4F7EE" stroke="#5FD0A0"/>
+  <text x="130" y="186" text-anchor="middle" font-size="12" font-weight="600" fill="#065F46">断点续做</text>
+  <text x="130" y="202" text-anchor="middle" font-size="10" fill="#5A9E82">maybeRestoreDraft</text>
+  <path d="M 230 186 L 286 186" stroke="#059669" stroke-width="1.6" stroke-dasharray="4 3" fill="none" marker-end="url(#da)"/>
+</svg>

@@ -1,3 +1,7 @@
+// 职责：MacWindowReplicaBackend（C++ 侧）到 QPMacReplicaController（Obj-C 侧）
+// 的转发层。本文件不含具体的捕获/渲染/输入逻辑，那些分别在
+// mac_window_replica_capture.mm / renderer.mm / input.mm 中实现。
+
 #include "mac_window_replica_controller.hpp"
 
 #import <CoreGraphics/CoreGraphics.h>

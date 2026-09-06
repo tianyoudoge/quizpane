@@ -4,6 +4,7 @@
 /cmake-build-*/
 /out/
 /dist/
+/tmp/
 /website/dist/
 marketing/
 CMakeUserPresets.json

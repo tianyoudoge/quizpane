@@ -1,7 +1,9 @@
 #pragma once
 
+#include <QHash>
 #include <QJsonObject>
 #include <QList>
+#include <QSet>
 #include <QString>
 
 namespace quizpane {
@@ -26,5 +28,22 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank);
 
 // 兼容旧调用方式：只关心是否通过和第一条错误信息。
 bool validateBank(const QJsonObject& bank, QString* error);
+
+// 本文件校验规则与 schemas/declarative-provider.schema.json 是两份手写的独立
+// 实现（C++ 校验器需要在没有 JSON Schema 库依赖的前提下跑在 Win7 x86 上），
+// 天然存在"改了一处忘了改另一处"的漂移风险。BankSchemaKeySets 把校验器内部
+// 每个对象/枚举允许的字段或取值都收集起来，供 tests/bank_validator_schema_consistency_test.cpp
+// 逐一比对 schema 文件里同名定义的 "properties"/"enum"，把漂移变成能被
+// ctest 捕获的失败，而不是留到运行时才被用户的题库包炸出来。
+//
+// objectFields 的 key 是本结构体和 schema 里 $defs 名字的约定映射（bank 对应
+// schema 顶层 properties，其余对应 $defs.<key>），value 是该对象允许出现的
+// 字段名集合。enumValues 同理，对应 schema 里用 "enum" 声明的取值集合。
+struct BankSchemaKeySets {
+    QHash<QString, QSet<QString>> objectFields;
+    QHash<QString, QSet<QString>> enumValues;
+};
+
+const BankSchemaKeySets& bankSchemaKeySets();
 
 }  // namespace quizpane

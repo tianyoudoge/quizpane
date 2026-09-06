@@ -4,6 +4,7 @@ add_library(quizpane_core STATIC
     src/feedback_report.cpp
     src/image_privacy_filter.cpp
     src/io_utils.cpp
+    src/pending_call.cpp
     src/provider_response_router.cpp
     src/attempt.cpp
     src/bank_validator.cpp
