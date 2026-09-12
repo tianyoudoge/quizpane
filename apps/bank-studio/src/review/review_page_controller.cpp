@@ -265,7 +265,7 @@ private:
 }  // namespace
 
 void ReviewPageController::init(QWidget* parentForDialogs, const QStringList& sourcePaths,
-                                std::function<void()> onUpdateNavigation) {
+                                std::function<void(int)> onUpdateNavigation) {
     parentWidget_ = parentForDialogs;
     sourcePaths_ = &sourcePaths;
     onUpdateNavigation_ = std::move(onUpdateNavigation);
@@ -603,6 +603,7 @@ void ReviewPageController::populateReview(const GeneratedBankCandidate& candidat
     duplicateButton_->setVisible(false);
     activeReviewFilter_ = hardReviewCount > 0 ? QStringLiteral("__any_review__") : QString();
     applyReviewFilter();
+    if (onUpdateNavigation_) onUpdateNavigation_(hardReviewCount);
 }
 
 QByteArray ReviewPageController::ensureReviewAssetBytes(const QJsonObject& asset) {
@@ -1335,7 +1336,7 @@ void ReviewPageController::refreshReviewDecisionState() {
         allQuestionsButton_->setChecked(true);
     }
     applyReviewFilter();
-    if (onUpdateNavigation_) onUpdateNavigation_();
+    if (onUpdateNavigation_) onUpdateNavigation_(remaining);
 }
 
 void ReviewPageController::advanceToNextReviewIssue() {

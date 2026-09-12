@@ -40,9 +40,9 @@ public:
     // 构造后、buildPage() 前必须先调用一次。
     // parentForDialogs: 弹窗的父窗口（StudioWindow 本身）。
     // sourcePaths: 指向 StudioWindow::sourcePaths_ 的只读引用，懒渲染时读取原文件路径。
-    // onUpdateNavigation: 决策状态变化后回调 StudioWindow::updateNavigation()。
+    // onUpdateNavigation: 装载结果或决策变化后回传剩余复核数，更新主窗口统计与导航。
     void init(QWidget* parentForDialogs, const QStringList& sourcePaths,
-              std::function<void()> onUpdateNavigation);
+              std::function<void(int)> onUpdateNavigation);
 
     // 构建并返回第三步复核页 QWidget。调用前必须先调用 init()。
     QWidget* buildPage();
@@ -119,7 +119,7 @@ public:
 private:
     QWidget* parentWidget_ = nullptr;
     const QStringList* sourcePaths_ = nullptr;
-    std::function<void()> onUpdateNavigation_;
+    std::function<void(int)> onUpdateNavigation_;
 
     friend class StudioWindowReviewTest;
 };

@@ -82,7 +82,10 @@ void PracticePageController::init(
 }
 
 void PracticePageController::buildInto() {
-    auto* practiceLayout = new QVBoxLayout(practicePage_);
+    // MainWindow may already have installed the course status bar in this layout.
+    // Append the practice controls to it so every widget belongs to the same page.
+    auto* practiceLayout = qobject_cast<QVBoxLayout*>(practicePage_->layout());
+    if (!practiceLayout) practiceLayout = new QVBoxLayout(practicePage_);
     practiceLayout->setContentsMargins(0, 14, 0, 0);
     practiceLayout->setSpacing(10);
     practiceTitleLabel_ = new QLabel;
@@ -554,7 +557,7 @@ void PracticePageController::lockCompactPracticeHeight() {
     const QMargins margins = root->contentsMargins();
     const QMargins pageMargins = practice->contentsMargins();
     const int fixedHeight = margins.top() + margins.bottom() +
-        headerBar_->height() + resizeHandle_->height() + root->spacing() * 2 +
+        headerBar_->height() + (resizeHandle_ ? resizeHandle_->height() : 0) + root->spacing() * 2 +
         pageMargins.top() + pageMargins.bottom() +
         practiceProgressLabel_->sizeHint().height() +
         practiceControlBar_->height() + practice->spacing() * 2;
@@ -575,7 +578,7 @@ void PracticePageController::handleResize() {
     const QMargins rootMargins = root->contentsMargins();
     const QMargins pageMargins = practice->contentsMargins();
     const int fixedHeight = rootMargins.top() + rootMargins.bottom() +
-        headerBar_->height() + resizeHandle_->height() + root->spacing() * 2 +
+        headerBar_->height() + (resizeHandle_ ? resizeHandle_->height() : 0) + root->spacing() * 2 +
         pageMargins.top() + pageMargins.bottom() +
         practiceProgressLabel_->sizeHint().height() +
         practiceControlBar_->height() + practice->spacing() * 2;

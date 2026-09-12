@@ -33,6 +33,7 @@ public:
 
     // 构造后、buildInto() 前必须先调用一次。practicePage/pages/catalogPage/
     // headerBar/card/resizeHandle 均由 MainWindow 装配、传入非拥有指针；
+    // resizeHandle 可为空，此时高度计算按 0 处理。
     // session/uiSize/providerId/draftRestoreChecked 是跨控制器共享状态，
     // 物理上仍属于 MainWindow，这里只持有引用，不拷贝。
     void init(QWidget* practicePage, QStackedWidget* pages, QWidget* catalogPage,

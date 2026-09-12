@@ -99,6 +99,30 @@ target_compile_definitions(bank_validator_schema_consistency_test PRIVATE
 )
 add_test(NAME bank_validator_schema_consistency_test COMMAND bank_validator_schema_consistency_test)
 
+add_executable(practice_page_controller_test
+    practice_page_controller_test.cpp
+    ../apps/desktop-qt/src/app_settings.cpp
+    ../apps/desktop-qt/src/ui/practice_page_controller.cpp
+    ../apps/desktop-qt/src/ui/material_card.cpp
+    ../apps/desktop-qt/src/ui/line_icons.cpp
+    ../apps/desktop-qt/src/ui/question_navigator.cpp
+    ../apps/desktop-qt/src/ui/app_dialogs.cpp
+)
+target_link_libraries(practice_page_controller_test PRIVATE
+    quizpane_provider_host quizpane_core ${QUIZPANE_QT_PACKAGE}::Widgets)
+add_test(NAME practice_page_controller_test COMMAND practice_page_controller_test)
+
+add_executable(solution_page_controller_test
+    solution_page_controller_test.cpp
+    ../apps/desktop-qt/src/ui/solution_page_controller.cpp
+    ../apps/desktop-qt/src/ui/material_card.cpp
+    ../apps/desktop-qt/src/ui/line_icons.cpp
+    ../apps/desktop-qt/src/ui/result_image_preview.cpp
+)
+target_link_libraries(solution_page_controller_test PRIVATE
+    quizpane_provider_host quizpane_core ${QUIZPANE_QT_PACKAGE}::Widgets)
+add_test(NAME solution_page_controller_test COMMAND solution_page_controller_test)
+
 add_executable(material_card_test
     material_card_test.cpp
     ../apps/desktop-qt/src/ui/material_card.cpp

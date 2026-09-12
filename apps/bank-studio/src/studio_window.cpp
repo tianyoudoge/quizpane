@@ -663,7 +663,11 @@ StudioWindow::StudioWindow(QWidget* parent) : QMainWindow(parent) {
     contentLayout->setContentsMargins(34, 26, 34, 24);
     contentLayout->setSpacing(18);
     pages_ = new QStackedWidget;
-    reviewController_.init(this, sourcePaths_, [this] { updateNavigation(); });
+    reviewController_.init(this, sourcePaths_, [this](int remaining) {
+        generatedCount_->setText(QString::number(reviewController_.generatedQuestions_.size()));
+        reviewCount_->setText(QString::number(remaining));
+        updateNavigation();
+    });
     pages_->addWidget(buildSourcePage());
     pages_->addWidget(buildProgressPage());
     pages_->addWidget(reviewController_.buildPage());

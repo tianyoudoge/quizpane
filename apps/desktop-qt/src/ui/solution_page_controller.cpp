@@ -205,7 +205,11 @@ void SolutionPageController::showSolution(int index) {
         QSet<int> correctChoices;
         for (const auto& value : solution.value("correctChoices").toArray())
             correctChoices.insert(value.toInt());
-        const bool isCorrect = selectedChoices == correctChoices;
+        // Native single-choice providers may only return correctChoice.
+        // Empty selections never count as correct, even if an answer is missing.
+        const bool isCorrect = !selectedChoices.isEmpty() && (multiple
+            ? !correctChoices.isEmpty() && selectedChoices == correctChoices
+            : correct >= 0 && selectedChoices == QSet<int>{correct});
         correctAnswerLabel_->setVisible(true);
         answerStatusLabel_->setVisible(true);
         solutionExplanationLabel_->setVisible(true);

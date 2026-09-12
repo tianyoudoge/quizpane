@@ -178,7 +178,9 @@ public:
         candidate.needsReviewQuestions = {
             question("q4", "hard", "missing-answer", QStringLiteral("未识别到答案")),
             question("q5", "hard", "duplicate", QStringLiteral("疑似重复"))};
-        window.reviewController_.populateReview(candidate);
+        window.populateReview(candidate);
+        if (window.generatedCount_->text() != QStringLiteral("3") ||
+            window.reviewCount_->text() != QStringLiteral("2")) return 52;
         window.pages_->setCurrentIndex(2);
         window.resize(1040, 800);
         window.show();
@@ -236,6 +238,7 @@ public:
             }
         }
         window.reviewController_.excludeCurrentReviewQuestion();
+        if (window.reviewCount_->text() != QStringLiteral("0")) return 53;
         if (!window.reviewController_.allQuestionsButton_->isChecked() ||
             window.reviewController_.allReviewButton_->text() != QStringLiteral("需要处理  0") ||
             window.nextButton_->text() != QStringLiteral("继续生成（收录 4 题） →")) return 30;

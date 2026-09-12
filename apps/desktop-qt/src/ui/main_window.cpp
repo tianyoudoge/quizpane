@@ -399,6 +399,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                             [this] { applyUiSize(uiSize_); });
     catalogController_.buildInto();
 
+    // PracticePageController needs this pointer as soon as the first question is
+    // shown. The handle is added to the outer layout after the pages below.
+    resizeHandle_ = new VerticalResizeHandle(card_);
+    resizeHandle_->setObjectName(QStringLiteral("verticalResizeHandle"));
+    resizeHandle_->setVisible(false);
+
     practicePage_ = new QWidget;
 #if defined(QUIZPANE_HAVE_WEBSOCKETS)
     auto* practiceLayoutForVideo = new QVBoxLayout(practicePage_);
@@ -485,9 +491,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 #endif
     pages_->addWidget(solutionPage_);
     layout->addWidget(pages_, 1);
-    resizeHandle_ = new VerticalResizeHandle(card_);
-    resizeHandle_->setObjectName(QStringLiteral("verticalResizeHandle"));
-    resizeHandle_->setVisible(false);
     layout->addWidget(resizeHandle_);
     connect(pages_, &QStackedWidget::currentChanged, this, [this] {
         if (practiceController_.navigator()) practiceController_.navigator()->hide();
