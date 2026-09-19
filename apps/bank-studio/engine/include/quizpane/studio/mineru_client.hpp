@@ -91,6 +91,8 @@ int mineruRetryDelayMs(int retryAttempt, int retryAfterSeconds = -1);
 class MineruExtractionJob final : public QObject {
     Q_OBJECT
 public:
+    // manager must be dedicated to MinerU; construction forces NoProxy so only the
+    // cloud parsing task bypasses the system/local proxy.
     explicit MineruExtractionJob(QNetworkAccessManager* manager, QObject* parent = nullptr);
 
     // sourcePath：本地 PDF；outputZipPath：结果 ZIP 的落盘位置。

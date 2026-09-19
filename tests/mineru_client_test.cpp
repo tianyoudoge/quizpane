@@ -14,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
+#include <QNetworkProxy>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
@@ -355,6 +356,8 @@ int main(int argc, char** argv) {
         server.transientTicketFailures = 1;
         server.transientDownloadFailures = 1;
         MineruExtractionJob job(&manager);
+        if (manager.proxy().type() != QNetworkProxy::NoProxy)
+            return fail("MinerU network manager must bypass the system proxy");
         QList<MineruStage> stages;
         QString submittedBatch;
         QObject::connect(&job, &MineruExtractionJob::stageChanged, &job,

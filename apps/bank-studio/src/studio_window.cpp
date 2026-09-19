@@ -814,6 +814,7 @@ void StudioWindow::offerCloudTaskResume() {
     phaseDetail_->setText(QStringLiteral("正在连接上次提交的任务。"));
     activitySpinner_->show();
     activityTimer_->start(120);
+    prepareGenerationWorkflow();
     processNextCloudSource();
 }
 
@@ -1542,7 +1543,30 @@ void StudioWindow::beginPreflight() {
         {{QStringLiteral("mode"), mineruConfig_.cloudEnabled
             ? QStringLiteral("smart") : QStringLiteral("rules")},
          {QStringLiteral("sources"), sourcePaths_.size()}});
-    if (workflow_) workflow_->deleteLater();
+    prepareGenerationWorkflow();
+    updateParseModeSummary();
+    progressBar_->setValue(0);
+    progressStatus_->setText(QStringLiteral("准备中"));
+    sourceCount_->setText(QString::number(sourcePaths_.size()));
+    generatedCount_->setText(QStringLiteral("0"));
+    reviewCount_->setText(QStringLiteral("0"));
+    startButton_->setEnabled(true);
+    startButton_->setText(QStringLiteral("取消整理"));
+    spinnerFrame_ = 0;
+    activitySpinner_->setText(QStringLiteral("◐ 运行中"));
+    activitySpinner_->show();
+    activityTimer_->start(120);
+    QList<SourceMaterialGroup> groups;
+    for (const QString& question : sourcePaths_) {
+        groups.append({question, answerPathsByQuestion_.value(question),
+                       answerPolicyByQuestion_.value(question, AnswerPolicyHint::Auto), {}, {}});
+    }
+    startCloudParseThenGenerate(groups);
+}
+
+void StudioWindow::prepareGenerationWorkflow() {
+    if (workflow_)
+        workflow_->deleteLater();
     workflow_ = new GenerationWorkflow(this);
     connect(workflow_, &GenerationWorkflow::progressChanged,
             this, &StudioWindow::updateWorkflowProgress);
@@ -1567,24 +1591,6 @@ void StudioWindow::beginPreflight() {
         clearPersistedCloudTask();
         pages_->setCurrentIndex(2);
     });
-    updateParseModeSummary();
-    progressBar_->setValue(0);
-    progressStatus_->setText(QStringLiteral("准备中"));
-    sourceCount_->setText(QString::number(sourcePaths_.size()));
-    generatedCount_->setText(QStringLiteral("0"));
-    reviewCount_->setText(QStringLiteral("0"));
-    startButton_->setEnabled(true);
-    startButton_->setText(QStringLiteral("取消整理"));
-    spinnerFrame_ = 0;
-    activitySpinner_->setText(QStringLiteral("◐ 运行中"));
-    activitySpinner_->show();
-    activityTimer_->start(120);
-    QList<SourceMaterialGroup> groups;
-    for (const QString& question : sourcePaths_) {
-        groups.append({question, answerPathsByQuestion_.value(question),
-                       answerPolicyByQuestion_.value(question, AnswerPolicyHint::Auto), {}, {}});
-    }
-    startCloudParseThenGenerate(groups);
 }
 
 void StudioWindow::discardPreviousGenerationForNewTask()

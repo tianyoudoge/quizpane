@@ -45,6 +45,24 @@
 - `baseUrl = "https://mineru.net"`（注释：便于测试指向本地桩服务；**产品仅支持云服务**，
   本地桩仅 `tests/mineru_client_test.cpp` 用 QTcpServer 模拟）。
 
+`MineruExtractionJob` 要求传入 MinerU 专用的 `QNetworkAccessManager`，并在构造时设为
+`QNetworkProxy::NoProxy`。申请上传链接、OSS 上传、轮询和结果下载因此全部直连；
+该行为不修改系统代理，也不影响题库制作器或其他应用的网络请求。
+预签名 OSS/CDN 域名同时返回 IPv4/IPv6 但物理网卡无可用 IPv6 路由时，传输请求优先
+使用解析到的 IPv4，同时保留原域名的 Host、TLS SNI 和证书校验名。
+
+恢复上次云任务与新建任务必须共用 `StudioWindow::prepareGenerationWorkflow()` 装配
+`GenerationWorkflow` 及信号连接。恢复任务下载 ZIP 后会继续进入 adapter 和规则引擎，
+不得因工作流未初始化而崩溃。
+
+2026-09-19 真实云端续验：系统 HTTP/HTTPS/SOCKS 代理全程保持开启，制作器进程
+未连接本地代理，而是直连 MinerU 和 OSS/CDN。新建任务完成申请链接、上传、轮询、
+下载 4927 字节结果 ZIP、adapter 转换和规则整理；2694 字节合成 PDF 得到 2 道
+可直接收录题、0 道待复核题，最终生成 1000 字节题库包并在小窗刷题中打开。
+同日使用 147 页、1,301,043 字节的真实国考题本回测：云端传输全部使用 IPv4 直连，
+下载后答案策略探测与无答案重整共处理 600 题，本地整理约 132 秒；复核页最终
+显示 600 题全部可收录、0 个必须处理项。
+
 ### 1.3 四个端点
 
 **① 申请预签名上传链接** `requestUploadUrl()`（`mineru_client.cpp:322-358`）：

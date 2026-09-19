@@ -69,6 +69,8 @@ public:
             return 39;
 
         StudioWindow window;
+        window.prepareGenerationWorkflow();
+        if (!window.workflow_) return 54;
         if (!window.parseModeCard_ || !window.ruleModeCard_ || !window.smartModeCard_ ||
             !window.smartModeCard_->text().contains(QStringLiteral("智能解析")) ||
             !window.mineruConfigButton_ || !window.mineruConfigSummary_ ||

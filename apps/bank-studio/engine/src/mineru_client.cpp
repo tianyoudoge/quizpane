@@ -11,7 +11,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QHostAddress>
+#include <QHostInfo>
 #include <QNetworkAccessManager>
+#include <QNetworkProxy>
 #include <QNetworkReply>
 #include <QTimer>
 #include <QUrl>
@@ -24,6 +27,40 @@ constexpr int kPollIntervalMs = 3000;
 constexpr int kMaxTransientRetries = 4;
 // 结果 ZIP 上限。官方单文件限 200MB，输出包含切图与原始 PDF，留出余量。
 constexpr qint64 kMaxZipBytes = 512LL * 1024 * 1024;
+
+// Some OSS/CDN hosts publish IPv6 records even when the active physical route cannot
+// reach them. Qt can then remain on a SYN_SENT IPv6 socket until the long transfer
+// timeout instead of falling back to the working IPv4 address. Resolve only the
+// pre-signed object-storage request to IPv4 while retaining the signed Host header,
+// TLS SNI and certificate verification name.
+QNetworkRequest directStorageRequest(const QString& urlText) {
+    const QUrl originalUrl(urlText);
+    QNetworkRequest request(originalUrl);
+    if (!originalUrl.isValid() || originalUrl.scheme() != QStringLiteral("https") ||
+        originalUrl.host().isEmpty())
+        return request;
+
+    QHostAddress literalAddress;
+    if (literalAddress.setAddress(originalUrl.host()) &&
+        literalAddress.protocol() == QAbstractSocket::IPv4Protocol)
+        return request;
+
+    const QHostInfo hostInfo = QHostInfo::fromName(originalUrl.host());
+    for (const QHostAddress& address : hostInfo.addresses()) {
+        if (address.protocol() != QAbstractSocket::IPv4Protocol)
+            continue;
+        QUrl directUrl = originalUrl;
+        directUrl.setHost(address.toString());
+        request.setUrl(directUrl);
+        QByteArray hostHeader = QUrl::toAce(originalUrl.host());
+        if (originalUrl.port() > 0 && originalUrl.port() != 443)
+            hostHeader += ':' + QByteArray::number(originalUrl.port());
+        request.setRawHeader("Host", hostHeader);
+        request.setPeerVerifyName(originalUrl.host());
+        break;
+    }
+    return request;
+}
 
 // MinerU 的错误信封有两种形状：鉴权类返回 {msgCode, msg, success}，任务类返回
 // {code, msg}。两种都要认，否则用户只能看到一个空洞的 HTTP 状态码。
@@ -220,7 +257,12 @@ MineruPollResult parsePollResponse(const QByteArray& payload, int httpStatus,
 }
 
 MineruExtractionJob::MineruExtractionJob(QNetworkAccessManager* manager, QObject* parent)
-    : QObject(parent), manager_(manager) {}
+    : QObject(parent), manager_(manager) {
+    // MinerU uses a dedicated manager. Keep its API, OSS upload and result download
+    // off the system/local proxy without changing proxy settings for the rest of the app.
+    if (manager_)
+        manager_->setProxy(QNetworkProxy::NoProxy);
+}
 
 void MineruExtractionJob::setStage(MineruStage stage, const QString& detail) {
     stage_ = stage;
@@ -368,7 +410,7 @@ void MineruExtractionJob::uploadFile(const MineruUploadTicket& ticket) {
         return;
     }
     // 官方要求 PUT 到预签名链接时不要带 Content-Type，否则签名校验失败。
-    QNetworkRequest request(QUrl(ticket.uploadUrl));
+    QNetworkRequest request = directStorageRequest(ticket.uploadUrl);
 #if QT_VERSION >= QT_VERSION_CHECK(5, 9, 0)
     // MinerU 返回的是 OSS 预签名地址。实际环境中 HTTP/2 连接会偶发被边缘节点
     // 主动关闭（HTTP 0 / Connection closed）；改用兼容性更好的 HTTP/1.1，并允许
@@ -484,7 +526,7 @@ void MineruExtractionJob::download(const QString& zipUrl) {
         failWith(QStringLiteral("MinerU 返回的结果地址无效"));
         return;
     }
-    QNetworkRequest request(url);
+    QNetworkRequest request = directStorageRequest(zipUrl);
 #if QT_VERSION >= QT_VERSION_CHECK(5, 9, 0)
     // 结果 ZIP 也走预签名 OSS 地址，必须与上传保持相同的传输兼容策略。
     request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);

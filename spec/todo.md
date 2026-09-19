@@ -289,3 +289,16 @@ Win7 测试工作流默认启用 OCR，但旧本地脚本/Release 入口默认�
 原主窗口的最终计数和人工决策计数写回在搬迁时丢失，返回进度页会显示过时数字。
 现通过控制器回调把剩余 hard 数回传主窗口，恢复最终结果与人工决策后的指标同步。
 `studio_review_ui_test` 新增断言在修复前失败、修复后通过。
+
+### F5. MinerU 任务误用系统本地代理 — 已修复（2026-09-19）
+
+MinerU 云解析原先由 `QNetworkAccessManager` 继承系统代理，本地代理不能正确中继
+OSS 结果下载时会使任务停在重试。`MineruExtractionJob` 现将其专用 manager 设为
+`QNetworkProxy::NoProxy`，只让 MinerU API、上传和下载直连，不改动系统代理。
+`mineru_client_test` 锁定该网络边界。
+真实直连续验还发现 OSS CDN 的不可达 IPv6 会阻塞 Qt 回落 IPv4，以及恢复旧 batch
+时未创建 `GenerationWorkflow` 导致下载成功后崩溃。现已为预签名传输优先选用 IPv4，
+并让新建/恢复任务共用工作流初始化入口。
+修复后在系统代理保持开启时新建真实 MinerU 任务，完成上传、轮询、下载、adapter、
+规则整理、复核、打包和主程序打开全链路；合成 PDF 产出 2 道题，无待复核项。
+追加 147 页真实题本回测，成功整理 600 题，复核页最终无必须处理项。
