@@ -1,4 +1,6 @@
-const BRIDGE_URL = "ws://127.0.0.1:49752/quizpane-browser/v1";
+// Stay below Windows' default dynamic TCP range. Hyper-V can reserve chunks of
+// 49152-65535, which makes a loopback listener there fail with WSAEACCES.
+const BRIDGE_URL = "ws://127.0.0.1:38427/quizpane-browser/v1";
 const HEARTBEAT_MS = 20_000;
 const RETRY_MS = 2_000;
 

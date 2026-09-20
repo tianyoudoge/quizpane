@@ -3,7 +3,7 @@
 这是 QuizPane 的 Chromium 扩展，连接固定的本机地址：
 
 ```text
-ws://127.0.0.1:49752/quizpane-browser/v1
+ws://127.0.0.1:38427/quizpane-browser/v1
 ```
 
 它不需要配对码，不读取 Cookie、课程正文或视频地址。当前版本只在用户点击“绑定当前课程”后请求该站点权限，并控制顶层页面的标准 HTML5 `<video>`；绑定后会把网页标题、播放状态和当前/总时长同步到本机 QuizPane。

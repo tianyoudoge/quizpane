@@ -12,7 +12,11 @@ namespace quizpane::external_window { class ExternalWindowManager; }
 
 namespace quizpane::browser {
 
-inline constexpr quint16 kBridgePort = 49752;
+// Keep the fixed loopback port below Windows' default dynamic TCP range
+// (49152-65535). Hyper-V may reserve blocks inside that range and make listen()
+// fail with WSAEACCES even though no process owns the port.
+inline constexpr quint16 kBridgePort = 38427;
+static_assert(kBridgePort < 49152, "Browser bridge must stay outside the Windows dynamic port range");
 inline constexpr auto kBridgePath = "/quizpane-browser/v1";
 
 enum class ConnectionState { Disconnected, Connected };

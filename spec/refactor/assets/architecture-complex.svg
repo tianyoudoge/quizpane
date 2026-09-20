@@ -48,7 +48,7 @@
   <rect x="342" y="300" width="264" height="80" rx="8" fill="#FDEEF4" stroke="#F0A6C6"/>
   <text x="356" y="320" font-size="12" font-weight="700" fill="#BE185D">browser/ + external_window/</text>
   <g font-size="10.5" fill="#9D174D">
-    <text x="356" y="340">· BrowserBridge（WebSocket:49752）</text>
+    <text x="356" y="340">· BrowserBridge（WebSocket:38427）</text>
     <text x="356" y="357">· ExternalWindowManager（PIMPL）</text>
     <text x="356" y="374">· Win置顶 / macOS捕获镜像 后端</text>
   </g>
