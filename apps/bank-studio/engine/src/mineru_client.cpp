@@ -503,7 +503,6 @@ void MineruExtractionJob::poll() {
             });
             return;
         }
-        transientRetryAttempts_ = 0;
         weakNetworkAttempts_ = 0;
         if (result.totalPages > 0)
             emit progress(result.extractedPages, result.totalPages);

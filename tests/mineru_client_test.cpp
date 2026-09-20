@@ -406,6 +406,27 @@ int main(int argc, char** argv) {
             return fail("final stage should be Done");
     }
 
+    // 刷新签名 URL 不能把下载重试次数清零。否则 CDN 持续不可达时，每次成功
+    // 轮询都会把计数重置为 0，界面永远停在 1/4 且任务无法结束。
+    {
+        const int downloadsBeforeFailure = server.downloadCount;
+        server.transientDownloadFailures = 5;
+        MineruExtractionJob job(&manager);
+        bool ok = true;
+        QString resultZip;
+        QString error;
+        const QString failedZip = directory.filePath(QStringLiteral("persistent/result.zip"));
+        job.resume(stubSettings, QStringLiteral("batch-1"), failedZip);
+        if (!waitForFinish(&job, &ok, &resultZip, &error))
+            return fail("persistent download failure never finished");
+        if (ok || job.stage() != MineruStage::Failed || error.isEmpty())
+            return fail("persistent download failure must exhaust the retry budget");
+        if (server.downloadCount - downloadsBeforeFailure != 5)
+            return fail("download retries must remain bounded across signed-url refreshes");
+        if (QFile::exists(failedZip))
+            return fail("exhausted download retries must not publish a partial result");
+    }
+
     // 已上传任务的恢复：弱网轮询暂时失败时只延后重试；恢复路径不能再次申请
     // 上传链接或上传原文件。
     {
