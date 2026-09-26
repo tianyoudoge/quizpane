@@ -9,6 +9,7 @@
 
 #include <functional>
 
+class QFrame;
 class QLabel;
 class QWidget;
 class QVBoxLayout;
@@ -16,6 +17,7 @@ class QPushButton;
 class QStackedWidget;
 
 namespace quizpane {
+class AiExplainService;
 class ProviderLoader;
 namespace ui {
 class MaterialCard;
@@ -72,8 +74,15 @@ private:
     ui::MaterialCard* solutionMaterialCard_ = nullptr;
     QVBoxLayout* solutionContentLayout_ = nullptr;
 
+    QPushButton* aiExplainButton_ = nullptr;
+    QFrame* aiExplainPanel_ = nullptr;
+    QLabel* aiExplainContentLabel_ = nullptr;
+    AiExplainService* aiService_ = nullptr;
+
     // ---- 只属于解析页的会话状态 ----
     int currentSolutionIndex_ = 0;
+
+    void onAiExplainClicked();
 
     friend class MainWindow;
 };

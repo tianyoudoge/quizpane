@@ -24,6 +24,8 @@ public:
     static QString lastProviderPath();
     static void setLastProviderPath(const QString& value);
     static void clearLastProviderPath();
+    static QString aiApiKey();
+    static void setAiApiKey(const QString& value);
     static QStringList pendingProviderDeletions();
     static void setPendingProviderDeletions(const QStringList& value);
 };

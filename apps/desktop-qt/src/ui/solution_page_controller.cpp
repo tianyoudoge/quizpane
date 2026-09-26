@@ -1,5 +1,7 @@
 #include "solution_page_controller.hpp"
 
+#include "../ai/ai_explain_service.hpp"
+#include "../app_settings.hpp"
 #include "line_icons.hpp"
 #include "material_card.hpp"
 #include "quizpane/pending_call.hpp"
@@ -18,6 +20,7 @@
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
@@ -97,6 +100,23 @@ void SolutionPageController::buildInto() {
     solutionContentLayout_->addWidget(solutionAnswerLabel_);
     solutionContentLayout_->addWidget(solutionExplanationLabel_);
     solutionContentLayout_->addStretch();
+    aiExplainPanel_ = new QFrame;
+    aiExplainPanel_->setObjectName(QStringLiteral("aiExplainPanel"));
+    aiExplainPanel_->setVisible(false);
+    auto* aiPanelLayout = new QVBoxLayout(aiExplainPanel_);
+    aiPanelLayout->setContentsMargins(10, 10, 10, 10);
+    aiPanelLayout->setSpacing(6);
+    auto* aiPanelTitle = new QLabel(QStringLiteral("✦ AI 解析"));
+    aiPanelTitle->setObjectName(QStringLiteral("aiExplainTitle"));
+    aiExplainContentLabel_ = new QLabel;
+    aiExplainContentLabel_->setObjectName(QStringLiteral("aiExplainContent"));
+    aiExplainContentLabel_->setWordWrap(true);
+    aiExplainContentLabel_->setTextFormat(Qt::RichText);
+    aiExplainContentLabel_->setOpenExternalLinks(false);
+    aiExplainContentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    aiPanelLayout->addWidget(aiPanelTitle);
+    aiPanelLayout->addWidget(aiExplainContentLabel_);
+    solutionContentLayout_->addWidget(aiExplainPanel_);
     solutionScroll->setWidget(solutionContent);
     solutionControlBar_ = new QWidget;
     solutionControlBar_->setObjectName(QStringLiteral("controlBar"));
@@ -107,6 +127,9 @@ void SolutionPageController::buildInto() {
     exportResultsButton_ = new QPushButton(QStringLiteral("查看作答结果"));
     exportResultsButton_->setObjectName(QStringLiteral("smallButton"));
     exportResultsButton_->setToolTip(QStringLiteral("预览适合手机查看的作答结果长图"));
+    aiExplainButton_ = new QPushButton(QStringLiteral("✦ AI 解析"));
+    aiExplainButton_->setObjectName(QStringLiteral("smallButton"));
+    aiExplainButton_->setToolTip(QStringLiteral("用 AI 解析这道题的解题步骤和知识点"));
     auto* backToCatalogButton = new QPushButton;
     previousSolutionButton_->setIcon(makeLineIcon(LineIcon::Previous));
     nextSolutionButton_->setIcon(makeLineIcon(LineIcon::Next));
@@ -123,6 +146,7 @@ void SolutionPageController::buildInto() {
     solutionNav->addWidget(nextSolutionButton_);
     solutionNav->addStretch();
     solutionNav->addWidget(exportResultsButton_);
+    solutionNav->addWidget(aiExplainButton_);
     solutionNav->addWidget(backToCatalogButton);
     QObject::connect(previousSolutionButton_, &QPushButton::clicked, solutionPage_,
             [this] { showSolution(currentSolutionIndex_ - 1); });
@@ -135,6 +159,31 @@ void SolutionPageController::buildInto() {
                 pages_->setCurrentWidget(catalogPage_);
                 if (onApplyUiSize_) onApplyUiSize_();
             });
+    aiService_ = new AiExplainService(solutionPage_);
+    QObject::connect(aiExplainButton_, &QPushButton::clicked, solutionPage_,
+        [this] { onAiExplainClicked(); });
+    QObject::connect(aiService_, &AiExplainService::requestStarted, solutionPage_,
+        [this] {
+            aiExplainButton_->setEnabled(false);
+            aiExplainButton_->setText(QStringLiteral("解析中…"));
+            aiExplainContentLabel_->setText(QStringLiteral("正在请求 AI 解析，请稍候…"));
+            aiExplainPanel_->setVisible(true);
+        });
+    QObject::connect(aiService_, &AiExplainService::responseReady, solutionPage_,
+        [this](const QString& html) {
+            aiExplainButton_->setEnabled(true);
+            aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
+            aiExplainContentLabel_->setText(html);
+            aiExplainPanel_->setVisible(true);
+        });
+    QObject::connect(aiService_, &AiExplainService::requestFailed, solutionPage_,
+        [this](const QString& error) {
+            aiExplainButton_->setEnabled(true);
+            aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
+            aiExplainContentLabel_->setText(
+                QStringLiteral("<span style=\"color:#c49f9d\">请求失败：%1</span>").arg(error.toHtmlEscaped()));
+            aiExplainPanel_->setVisible(true);
+        });
     solutionLayout->addWidget(resultSummaryLabel_);
     solutionLayout->addWidget(solutionProgressLabel_);
     solutionLayout->addWidget(solutionScroll, 1);
@@ -174,6 +223,11 @@ void SolutionPageController::requestResults() {
 
 void SolutionPageController::showSolution(int index) {
     if (session_->solutions.isEmpty()) return;
+    if (aiExplainPanel_) {
+        aiExplainPanel_->setVisible(false);
+        aiExplainButton_->setEnabled(true);
+        aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
+    }
     currentSolutionIndex_ = qBound(0, index, static_cast<int>(session_->solutions.size()) - 1);
     const QJsonObject solution = session_->solutions.at(currentSolutionIndex_).toObject();
     const QString materialId = solution.value("materialId").toString();
@@ -462,6 +516,53 @@ void SolutionPageController::exportAttemptResults() {
     });
     showImage();
     dialog.exec();
+}
+
+void SolutionPageController::onAiExplainClicked() {
+    QString apiKey = AppSettings::aiApiKey();
+    if (apiKey.trimmed().isEmpty()) {
+        QDialog dialog(solutionPage_);
+        dialog.setWindowTitle(QStringLiteral("配置 AI 解析"));
+        dialog.resize(420, 0);
+        auto* layout = new QVBoxLayout(&dialog);
+        layout->setSpacing(12);
+        layout->setContentsMargins(20, 16, 20, 16);
+        auto* intro = new QLabel(
+            QStringLiteral(
+                "<b>配置 API Key</b><br><br>"
+                "AI 解析功能需要一个大模型 API Key。<br><br>"
+                "推荐使用 DeepSeek（国内可用，按量计费）：<br>"
+                "1. 访问 <a href=\"https://platform.deepseek.com\">platform.deepseek.com</a> 注册账号<br>"
+                "2. 进入「API Keys」页面，点击「创建 API Key」<br>"
+                "3. 复制 Key 并粘贴到下方"
+            ));
+        intro->setWordWrap(true);
+        intro->setTextFormat(Qt::RichText);
+        intro->setOpenExternalLinks(true);
+        intro->setObjectName(QStringLiteral("solutionText"));
+        auto* keyEdit = new QLineEdit;
+        keyEdit->setPlaceholderText(QStringLiteral("sk-…"));
+        keyEdit->setEchoMode(QLineEdit::Password);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("保存并解析"));
+        layout->addWidget(intro);
+        layout->addWidget(keyEdit);
+        layout->addWidget(buttons);
+        QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+            const QString key = keyEdit->text().trimmed();
+            if (key.isEmpty()) return;
+            AppSettings::setAiApiKey(key);
+            dialog.accept();
+        });
+        QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        if (dialog.exec() != QDialog::Accepted) return;
+        apiKey = AppSettings::aiApiKey();
+    }
+    if (session_->solutions.isEmpty()) return;
+    const QJsonObject solution = session_->solutions.at(currentSolutionIndex_).toObject();
+    const QString questionHtml = solution.value(QStringLiteral("contentHtml")).toString();
+    const QJsonArray options = solution.value(QStringLiteral("options")).toArray();
+    aiService_->explain(questionHtml, options, apiKey);
 }
 
 }  // namespace quizpane

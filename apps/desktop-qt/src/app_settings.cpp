@@ -12,6 +12,7 @@ constexpr auto kBossKey = "bossKey/sequence";
 constexpr auto kAutoAdvance = "practice/autoAdvanceMs";
 constexpr auto kLastProvider = "provider/lastLibraryPath";
 constexpr auto kPendingDelete = "providers/pendingDelete";
+constexpr auto kAiApiKey = "ai/apiKey";
 }
 namespace {
 // 每次调用方法都新建 QSettings 在 Windows 上意味着每次都 RegOpenKeyEx；这里
@@ -46,6 +47,8 @@ int AppSettings::autoAdvanceMs() { return qBound(0, settings().value(keys::kAuto
 QString AppSettings::lastProviderPath() { return settings().value(keys::kLastProvider).toString(); }
 void AppSettings::setLastProviderPath(const QString& value) { settings().setValue(keys::kLastProvider, value); }
 void AppSettings::clearLastProviderPath() { settings().remove(keys::kLastProvider); }
+QString AppSettings::aiApiKey() { return settings().value(keys::kAiApiKey).toString(); }
+void AppSettings::setAiApiKey(const QString& value) { settings().setValue(keys::kAiApiKey, value); }
 QStringList AppSettings::pendingProviderDeletions() { return settings().value(keys::kPendingDelete).toStringList(); }
 void AppSettings::setPendingProviderDeletions(const QStringList& value) { settings().setValue(keys::kPendingDelete, value); }
 }  // namespace quizpane

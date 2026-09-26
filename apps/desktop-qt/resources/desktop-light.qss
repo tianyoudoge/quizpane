@@ -50,3 +50,6 @@ QLabel[correct="true"] { color: #3d7b55; font-weight: 600; }
 QLabel[correct="false"] { color: #a25450; font-weight: 600; }
 QFrame#submitConfirmationBubble { background: rgba(250,251,253,248); border: 1px solid rgba(68,85,103,35); border-radius: 9px; }
 QLabel#submitConfirmationText { background: transparent; color: #334252; }
+QFrame#aiExplainPanel { background: rgba(230,245,238,180); border: 1px solid rgba(80,160,120,60); border-radius: 7px; padding: 4px; }
+QLabel#aiExplainTitle { color: #2d6b4f; font-weight: 600; }
+QLabel#aiExplainContent { color: #3a4a44; }
