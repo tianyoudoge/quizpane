@@ -118,9 +118,11 @@ add_executable(solution_page_controller_test
     ../apps/desktop-qt/src/ui/material_card.cpp
     ../apps/desktop-qt/src/ui/line_icons.cpp
     ../apps/desktop-qt/src/ui/result_image_preview.cpp
+    ../apps/desktop-qt/src/ai/ai_explain_service.cpp
+    ../apps/desktop-qt/src/app_settings.cpp
 )
 target_link_libraries(solution_page_controller_test PRIVATE
-    quizpane_provider_host quizpane_core ${QUIZPANE_QT_PACKAGE}::Widgets)
+    quizpane_provider_host quizpane_core ${QUIZPANE_QT_PACKAGE}::Network ${QUIZPANE_QT_PACKAGE}::Widgets)
 add_test(NAME solution_page_controller_test COMMAND solution_page_controller_test)
 
 add_executable(material_card_test

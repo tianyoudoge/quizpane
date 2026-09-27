@@ -26,6 +26,18 @@ public:
     static void clearLastProviderPath();
     static QString aiApiKey();
     static void setAiApiKey(const QString& value);
+    static QString aiProvider();
+    static void setAiProvider(const QString& value);
+    static QString aiBaseUrl();
+    static void setAiBaseUrl(const QString& value);
+    static QString aiModel();
+    static void setAiModel(const QString& value);
+    static int aiTotalRequests();
+    static void incrementAiTotalRequests();
+    static qint64 aiTotalPromptTokens();
+    static void addAiPromptTokens(qint64 tokens);
+    static qint64 aiTotalCompletionTokens();
+    static void addAiCompletionTokens(qint64 tokens);
     static QStringList pendingProviderDeletions();
     static void setPendingProviderDeletions(const QStringList& value);
 };

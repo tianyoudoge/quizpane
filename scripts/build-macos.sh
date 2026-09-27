@@ -205,7 +205,15 @@ deploy_app() {
   "${deploy_args[@]}" 2>&1 | tee "$deploy_log"
   local deploy_status="${PIPESTATUS[0]}"
   set -e
-  if [[ "$deploy_status" -ne 0 ]] || grep -q '^ERROR:' "$deploy_log"; then
+  # macdeployqt 6.11+ exits non-zero and logs ERROR for optional modules that
+  # aren't installed (QtVirtualKeyboard). Treat those as warnings: only fail
+  # when there are ERROR lines that are not about optional virtual-keyboard
+  # modules AND not the "using QList" context line that follows them.
+  local real_errors
+  real_errors="$(grep '^ERROR:' "$deploy_log" \
+    | grep -v 'QtVirtualKeyboard' \
+    | grep -v 'using QList' || true)"
+  if [[ -n "$real_errors" ]]; then
     echo "macdeployqt 部署失败：$app_path" >&2
     rm -f "$deploy_log"
     return 1
