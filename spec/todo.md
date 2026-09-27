@@ -315,3 +315,11 @@ OSS 结果下载时会使任务停在重试。`MineruExtractionJob` 现将其专
 修复包 `49866ea` 已在同一 Win7 x64 虚拟机续接该真实云任务复验：界面递增至“4/4”，
 下一次失败后退出整理页并显示“智能解析未完成”，明确告知任务已保留、可稍后重新打开
 继续等待；未再出现“1/4”无限循环。
+
+### F6. CI preset 的 unity build 编译冲突 — 待修复（2026-09-27）
+
+`cmake --preset ci && cmake --build --preset ci` 在 macOS arm64 编译主程序时，
+`catalog_page_controller.cpp` 与 `practice_page_controller.cpp` 的匿名命名空间
+`clearLayout` 被合并到同一编译单元，出现重定义。临时用
+`cmake -S . -B build/ci -DQUIZPANE_ENABLE_UNITY_BUILD=OFF` 后完整构建成功，
+`ctest --test-dir build/ci --output-on-failure -j 4` 36/36 通过。

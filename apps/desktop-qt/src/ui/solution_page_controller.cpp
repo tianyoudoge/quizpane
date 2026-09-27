@@ -32,6 +32,7 @@
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyle>
+#include <QTextDocument>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -45,6 +46,57 @@ using ui::makeLineIcon;
 
 QString choiceLabel(int choice) {
     return choice >= 0 ? QString(QChar(u'A' + choice)) : QStringLiteral("未作答");
+}
+
+QString inlineOptionHtml(const QString& html) {
+    static const QRegularExpression paragraph(
+        QStringLiteral("^\\s*<p(?:\\s[^>]*)?>([\\s\\S]*)</p>\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression nestedParagraph(
+        QStringLiteral("<\\s*/?\\s*p\\b"), QRegularExpression::CaseInsensitiveOption);
+    const auto match = paragraph.match(html);
+    if (!match.hasMatch() || match.captured(1).contains(nestedParagraph)) return html;
+    return match.captured(1);
+}
+
+bool hasVisibleExplanation(const QString& html) {
+    if (html.contains(QRegularExpression(QStringLiteral("<\\s*img\\b"),
+                                          QRegularExpression::CaseInsensitiveOption))) return true;
+    QTextDocument document;
+    document.setHtml(html);
+    return !document.toPlainText().trimmed().isEmpty();
+}
+
+bool readBraced(const QString& text, int start, QString* contents, int* next) {
+    if (start >= text.size() || text.at(start) != QLatin1Char('{')) return false;
+    int depth = 0;
+    for (int i = start; i < text.size(); ++i) {
+        if (text.at(i) == QLatin1Char('{')) ++depth;
+        else if (text.at(i) == QLatin1Char('}') && --depth == 0) {
+            *contents = text.mid(start + 1, i - start - 1);
+            *next = i + 1;
+            return true;
+        }
+    }
+    return false;
+}
+
+QString convertFractions(QString text) {
+    int cursor = 0;
+    while ((cursor = text.indexOf(QStringLiteral("\\frac{"), cursor)) >= 0) {
+        QString numerator, denominator;
+        int afterNumerator = 0, afterDenominator = 0;
+        if (!readBraced(text, cursor + 5, &numerator, &afterNumerator) ||
+            !readBraced(text, afterNumerator, &denominator, &afterDenominator)) {
+            cursor += 5;
+            continue;
+        }
+        const QString html = QStringLiteral("<sup>%1</sup><span style=\"font-size:90%\">/</span><sub>%2</sub>")
+                                 .arg(convertFractions(numerator), convertFractions(denominator));
+        text.replace(cursor, afterDenominator - cursor, html);
+        cursor += html.size();
+    }
+    return text;
 }
 
 // Convert common Markdown and LaTeX fragments to Qt-renderable HTML.
@@ -83,11 +135,8 @@ QString normaliseFormulas(const QString& input) {
     s.replace(inlineMathRe, QStringLiteral("<span style=\"font-style:italic;\">\\1</span>"));
 
     // Common LaTeX commands → Unicode + HTML
-    // \frac{a}{b}
-    static const QRegularExpression fracRe(
-        QStringLiteral("\\\\frac\\{([^}]+)\\}\\{([^}]+)\\}"));
-    s.replace(fracRe, QStringLiteral(
-        "<sup>\\1</sup><span style=\"font-size:90%\">/</span><sub>\\2</sub>"));
+    // Fractions may contain nested fractions, so parse balanced braces.
+    s = convertFractions(s);
     // \sqrt{x}
     static const QRegularExpression sqrtRe(QStringLiteral("\\\\sqrt\\{([^}]+)\\}"));
     s.replace(sqrtRe, QStringLiteral("√<span style=\"text-decoration:overline;\">\\1</span>"));
@@ -96,6 +145,13 @@ QString normaliseFormulas(const QString& input) {
         QStringLiteral("\\\\sqrt\\[([^\\]]+)\\]\\{([^}]+)\\}"));
     s.replace(sqrtnRe, QStringLiteral(
         "<sup>\\1</sup>√<span style=\"text-decoration:overline;\">\\2</span>"));
+    // Process operators with limits before generic sub/superscripts consume them.
+    static const QRegularExpression sumRe(
+        QStringLiteral("\\\\sum_\\{([^}]+)\\}\\^\\{([^}]+)\\}"));
+    s.replace(sumRe, QStringLiteral("Σ<sub>\\1</sub><sup>\\2</sup>"));
+    static const QRegularExpression prodRe(
+        QStringLiteral("\\\\prod_\\{([^}]+)\\}\\^\\{([^}]+)\\}"));
+    s.replace(prodRe, QStringLiteral("∏<sub>\\1</sub><sup>\\2</sup>"));
     // Superscript: x^{n} or x^n
     static const QRegularExpression supBraceRe(QStringLiteral("\\^\\{([^}]+)\\}"));
     s.replace(supBraceRe, QStringLiteral("<sup>\\1</sup>"));
@@ -107,13 +163,7 @@ QString normaliseFormulas(const QString& input) {
     static const QRegularExpression subSimpleRe(QStringLiteral("_([A-Za-z0-9])"));
     s.replace(subSimpleRe, QStringLiteral("<sub>\\1</sub>"));
     // \sum, \prod, \int with limits
-    static const QRegularExpression sumRe(
-        QStringLiteral("\\\\sum_\\{([^}]+)\\}\\^\\{([^}]+)\\}"));
-    s.replace(sumRe, QStringLiteral("Σ<sub>\\1</sub><sup>\\2</sup>"));
     s.replace(QStringLiteral("\\sum"), QStringLiteral("Σ"));
-    static const QRegularExpression prodRe(
-        QStringLiteral("\\\\prod_\\{([^}]+)\\}\\^\\{([^}]+)\\}"));
-    s.replace(prodRe, QStringLiteral("∏<sub>\\1</sub><sup>\\2</sup>"));
     s.replace(QStringLiteral("\\prod"), QStringLiteral("∏"));
     s.replace(QStringLiteral("\\int"), QStringLiteral("∫"));
     // Common symbols
@@ -140,16 +190,18 @@ QString normaliseFormulas(const QString& input) {
     s.replace(QStringLiteral("\\cdot"),  QStringLiteral("·"));
     s.replace(QStringLiteral("\\ldots"), QStringLiteral("…"));
     s.replace(QStringLiteral("\\cdots"), QStringLiteral("⋯"));
-    // Remove remaining unknown \command braces  e.g. \text{abc} → abc
-    static const QRegularExpression unknownCmdRe(
-        QStringLiteral("\\\\[a-zA-Z]+\\{([^}]*)\\}"));
-    s.replace(unknownCmdRe, QStringLiteral("\\1"));
-    // Strip any remaining lone backslash-commands
-    static const QRegularExpression loneBackslashRe(QStringLiteral("\\\\[a-zA-Z]+"));
-    s.remove(loneBackslashRe);
+    s.replace(QStringLiteral("\\%"), QStringLiteral("%"));
+    s.replace(QStringLiteral("\\left"), QString());
+    s.replace(QStringLiteral("\\right"), QString());
+    // Text wrappers can be shown directly; preserve other commands so formulas remain inspectable.
+    static const QRegularExpression textCmdRe(
+        QStringLiteral("\\\\(?:text|mathrm|mathbf|operatorname)\\{([^}]*)\\}"));
+    s.replace(textCmdRe, QStringLiteral("\\1"));
 
     return s;
 }
+
+}  // namespace
 
 QString formatAiResponse(const QString& raw) {
     QString result = normaliseFormulas(raw);
@@ -178,8 +230,6 @@ QString formatAiResponse(const QString& raw) {
 
     return result;
 }
-
-}  // namespace
 
 void SolutionPageController::init(QWidget* solutionPage, QStackedWidget* pages,
                                   QWidget* catalogPage, ProviderLoader& provider,
@@ -266,6 +316,10 @@ void SolutionPageController::buildInto() {
     aiExplainButton_->setObjectName(QStringLiteral("smallButton"));
     aiExplainButton_->setToolTip(QStringLiteral("用 AI 解析这道题的解题步骤和知识点"));
     aiExplainButton_->setMinimumWidth(80);
+    aiConfigButton_ = new QPushButton(QStringLiteral("⚙"));
+    aiConfigButton_->setObjectName(QStringLiteral("aiConfigButton"));
+    aiConfigButton_->setAccessibleName(QStringLiteral("AI 解析设置"));
+    aiConfigButton_->setToolTip(QStringLiteral("AI 解析设置"));
     auto* backToCatalogButton = new QPushButton;
     previousSolutionButton_->setIcon(makeLineIcon(LineIcon::Previous));
     nextSolutionButton_->setIcon(makeLineIcon(LineIcon::Next));
@@ -283,6 +337,7 @@ void SolutionPageController::buildInto() {
     solutionNav->addStretch();
     solutionNav->addWidget(exportResultsButton_);
     solutionNav->addWidget(aiExplainButton_);
+    solutionNav->addWidget(aiConfigButton_);
     solutionNav->addWidget(backToCatalogButton);
     QObject::connect(previousSolutionButton_, &QPushButton::clicked, solutionPage_,
             [this] { showSolution(currentSolutionIndex_ - 1); });
@@ -309,6 +364,8 @@ void SolutionPageController::buildInto() {
         });
     QObject::connect(aiExplainButton_, &QPushButton::clicked, solutionPage_,
         [this] { onAiExplainClicked(); });
+    QObject::connect(aiConfigButton_, &QPushButton::clicked, solutionPage_,
+        [this] { showAiConfigDialog(); });
     QObject::connect(aiService_, &AiExplainService::requestStarted, solutionPage_,
         [this] {
             aiExplainButton_->setEnabled(false);
@@ -377,6 +434,7 @@ void SolutionPageController::requestResults() {
 void SolutionPageController::showSolution(int index) {
     if (session_->solutions.isEmpty()) return;
     if (aiExplainPanel_) {
+        aiService_->cancel();
         aiSpinnerTimer_->stop();
         aiExplainPanel_->setVisible(false);
         aiExplainButton_->setEnabled(true);
@@ -398,7 +456,11 @@ void SolutionPageController::showSolution(int index) {
         const auto option = optionValue.toObject();
         optionsHtml += QStringLiteral("<div class=\"option\"><b>%1.</b> %2</div>")
             .arg(option.value("label").toString().toHtmlEscaped(),
-                 option.value("contentHtml").toString());
+                 inlineOptionHtml(option.value("contentHtml").toString()));
+        const QString imageUrl = option.value(QStringLiteral("imageUrl")).toString();
+        if (!imageUrl.isEmpty())
+            optionsHtml += QStringLiteral("<p><img src=\"%1\" width=\"260\"></p>")
+                               .arg(imageUrl.toHtmlEscaped());
     }
     solutionQuestionLabel_->setText(
         QStringLiteral("<div style=\"color:#c7ccd2\">%1%2</div>")
@@ -420,7 +482,8 @@ void SolutionPageController::showSolution(int index) {
             : correct >= 0 && selectedChoices == QSet<int>{correct});
         correctAnswerLabel_->setVisible(true);
         answerStatusLabel_->setVisible(true);
-        solutionExplanationLabel_->setVisible(true);
+        const QString explanationHtml = solution.value("solutionHtml").toString();
+        solutionExplanationLabel_->setVisible(hasVisibleExplanation(explanationHtml));
         correctAnswerLabel_->setText(QStringLiteral("正确答案\n%1").arg(
             multiple ? labels(correctChoices) : choiceLabel(correct)));
         answerStatusLabel_->setText(isCorrect ? QStringLiteral("✓ 正确") : QStringLiteral("✗ 错误"));
@@ -429,7 +492,7 @@ void SolutionPageController::showSolution(int index) {
         answerStatusLabel_->style()->polish(answerStatusLabel_);
         solutionExplanationLabel_->setText(
             QStringLiteral("<div style=\"color:#aebbb5\"><p><b>解析</b></p>%1</div>")
-                .arg(solution.value("solutionHtml").toString()));
+                .arg(explanationHtml));
     } else {
         correctAnswerLabel_->setVisible(false);
         answerStatusLabel_->setVisible(false);
@@ -683,7 +746,27 @@ void SolutionPageController::onAiExplainClicked() {
     const QJsonObject solution = session_->solutions.at(currentSolutionIndex_).toObject();
     const QString questionHtml = solution.value(QStringLiteral("contentHtml")).toString();
     const QJsonArray options = solution.value(QStringLiteral("options")).toArray();
-    aiService_->explain(questionHtml, options, apiKey,
+    const QJsonObject material = session_->materialsById
+        .value(solution.value(QStringLiteral("materialId")).toString());
+    const QString materialHtml = material.value(QStringLiteral("title")).toString() +
+                                 QStringLiteral("\n") +
+                                 material.value(QStringLiteral("contentHtml")).toString();
+    const QJsonArray materialImageUrls = material.value(QStringLiteral("imageUrls")).toArray();
+    QString correctAnswer;
+    if (session_->attemptHasAnswerKey) {
+        const QJsonArray correctChoices = solution.value(QStringLiteral("correctChoices")).toArray();
+        if (!correctChoices.isEmpty()) {
+            QStringList labels;
+            for (const QJsonValue& value : correctChoices)
+                labels.append(choiceLabel(value.toInt(-1)));
+            correctAnswer = labels.join(QStringLiteral("、"));
+        } else {
+            const int choice = solution.value(QStringLiteral("correctChoice")).toInt(-1);
+            if (choice >= 0) correctAnswer = choiceLabel(choice);
+        }
+    }
+    aiService_->explain(questionHtml, options, materialHtml, materialImageUrls,
+                        correctAnswer, apiKey,
                         AppSettings::aiBaseUrl(), AppSettings::aiModel());
 }
 
@@ -864,7 +947,11 @@ bool SolutionPageController::showAiConfigDialog() {
     updateProviderHints(currentIdx);
 
     QObject::connect(providerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                     &dialog, updateProviderHints);
+                     &dialog, [&](int idx) {
+        updateProviderHints(idx);
+        baseUrlEdit->setText(providers.at(idx).baseUrl);
+        modelEdit->setText(providers.at(idx).defaultModel);
+    });
     QObject::connect(advancedToggle, &QPushButton::clicked, &dialog, [&] {
         const bool visible = !advancedWidget->isVisible();
         advancedWidget->setVisible(visible);
@@ -877,6 +964,12 @@ bool SolutionPageController::showAiConfigDialog() {
         const QString key = keyEdit->text().trimmed();
         if (key.isEmpty()) return;
         const Provider& p = providers.at(providerCombo->currentIndex());
+        if (p.id == QStringLiteral("custom") &&
+            (baseUrlEdit->text().trimmed().isEmpty() || modelEdit->text().trimmed().isEmpty())) {
+            QMessageBox::warning(&dialog, QStringLiteral("配置不完整"),
+                                 QStringLiteral("自定义供应商需要填写 Base URL 和模型名"));
+            return;
+        }
         AppSettings::setAiApiKey(key);
         AppSettings::setAiProvider(p.id);
         const QString typedUrl = baseUrlEdit->text().trimmed();

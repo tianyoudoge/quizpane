@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QLabel>
+#include <QPushButton>
 #include <QStackedWidget>
 
 int main(int argc, char** argv) {
@@ -19,6 +20,7 @@ int main(int argc, char** argv) {
     quizpane::SolutionPageController controller;
     controller.init(page, &pages, catalog, provider, session, size, [] {});
     controller.buildInto();
+    if (!page->findChild<QPushButton*>(QStringLiteral("aiConfigButton"))) return 12;
     auto* status = page->findChild<QLabel*>(QStringLiteral("answerStatus"));
     if (!status) return 1;
     const auto check = [&](const QJsonObject& solution, const QSet<int>& selected,
@@ -54,6 +56,45 @@ int main(int argc, char** argv) {
     if (!status->isHidden() || !explanation || !explanation->isHidden()) return 9;
     session.attemptHasAnswerKey = true;
     controller.showSolution(0);
-    if (status->isHidden() || explanation->isHidden()) return 10;
+    if (status->isHidden() || !explanation->isHidden()) return 10;
+    single.insert("correctChoice", 0);
+    single.insert("contentHtml", "<p>资料分析题</p>");
+    single.insert("options", QJsonArray{
+        QJsonObject{{"label", "A"}, {"contentHtml", "<p>低于 12.0%</p>"}},
+        QJsonObject{{"label", "D"}, {"contentHtml", "<p>超过 88.0%</p>"},
+                    {"imageUrl", "file:///tmp/option.png"}},
+        QJsonObject{{"label", "E"}, {"contentHtml", "<p>第一行</p><p>第二行</p>"}}});
+    single.insert("solutionHtml", "<p> </p>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    auto* question = page->findChild<QLabel*>(QStringLiteral("solutionQuestion"));
+    if (!question || !question->text().contains(QStringLiteral("<b>A.</b> 低于 12.0%")) ||
+        !question->text().contains(QStringLiteral("<b>D.</b> 超过 88.0%")) ||
+        !question->text().contains(QStringLiteral("<p>第一行</p><p>第二行</p>")) ||
+        !question->text().contains(QStringLiteral("file:///tmp/option.png")) ||
+        !explanation->isHidden()) return 15;
+    single.insert("solutionHtml", "<p>题库原解析</p>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    if (explanation->isHidden()) return 16;
+    single.insert("solutionHtml", "<p><img src=\"file:///tmp/solution.png\"></p>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    if (explanation->isHidden()) return 17;
+    const QString math = quizpane::formatAiResponse(
+        QStringLiteral("【解题步骤】\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}, "
+                       "\\sqrt{x} + x^{2} + \\sin{x}"));
+    if (!math.contains(QStringLiteral("Σ<sub>i=1</sub><sup>n</sup>")) ||
+        !math.contains(QStringLiteral("<sup>n(n+1)</sup>")) ||
+        !math.contains(QStringLiteral("√<span")) ||
+        !math.contains(QStringLiteral("x<sup>2</sup>")) ||
+        !math.contains(QStringLiteral("\\sin{x}"))) return 11;
+    const QString nested = quizpane::formatAiResponse(QStringLiteral("\\frac{1}{\\frac{2}{3}}"));
+    if (nested.contains(QStringLiteral("\\frac")) ||
+        !nested.contains(QStringLiteral("<sub><sup>2</sup>"))) return 13;
+    const QString q119 = quizpane::formatAiResponse(
+        QStringLiteral("\\frac{480.2-57.4}{480.2}\\times100\\% > 88.0\\%"));
+    if (!q119.contains(QStringLiteral("<sup>480.2-57.4</sup>")) ||
+        !q119.contains(QStringLiteral("×100% > 88.0%"))) return 14;
     return 0;
 }

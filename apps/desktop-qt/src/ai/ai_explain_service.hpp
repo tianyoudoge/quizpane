@@ -20,7 +20,10 @@ public:
     explicit AiExplainService(QObject* parent = nullptr);
 
     void explain(const QString& questionHtml, const QJsonArray& options,
+                 const QString& materialHtml, const QJsonArray& materialImageUrls,
+                 const QString& correctAnswer,
                  const QString& apiKey, const QString& baseUrl, const QString& model);
+    void cancel();
     bool isBusy() const { return reply_ != nullptr; }
 
 signals:
