@@ -11,6 +11,7 @@
 
 class QFrame;
 class QLabel;
+class QTimer;
 class QWidget;
 class QVBoxLayout;
 class QPushButton;
@@ -78,11 +79,14 @@ private:
     QFrame* aiExplainPanel_ = nullptr;
     QLabel* aiExplainContentLabel_ = nullptr;
     AiExplainService* aiService_ = nullptr;
+    QTimer* aiSpinnerTimer_ = nullptr;
+    int aiSpinnerFrame_ = 0;
 
     // ---- 只属于解析页的会话状态 ----
     int currentSolutionIndex_ = 0;
 
     void onAiExplainClicked();
+    bool showAiConfigDialog();
 
     friend class MainWindow;
 };

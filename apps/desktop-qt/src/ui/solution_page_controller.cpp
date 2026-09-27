@@ -10,6 +10,7 @@
 #include "result_image_preview.hpp"
 
 #include <QColor>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -24,12 +25,14 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSet>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyle>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -42,6 +45,138 @@ using ui::makeLineIcon;
 
 QString choiceLabel(int choice) {
     return choice >= 0 ? QString(QChar(u'A' + choice)) : QStringLiteral("未作答");
+}
+
+// Convert common Markdown and LaTeX fragments to Qt-renderable HTML.
+// Covers ~95% of exam question patterns without any external dependency.
+QString normaliseFormulas(const QString& input) {
+    QString s = input;
+
+    // --- Markdown structural conversion ---
+    // Fenced code blocks → <code>
+    static const QRegularExpression fenceRe(QStringLiteral("```[\\w]*\\n?([\\s\\S]*?)```"));
+    s.replace(fenceRe, QStringLiteral("<code>\\1</code>"));
+    // Inline code
+    static const QRegularExpression inlineCodeRe(QStringLiteral("`([^`]+)`"));
+    s.replace(inlineCodeRe, QStringLiteral("<code>\\1</code>"));
+    // Bold **text** or __text__
+    static const QRegularExpression boldRe(QStringLiteral("\\*\\*(.+?)\\*\\*|__(.+?)__"));
+    s.replace(boldRe, QStringLiteral("<b style=\"color:#c8cdd3;\">\\1\\2</b>"));
+    // Italic *text* or _text_ (not already consumed by bold)
+    static const QRegularExpression italicRe(QStringLiteral("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)|(?<!_)_(?!_)(.+?)(?<!_)_(?!_)"));
+    s.replace(italicRe, QStringLiteral("<i>\\1\\2</i>"));
+    // Markdown line breaks: two trailing spaces → <br>
+    static const QRegularExpression trailingSpaceRe(QStringLiteral("  \\n"));
+    s.replace(trailingSpaceRe, QStringLiteral("<br>"));
+    // Bare newlines between non-blank lines → <br> (model often omits <br>)
+    static const QRegularExpression bareNewlineRe(QStringLiteral("(?<!>)\\n(?!\\n|<)"));
+    s.replace(bareNewlineRe, QStringLiteral("<br>"));
+
+    // --- LaTeX math conversion ---
+    // Display math $$…$$ → block div (rendered inline here, surrounded by margins)
+    static const QRegularExpression dispMathRe(QStringLiteral("\\$\\$([\\s\\S]+?)\\$\\$"));
+    s.replace(dispMathRe, QStringLiteral(
+        "<div style=\"margin:4px 0;padding:2px 8px;"
+        "background:rgba(255,255,255,6);border-radius:4px;\">\\1</div>"));
+    // Inline math $…$
+    static const QRegularExpression inlineMathRe(QStringLiteral("\\$([^$\\n]+?)\\$"));
+    s.replace(inlineMathRe, QStringLiteral("<span style=\"font-style:italic;\">\\1</span>"));
+
+    // Common LaTeX commands → Unicode + HTML
+    // \frac{a}{b}
+    static const QRegularExpression fracRe(
+        QStringLiteral("\\\\frac\\{([^}]+)\\}\\{([^}]+)\\}"));
+    s.replace(fracRe, QStringLiteral(
+        "<sup>\\1</sup><span style=\"font-size:90%\">/</span><sub>\\2</sub>"));
+    // \sqrt{x}
+    static const QRegularExpression sqrtRe(QStringLiteral("\\\\sqrt\\{([^}]+)\\}"));
+    s.replace(sqrtRe, QStringLiteral("√<span style=\"text-decoration:overline;\">\\1</span>"));
+    // \sqrt[n]{x}
+    static const QRegularExpression sqrtnRe(
+        QStringLiteral("\\\\sqrt\\[([^\\]]+)\\]\\{([^}]+)\\}"));
+    s.replace(sqrtnRe, QStringLiteral(
+        "<sup>\\1</sup>√<span style=\"text-decoration:overline;\">\\2</span>"));
+    // Superscript: x^{n} or x^n
+    static const QRegularExpression supBraceRe(QStringLiteral("\\^\\{([^}]+)\\}"));
+    s.replace(supBraceRe, QStringLiteral("<sup>\\1</sup>"));
+    static const QRegularExpression supSimpleRe(QStringLiteral("\\^([A-Za-z0-9+\\-])"));
+    s.replace(supSimpleRe, QStringLiteral("<sup>\\1</sup>"));
+    // Subscript: x_{n} or x_n
+    static const QRegularExpression subBraceRe(QStringLiteral("_\\{([^}]+)\\}"));
+    s.replace(subBraceRe, QStringLiteral("<sub>\\1</sub>"));
+    static const QRegularExpression subSimpleRe(QStringLiteral("_([A-Za-z0-9])"));
+    s.replace(subSimpleRe, QStringLiteral("<sub>\\1</sub>"));
+    // \sum, \prod, \int with limits
+    static const QRegularExpression sumRe(
+        QStringLiteral("\\\\sum_\\{([^}]+)\\}\\^\\{([^}]+)\\}"));
+    s.replace(sumRe, QStringLiteral("Σ<sub>\\1</sub><sup>\\2</sup>"));
+    s.replace(QStringLiteral("\\sum"), QStringLiteral("Σ"));
+    static const QRegularExpression prodRe(
+        QStringLiteral("\\\\prod_\\{([^}]+)\\}\\^\\{([^}]+)\\}"));
+    s.replace(prodRe, QStringLiteral("∏<sub>\\1</sub><sup>\\2</sup>"));
+    s.replace(QStringLiteral("\\prod"), QStringLiteral("∏"));
+    s.replace(QStringLiteral("\\int"), QStringLiteral("∫"));
+    // Common symbols
+    s.replace(QStringLiteral("\\times"), QStringLiteral("×"));
+    s.replace(QStringLiteral("\\div"),   QStringLiteral("÷"));
+    s.replace(QStringLiteral("\\pm"),    QStringLiteral("±"));
+    s.replace(QStringLiteral("\\leq"),   QStringLiteral("≤"));
+    s.replace(QStringLiteral("\\geq"),   QStringLiteral("≥"));
+    s.replace(QStringLiteral("\\neq"),   QStringLiteral("≠"));
+    s.replace(QStringLiteral("\\approx"),QStringLiteral("≈"));
+    s.replace(QStringLiteral("\\infty"), QStringLiteral("∞"));
+    s.replace(QStringLiteral("\\pi"),    QStringLiteral("π"));
+    s.replace(QStringLiteral("\\alpha"), QStringLiteral("α"));
+    s.replace(QStringLiteral("\\beta"),  QStringLiteral("β"));
+    s.replace(QStringLiteral("\\gamma"), QStringLiteral("γ"));
+    s.replace(QStringLiteral("\\delta"), QStringLiteral("δ"));
+    s.replace(QStringLiteral("\\Delta"), QStringLiteral("Δ"));
+    s.replace(QStringLiteral("\\theta"), QStringLiteral("θ"));
+    s.replace(QStringLiteral("\\lambda"),QStringLiteral("λ"));
+    s.replace(QStringLiteral("\\mu"),    QStringLiteral("μ"));
+    s.replace(QStringLiteral("\\sigma"), QStringLiteral("σ"));
+    s.replace(QStringLiteral("\\Sigma"), QStringLiteral("Σ"));
+    s.replace(QStringLiteral("\\omega"), QStringLiteral("ω"));
+    s.replace(QStringLiteral("\\cdot"),  QStringLiteral("·"));
+    s.replace(QStringLiteral("\\ldots"), QStringLiteral("…"));
+    s.replace(QStringLiteral("\\cdots"), QStringLiteral("⋯"));
+    // Remove remaining unknown \command braces  e.g. \text{abc} → abc
+    static const QRegularExpression unknownCmdRe(
+        QStringLiteral("\\\\[a-zA-Z]+\\{([^}]*)\\}"));
+    s.replace(unknownCmdRe, QStringLiteral("\\1"));
+    // Strip any remaining lone backslash-commands
+    static const QRegularExpression loneBackslashRe(QStringLiteral("\\\\[a-zA-Z]+"));
+    s.remove(loneBackslashRe);
+
+    return s;
+}
+
+QString formatAiResponse(const QString& raw) {
+    QString result = normaliseFormulas(raw);
+
+    // Style section headers 【答案确认】 etc.
+    static const QRegularExpression headerRe(
+        QStringLiteral("【(答案确认|解题步骤|知识点|速算技巧)】"));
+    result.replace(headerRe,
+        QStringLiteral("<span style=\"color:#9fc4b0;font-weight:600;"
+                       "border-left:3px solid #5a9a80;padding-left:6px;display:inline-block;"
+                       "margin-top:6px;\">【\\1】</span>"));
+
+    // Highlight correct answer letter(s)
+    static const QRegularExpression correctRe(
+        QStringLiteral("正确答案[：:]?\\s*([A-D]+)"));
+    result.replace(correctRe,
+        QStringLiteral("正确答案：<span style=\"color:#9fb6a7;font-weight:700;"
+                       "text-decoration:underline;\">\\1</span>"));
+
+    // Speed-math / tips section: italicise and tint amber
+    static const QRegularExpression tipsContentRe(
+        QStringLiteral("(【速算技巧】.*?)(?=【|$)"),
+        QRegularExpression::DotMatchesEverythingOption);
+    result.replace(tipsContentRe,
+        QStringLiteral("<span style=\"color:#c8a96e;font-style:italic;\">\\1</span>"));
+
+    return result;
 }
 
 }  // namespace
@@ -130,6 +265,7 @@ void SolutionPageController::buildInto() {
     aiExplainButton_ = new QPushButton(QStringLiteral("✦ AI 解析"));
     aiExplainButton_->setObjectName(QStringLiteral("smallButton"));
     aiExplainButton_->setToolTip(QStringLiteral("用 AI 解析这道题的解题步骤和知识点"));
+    aiExplainButton_->setMinimumWidth(80);
     auto* backToCatalogButton = new QPushButton;
     previousSolutionButton_->setIcon(makeLineIcon(LineIcon::Previous));
     nextSolutionButton_->setIcon(makeLineIcon(LineIcon::Next));
@@ -160,24 +296,41 @@ void SolutionPageController::buildInto() {
                 if (onApplyUiSize_) onApplyUiSize_();
             });
     aiService_ = new AiExplainService(solutionPage_);
+    aiSpinnerTimer_ = new QTimer(solutionPage_);
+    aiSpinnerTimer_->setInterval(120);
+    QObject::connect(aiSpinnerTimer_, &QTimer::timeout, solutionPage_,
+        [this] {
+            static const char* frames[] = {
+                "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
+            };
+            aiSpinnerFrame_ = (aiSpinnerFrame_ + 1) % 10;
+            aiExplainButton_->setText(
+                QStringLiteral("%1 解析中").arg(QString::fromUtf8(frames[aiSpinnerFrame_])));
+        });
     QObject::connect(aiExplainButton_, &QPushButton::clicked, solutionPage_,
         [this] { onAiExplainClicked(); });
     QObject::connect(aiService_, &AiExplainService::requestStarted, solutionPage_,
         [this] {
             aiExplainButton_->setEnabled(false);
-            aiExplainButton_->setText(QStringLiteral("解析中…"));
+            aiSpinnerFrame_ = 0;
+            aiSpinnerTimer_->start();
             aiExplainContentLabel_->setText(QStringLiteral("正在请求 AI 解析，请稍候…"));
             aiExplainPanel_->setVisible(true);
         });
     QObject::connect(aiService_, &AiExplainService::responseReady, solutionPage_,
-        [this](const QString& html) {
+        [this](const QString& html, quizpane::AiUsage usage) {
+            aiSpinnerTimer_->stop();
             aiExplainButton_->setEnabled(true);
             aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
-            aiExplainContentLabel_->setText(html);
+            AppSettings::incrementAiTotalRequests();
+            AppSettings::addAiPromptTokens(usage.promptTokens);
+            AppSettings::addAiCompletionTokens(usage.completionTokens);
+            aiExplainContentLabel_->setText(formatAiResponse(html));
             aiExplainPanel_->setVisible(true);
         });
     QObject::connect(aiService_, &AiExplainService::requestFailed, solutionPage_,
         [this](const QString& error) {
+            aiSpinnerTimer_->stop();
             aiExplainButton_->setEnabled(true);
             aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
             aiExplainContentLabel_->setText(
@@ -224,6 +377,7 @@ void SolutionPageController::requestResults() {
 void SolutionPageController::showSolution(int index) {
     if (session_->solutions.isEmpty()) return;
     if (aiExplainPanel_) {
+        aiSpinnerTimer_->stop();
         aiExplainPanel_->setVisible(false);
         aiExplainButton_->setEnabled(true);
         aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
@@ -521,48 +675,219 @@ void SolutionPageController::exportAttemptResults() {
 void SolutionPageController::onAiExplainClicked() {
     QString apiKey = AppSettings::aiApiKey();
     if (apiKey.trimmed().isEmpty()) {
-        QDialog dialog(solutionPage_);
-        dialog.setWindowTitle(QStringLiteral("配置 AI 解析"));
-        dialog.resize(420, 0);
-        auto* layout = new QVBoxLayout(&dialog);
-        layout->setSpacing(12);
-        layout->setContentsMargins(20, 16, 20, 16);
-        auto* intro = new QLabel(
-            QStringLiteral(
-                "<b>配置 API Key</b><br><br>"
-                "AI 解析功能需要一个大模型 API Key。<br><br>"
-                "推荐使用 DeepSeek（国内可用，按量计费）：<br>"
-                "1. 访问 <a href=\"https://platform.deepseek.com\">platform.deepseek.com</a> 注册账号<br>"
-                "2. 进入「API Keys」页面，点击「创建 API Key」<br>"
-                "3. 复制 Key 并粘贴到下方"
-            ));
-        intro->setWordWrap(true);
-        intro->setTextFormat(Qt::RichText);
-        intro->setOpenExternalLinks(true);
-        intro->setObjectName(QStringLiteral("solutionText"));
-        auto* keyEdit = new QLineEdit;
-        keyEdit->setPlaceholderText(QStringLiteral("sk-…"));
-        keyEdit->setEchoMode(QLineEdit::Password);
-        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-        buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("保存并解析"));
-        layout->addWidget(intro);
-        layout->addWidget(keyEdit);
-        layout->addWidget(buttons);
-        QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
-            const QString key = keyEdit->text().trimmed();
-            if (key.isEmpty()) return;
-            AppSettings::setAiApiKey(key);
-            dialog.accept();
-        });
-        QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-        if (dialog.exec() != QDialog::Accepted) return;
+        if (!showAiConfigDialog()) return;
         apiKey = AppSettings::aiApiKey();
     }
+
     if (session_->solutions.isEmpty()) return;
     const QJsonObject solution = session_->solutions.at(currentSolutionIndex_).toObject();
     const QString questionHtml = solution.value(QStringLiteral("contentHtml")).toString();
     const QJsonArray options = solution.value(QStringLiteral("options")).toArray();
-    aiService_->explain(questionHtml, options, apiKey);
+    aiService_->explain(questionHtml, options, apiKey,
+                        AppSettings::aiBaseUrl(), AppSettings::aiModel());
 }
+
+bool SolutionPageController::showAiConfigDialog() {
+    QDialog dialog(solutionPage_);
+    dialog.setWindowTitle(QStringLiteral("AI 解析 · 配置"));
+    dialog.setMinimumWidth(400);
+    dialog.setStyleSheet(QStringLiteral(R"QSS(
+        QDialog { background: #13181f; color: #c8cdd3; }
+        QLabel { color: #c8cdd3; background: transparent; }
+        QLabel#sectionTitle { color: #e0e3e7; font-weight: 600; }
+        QLabel#detail { color: #9ca3ab; font-size: 11px; }
+        QLineEdit, QComboBox {
+            background: rgba(255,255,255,10);
+            border: 1px solid rgba(255,255,255,14);
+            border-radius: 7px;
+            color: #c8cdd3;
+            padding: 5px 8px;
+        }
+        QLineEdit:focus, QComboBox:focus { border-color: rgba(130,180,155,100); }
+        QComboBox::drop-down { border: none; }
+        QComboBox QAbstractItemView {
+            background: #1b232d; color: #c8cdd3;
+            selection-background-color: rgba(255,255,255,15);
+            border: 1px solid rgba(255,255,255,18);
+        }
+        QPushButton {
+            background: rgba(255,255,255,12); color: #c8cdd3;
+            border: 1px solid rgba(255,255,255,14);
+            border-radius: 7px; padding: 5px 12px;
+        }
+        QPushButton:hover { background: rgba(255,255,255,22); }
+        QPushButton:disabled { background: transparent; color: rgba(170,176,184,70); }
+        QPushButton#primaryButton {
+            background: rgba(90,154,128,60);
+            border-color: rgba(130,180,155,80); color: #d4ede5;
+        }
+        QPushButton#primaryButton:hover { background: rgba(90,154,128,90); }
+        QFrame#divider { background: rgba(255,255,255,10); }
+        QFrame#statsBox {
+            background: rgba(255,255,255,6);
+            border: 1px solid rgba(255,255,255,10); border-radius: 7px;
+        }
+    )QSS"));
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(20, 18, 20, 18);
+    layout->setSpacing(12);
+
+    auto* titleLabel = new QLabel(QStringLiteral("AI 解析设置"));
+    titleLabel->setObjectName(QStringLiteral("sectionTitle"));
+    QFont titleFont = titleLabel->font();
+    titleFont.setPixelSize(14);
+    titleFont.setBold(true);
+    titleLabel->setFont(titleFont);
+    layout->addWidget(titleLabel);
+
+    layout->addWidget(new QLabel(QStringLiteral("供应商")));
+
+    struct Provider { QString id, name, baseUrl, defaultModel; };
+    const QList<Provider> providers = {
+        {QStringLiteral("deepseek"), QStringLiteral("DeepSeek"),
+         QStringLiteral("https://api.deepseek.com/v1"), QStringLiteral("deepseek-chat")},
+        {QStringLiteral("aliyun"), QStringLiteral("阿里百炼"),
+         QStringLiteral("https://dashscope.aliyuncs.com/compatible-mode/v1"), QStringLiteral("qwen-plus")},
+        {QStringLiteral("volcengine"), QStringLiteral("火山方舟"),
+         QStringLiteral("https://ark.cn-beijing.volces.com/api/v3"), QStringLiteral("doubao-pro-4k")},
+        {QStringLiteral("zhipu"), QStringLiteral("智谱 GLM"),
+         QStringLiteral("https://open.bigmodel.cn/api/paas/v4"), QStringLiteral("glm-4-flash")},
+        {QStringLiteral("kimi"), QStringLiteral("Kimi"),
+         QStringLiteral("https://api.moonshot.cn/v1"), QStringLiteral("moonshot-v1-8k")},
+        {QStringLiteral("custom"), QStringLiteral("自定义"), QString(), QString()},
+    };
+
+    auto* providerCombo = new QComboBox;
+    const QString savedProvider = AppSettings::aiProvider();
+    int currentIdx = 0;
+    for (int i = 0; i < providers.size(); ++i) {
+        providerCombo->addItem(providers[i].name);
+        if (providers[i].id == savedProvider) currentIdx = i;
+    }
+    providerCombo->setCurrentIndex(currentIdx);
+    layout->addWidget(providerCombo);
+
+    auto* regLinkLabel = new QLabel;
+    regLinkLabel->setObjectName(QStringLiteral("detail"));
+    regLinkLabel->setWordWrap(true);
+    regLinkLabel->setOpenExternalLinks(true);
+    regLinkLabel->setTextFormat(Qt::RichText);
+    layout->addWidget(regLinkLabel);
+
+    layout->addWidget(new QLabel(QStringLiteral("API Key")));
+    auto* keyEdit = new QLineEdit;
+    keyEdit->setPlaceholderText(QStringLiteral("sk-…"));
+    keyEdit->setEchoMode(QLineEdit::Password);
+    keyEdit->setText(AppSettings::aiApiKey());
+    layout->addWidget(keyEdit);
+
+    auto* advancedToggle = new QPushButton(QStringLiteral("▶ 高级设置"));
+    advancedToggle->setFlat(true);
+    advancedToggle->setStyleSheet(QStringLiteral(
+        "QPushButton { background: transparent; border: none; color: #9ca3ab; "
+        "text-align: left; padding: 0; }"
+        "QPushButton:hover { color: #c8cdd3; }"));
+    layout->addWidget(advancedToggle);
+
+    auto* advancedWidget = new QWidget;
+    advancedWidget->setVisible(false);
+    auto* advancedLayout = new QVBoxLayout(advancedWidget);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
+    advancedLayout->setSpacing(8);
+    auto* baseUrlLabel = new QLabel(QStringLiteral("Base URL（留空使用默认）"));
+    baseUrlLabel->setObjectName(QStringLiteral("detail"));
+    auto* baseUrlEdit = new QLineEdit;
+    baseUrlEdit->setPlaceholderText(QStringLiteral("https://api.example.com/v1"));
+    baseUrlEdit->setText(AppSettings::aiBaseUrl());
+    auto* modelLabel = new QLabel(QStringLiteral("模型（留空使用默认）"));
+    modelLabel->setObjectName(QStringLiteral("detail"));
+    auto* modelEdit = new QLineEdit;
+    modelEdit->setPlaceholderText(QStringLiteral("model-name"));
+    modelEdit->setText(AppSettings::aiModel());
+    advancedLayout->addWidget(baseUrlLabel);
+    advancedLayout->addWidget(baseUrlEdit);
+    advancedLayout->addWidget(modelLabel);
+    advancedLayout->addWidget(modelEdit);
+    layout->addWidget(advancedWidget);
+
+    auto* divider = new QFrame;
+    divider->setObjectName(QStringLiteral("divider"));
+    divider->setFixedHeight(1);
+    layout->addWidget(divider);
+
+    auto* statsBox = new QFrame;
+    statsBox->setObjectName(QStringLiteral("statsBox"));
+    auto* statsLayout = new QVBoxLayout(statsBox);
+    statsLayout->setContentsMargins(10, 8, 10, 8);
+    statsLayout->setSpacing(3);
+    auto* statsTitle = new QLabel(QStringLiteral("用量统计"));
+    statsTitle->setObjectName(QStringLiteral("detail"));
+    auto* statsDetail = new QLabel(
+        QStringLiteral("共解析 %1 次 · 输入 %2 tokens · 输出 %3 tokens")
+            .arg(AppSettings::aiTotalRequests())
+            .arg(AppSettings::aiTotalPromptTokens())
+            .arg(AppSettings::aiTotalCompletionTokens()));
+    statsDetail->setObjectName(QStringLiteral("detail"));
+    statsLayout->addWidget(statsTitle);
+    statsLayout->addWidget(statsDetail);
+    layout->addWidget(statsBox);
+
+    auto* buttonsRow = new QHBoxLayout;
+    auto* cancelBtn = new QPushButton(QStringLiteral("取消"));
+    auto* saveBtn = new QPushButton(QStringLiteral("保存"));
+    saveBtn->setObjectName(QStringLiteral("primaryButton"));
+    buttonsRow->addStretch();
+    buttonsRow->addWidget(cancelBtn);
+    buttonsRow->addWidget(saveBtn);
+    layout->addLayout(buttonsRow);
+
+    const auto updateProviderHints = [&](int idx) {
+        const Provider& p = providers.at(idx);
+        static const QHash<QString, QString> links = {
+            {QStringLiteral("deepseek"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://platform.deepseek.com'>platform.deepseek.com</a>")},
+            {QStringLiteral("aliyun"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://bailian.console.aliyun.com'>bailian.console.aliyun.com</a>")},
+            {QStringLiteral("volcengine"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://www.volcengine.com/product/ark'>volcengine.com/ark</a>")},
+            {QStringLiteral("zhipu"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://open.bigmodel.cn'>open.bigmodel.cn</a>")},
+            {QStringLiteral("kimi"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://platform.moonshot.cn'>platform.moonshot.cn</a>")},
+        };
+        regLinkLabel->setText(links.value(p.id,
+            QStringLiteral("填写自定义供应商的 Base URL 和模型名")));
+        if (!p.baseUrl.isEmpty()) baseUrlEdit->setPlaceholderText(p.baseUrl);
+        if (!p.defaultModel.isEmpty()) modelEdit->setPlaceholderText(p.defaultModel);
+    };
+    updateProviderHints(currentIdx);
+
+    QObject::connect(providerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                     &dialog, updateProviderHints);
+    QObject::connect(advancedToggle, &QPushButton::clicked, &dialog, [&] {
+        const bool visible = !advancedWidget->isVisible();
+        advancedWidget->setVisible(visible);
+        advancedToggle->setText(visible
+            ? QStringLiteral("▼ 高级设置") : QStringLiteral("▶ 高级设置"));
+        dialog.adjustSize();
+    });
+    QObject::connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    QObject::connect(saveBtn, &QPushButton::clicked, &dialog, [&] {
+        const QString key = keyEdit->text().trimmed();
+        if (key.isEmpty()) return;
+        const Provider& p = providers.at(providerCombo->currentIndex());
+        AppSettings::setAiApiKey(key);
+        AppSettings::setAiProvider(p.id);
+        const QString typedUrl = baseUrlEdit->text().trimmed();
+        AppSettings::setAiBaseUrl(typedUrl.isEmpty() ? p.baseUrl : typedUrl);
+        const QString typedModel = modelEdit->text().trimmed();
+        AppSettings::setAiModel(typedModel.isEmpty() ? p.defaultModel : typedModel);
+        dialog.accept();
+    });
+
+    return dialog.exec() == QDialog::Accepted;
+}
+
 
 }  // namespace quizpane
