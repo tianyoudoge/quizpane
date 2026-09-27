@@ -40,6 +40,7 @@ bool ProviderLoader::load(const QString& libraryPath, QString* error) {
         }
         descriptor_ = declarative_.descriptor();
         providerId_ = descriptor_.value(QStringLiteral("id")).toString();
+        loadedPath_ = QFileInfo(libraryPath).absoluteFilePath();
         diagnostic::event(QStringLiteral("provider"), QStringLiteral("load-success"),
             {{QStringLiteral("kind"), QStringLiteral("declarative")},
              {QStringLiteral("id"), providerId_}});
@@ -101,6 +102,7 @@ bool ProviderLoader::load(const QString& libraryPath, QString* error) {
         unload();
         return false;
     }
+    loadedPath_ = QFileInfo(libraryPath).absoluteFilePath();
     diagnostic::event(QStringLiteral("provider"), QStringLiteral("load-success"),
         {{QStringLiteral("kind"), QStringLiteral("native")},
          {QStringLiteral("id"), providerId_},
@@ -116,6 +118,7 @@ void ProviderLoader::unload() {
     destroyFn_ = nullptr;
     descriptor_ = {};
     providerId_.clear();
+    loadedPath_.clear();
     pendingRequests_.clear();
     declarative_.unload();
     // PreventUnloadHint 告诉 Qt 在卸载原生题库后不要真正把动态库从进程地址空间

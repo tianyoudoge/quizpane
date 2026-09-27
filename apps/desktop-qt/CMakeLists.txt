@@ -35,6 +35,8 @@ quizpane_add_executable(quizpane
     src/ui/app_dialogs.hpp
     src/ai/ai_explain_service.cpp
     src/ai/ai_explain_service.hpp
+    src/ai/ai_explanation_store.cpp
+    src/ai/ai_explanation_store.hpp
     resources/resources.qrc
 )
 if(QUIZPANE_HAVE_WEBSOCKETS)

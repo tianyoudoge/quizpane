@@ -5,6 +5,8 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QHash>
+#include <QSet>
 #include <QString>
 
 #include <functional>
@@ -45,6 +47,7 @@ public:
     void exportAttemptResults();
     void setResultSummary(const QString& text);
     void setNoSolutionsMessage();
+    void resetAiExplanations();
 
     int currentSolutionIndex() const { return currentSolutionIndex_; }
     int solutionCount() const { return static_cast<int>(session_->solutions.size()); }
@@ -80,9 +83,13 @@ private:
     QPushButton* aiConfigButton_ = nullptr;
     QFrame* aiExplainPanel_ = nullptr;
     QLabel* aiExplainContentLabel_ = nullptr;
+    QLabel* aiSaveStatusLabel_ = nullptr;
     AiExplainService* aiService_ = nullptr;
     QTimer* aiSpinnerTimer_ = nullptr;
     int aiSpinnerFrame_ = 0;
+    QString aiBankPath_;
+    QHash<QString, QString> aiExplanations_;
+    QSet<QString> unsavedAiIds_;
 
     // ---- 只属于解析页的会话状态 ----
     int currentSolutionIndex_ = 0;

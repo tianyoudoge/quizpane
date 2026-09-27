@@ -25,6 +25,7 @@ public:
     void unload();
     [[nodiscard]] bool isLoaded() const;
     [[nodiscard]] QJsonObject descriptor() const;
+    [[nodiscard]] QString loadedPath() const { return loadedPath_; }
     bool request(const QJsonObject& request, QString* error = nullptr);
     bool cancel(const QString& requestId, QString* error = nullptr);
 
@@ -55,6 +56,7 @@ private:
     DeclarativeProvider declarative_;
     QJsonObject descriptor_;
     QString providerId_;
+    QString loadedPath_;
     qp_provider_handle* handle_ = nullptr;
     qp_provider_request_fn requestFn_ = nullptr;
     qp_provider_cancel_fn cancelFn_ = nullptr;

@@ -1168,6 +1168,7 @@ bool MainWindow::loadProvider(const QString& path) {
     session_.attemptHasAnswerKey = true;
     session_.materialsById.clear();
     session_.answers.clear();
+    solutionController_.resetAiExplanations();
     if (practiceController_.navigator()) practiceController_.navigator()->hide();
     QString error;
     if (!provider_.load(path, &error)) {

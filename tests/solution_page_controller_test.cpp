@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QLabel>
+#include <QFrame>
 #include <QPushButton>
 #include <QStackedWidget>
 
@@ -81,6 +82,24 @@ int main(int argc, char** argv) {
     session.solutions = QJsonArray{single};
     controller.showSolution(0);
     if (explanation->isHidden()) return 17;
+    single.insert("id", "formula-q1");
+    single.insert("aiSolutionHtml", "<div>\\sin{x} + x^{2}</div>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    auto* aiPanel = page->findChild<QFrame*>(QStringLiteral("aiExplainPanel"));
+    auto* aiContent = page->findChild<QLabel*>(QStringLiteral("aiExplainContent"));
+    if (!aiPanel || aiPanel->isHidden() || !aiContent ||
+        !aiContent->text().contains(QStringLiteral("sin(x) + x<sup>2</sup>"))) return 18;
+    QJsonObject other = single;
+    other.insert("id", "formula-q2");
+    other.remove("aiSolutionHtml");
+    session.solutions = QJsonArray{single, other};
+    session.answers = {{0}, {0}};
+    controller.showSolution(1);
+    if (!aiPanel->isHidden()) return 19;
+    controller.showSolution(0);
+    if (aiPanel->isHidden() ||
+        !aiContent->text().contains(QStringLiteral("sin(x) + x<sup>2</sup>"))) return 20;
     const QString math = quizpane::formatAiResponse(
         QStringLiteral("【解题步骤】\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}, "
                        "\\sqrt{x} + x^{2} + \\sin{x}"));
@@ -88,7 +107,7 @@ int main(int argc, char** argv) {
         !math.contains(QStringLiteral("<sup>n(n+1)</sup>")) ||
         !math.contains(QStringLiteral("√<span")) ||
         !math.contains(QStringLiteral("x<sup>2</sup>")) ||
-        !math.contains(QStringLiteral("\\sin{x}"))) return 11;
+        !math.contains(QStringLiteral("sin(x)"))) return 11;
     const QString nested = quizpane::formatAiResponse(QStringLiteral("\\frac{1}{\\frac{2}{3}}"));
     if (nested.contains(QStringLiteral("\\frac")) ||
         !nested.contains(QStringLiteral("<sub><sup>2</sup>"))) return 13;

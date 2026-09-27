@@ -119,6 +119,7 @@ add_executable(solution_page_controller_test
     ../apps/desktop-qt/src/ui/line_icons.cpp
     ../apps/desktop-qt/src/ui/result_image_preview.cpp
     ../apps/desktop-qt/src/ai/ai_explain_service.cpp
+    ../apps/desktop-qt/src/ai/ai_explanation_store.cpp
     ../apps/desktop-qt/src/app_settings.cpp
 )
 target_link_libraries(solution_page_controller_test PRIVATE
@@ -140,6 +141,16 @@ add_executable(ai_explain_multimodal_test
 target_link_libraries(ai_explain_multimodal_test PRIVATE
     ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Gui ${QUIZPANE_QT_PACKAGE}::Network)
 add_test(NAME ai_explain_multimodal_test COMMAND ai_explain_multimodal_test)
+
+add_executable(ai_explanation_store_test
+    ai_explanation_store_test.cpp
+    ../apps/desktop-qt/src/ai/ai_explanation_store.cpp
+)
+target_compile_definitions(ai_explanation_store_test PRIVATE
+    DECLARATIVE_BANK_PATH="${PROJECT_SOURCE_DIR}/schemas/examples/declarative/content/bank.json")
+target_link_libraries(ai_explanation_store_test PRIVATE
+    quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
+add_test(NAME ai_explanation_store_test COMMAND ai_explanation_store_test)
 
 add_executable(material_card_test
     material_card_test.cpp

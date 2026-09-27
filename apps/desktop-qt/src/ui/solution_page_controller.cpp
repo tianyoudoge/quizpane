@@ -1,6 +1,7 @@
 #include "solution_page_controller.hpp"
 
 #include "../ai/ai_explain_service.hpp"
+#include "../ai/ai_explanation_store.hpp"
 #include "../app_settings.hpp"
 #include "line_icons.hpp"
 #include "material_card.hpp"
@@ -197,6 +198,12 @@ QString normaliseFormulas(const QString& input) {
     static const QRegularExpression textCmdRe(
         QStringLiteral("\\\\(?:text|mathrm|mathbf|operatorname)\\{([^}]*)\\}"));
     s.replace(textCmdRe, QStringLiteral("\\1"));
+    static const QRegularExpression functionRe(
+        QStringLiteral("\\\\(sin|cos|tan|log|ln)\\{([^{}]+)\\}"));
+    s.replace(functionRe, QStringLiteral("\\1(\\2)"));
+    static const QRegularExpression bareFunctionRe(
+        QStringLiteral("\\\\(sin|cos|tan|log|ln)\\b"));
+    s.replace(bareFunctionRe, QStringLiteral("\\1"));
 
     return s;
 }
@@ -284,7 +291,6 @@ void SolutionPageController::buildInto() {
     solutionContentLayout_->addSpacing(8);
     solutionContentLayout_->addWidget(solutionAnswerLabel_);
     solutionContentLayout_->addWidget(solutionExplanationLabel_);
-    solutionContentLayout_->addStretch();
     aiExplainPanel_ = new QFrame;
     aiExplainPanel_->setObjectName(QStringLiteral("aiExplainPanel"));
     aiExplainPanel_->setVisible(false);
@@ -299,9 +305,14 @@ void SolutionPageController::buildInto() {
     aiExplainContentLabel_->setTextFormat(Qt::RichText);
     aiExplainContentLabel_->setOpenExternalLinks(false);
     aiExplainContentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    aiSaveStatusLabel_ = new QLabel;
+    aiSaveStatusLabel_->setObjectName(QStringLiteral("detail"));
+    aiSaveStatusLabel_->setWordWrap(true);
     aiPanelLayout->addWidget(aiPanelTitle);
     aiPanelLayout->addWidget(aiExplainContentLabel_);
+    aiPanelLayout->addWidget(aiSaveStatusLabel_);
     solutionContentLayout_->addWidget(aiExplainPanel_);
+    solutionContentLayout_->addStretch();
     solutionScroll->setWidget(solutionContent);
     solutionControlBar_ = new QWidget;
     solutionControlBar_->setObjectName(QStringLiteral("controlBar"));
@@ -372,6 +383,7 @@ void SolutionPageController::buildInto() {
             aiSpinnerFrame_ = 0;
             aiSpinnerTimer_->start();
             aiExplainContentLabel_->setText(QStringLiteral("正在请求 AI 解析，请稍候…"));
+            aiSaveStatusLabel_->clear();
             aiExplainPanel_->setVisible(true);
         });
     QObject::connect(aiService_, &AiExplainService::responseReady, solutionPage_,
@@ -383,6 +395,16 @@ void SolutionPageController::buildInto() {
             AppSettings::addAiPromptTokens(usage.promptTokens);
             AppSettings::addAiCompletionTokens(usage.completionTokens);
             aiExplainContentLabel_->setText(formatAiResponse(html));
+            const QString id = session_->solutions.at(currentSolutionIndex_).toObject()
+                                   .value(QStringLiteral("id")).toString();
+            if (!id.isEmpty()) aiExplanations_.insert(id, html);
+            QString saveError;
+            const bool saved = saveAiExplanation(provider_->loadedPath(), id, html, &saveError);
+            if (saved) unsavedAiIds_.remove(id);
+            else unsavedAiIds_.insert(id);
+            aiSaveStatusLabel_->setText(saved ? QStringLiteral("已保存到题库，可再次打开查看")
+                                               : QStringLiteral("本次可回看，未写入题库：%1").arg(saveError));
+            aiExplainButton_->setText(QStringLiteral("重新生成"));
             aiExplainPanel_->setVisible(true);
         });
     QObject::connect(aiService_, &AiExplainService::requestFailed, solutionPage_,
@@ -412,6 +434,13 @@ void SolutionPageController::setNoSolutionsMessage() {
     solutionProgressLabel_->setText(QStringLiteral("暂无题目解析"));
 }
 
+void SolutionPageController::resetAiExplanations() {
+    if (aiService_) aiService_->cancel();
+    aiBankPath_.clear();
+    aiExplanations_.clear();
+    unsavedAiIds_.clear();
+}
+
 void SolutionPageController::requestResults() {
     resultSummaryLabel_->setText(QStringLiteral("正在生成答题结果…"));
     pages_->setCurrentWidget(solutionPage_);
@@ -433,6 +462,11 @@ void SolutionPageController::requestResults() {
 
 void SolutionPageController::showSolution(int index) {
     if (session_->solutions.isEmpty()) return;
+    const QString bankPath = provider_->loadedPath();
+    if (bankPath != aiBankPath_) {
+        aiBankPath_ = bankPath;
+        aiExplanations_ = loadAiExplanations(bankPath);
+    }
     if (aiExplainPanel_) {
         aiService_->cancel();
         aiSpinnerTimer_->stop();
@@ -442,6 +476,17 @@ void SolutionPageController::showSolution(int index) {
     }
     currentSolutionIndex_ = qBound(0, index, static_cast<int>(session_->solutions.size()) - 1);
     const QJsonObject solution = session_->solutions.at(currentSolutionIndex_).toObject();
+    const QString questionId = solution.value(QStringLiteral("id")).toString();
+    const QString savedAi = aiExplanations_.value(questionId,
+        solution.value(QStringLiteral("aiSolutionHtml")).toString());
+    if (!savedAi.isEmpty()) {
+        aiExplainContentLabel_->setText(formatAiResponse(savedAi));
+        aiSaveStatusLabel_->setText(unsavedAiIds_.contains(questionId)
+            ? QStringLiteral("仅本次会话可回看，未写入题库")
+            : QStringLiteral("已保存到题库，可再次打开查看"));
+        aiExplainPanel_->setVisible(true);
+        aiExplainButton_->setText(QStringLiteral("重新生成"));
+    }
     const QString materialId = solution.value("materialId").toString();
     if (materialId.isEmpty()) {
         solutionMaterialCard_->hideMaterial();

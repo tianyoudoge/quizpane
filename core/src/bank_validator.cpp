@@ -120,7 +120,7 @@ const QSet<QString>& optionKeys() {
 // 对应 schema $defs.question 的 "properties"。
 const QSet<QString>& questionKeys() {
     static const QSet<QString> keys{"id", "catalogId", "materialId", "type", "stem", "stemUnderlines",
-        "stemImage", "options", "answer", "solution", "source", "review"};
+        "stemImage", "options", "answer", "solution", "aiSolution", "source", "review"};
     return keys;
 }
 
@@ -503,6 +503,11 @@ QList<BankValidationError> validateBankDetailed(const QJsonObject& bank) {
             require(!question.contains("answer") && !question.contains("solution"),
                     QStringLiteral("无答案题库不得保存答案或解析"));
         }
+        require(!question.contains("aiSolution") ||
+                    (question.value("aiSolution").isString() &&
+                     !question.value("aiSolution").toString().trimmed().isEmpty() &&
+                     question.value("aiSolution").toString().size() <= 20000),
+                QStringLiteral("AI 解析为空、格式错误或超过 20000 字"));
         require(!question.contains("stemImage") || validAsset(question.value("stemImage")),
                 QStringLiteral("题干图片资源无效"));
         require(!question.contains("stemUnderlines") || validTextUnderlines(question.value("stemUnderlines"), stem.size()),

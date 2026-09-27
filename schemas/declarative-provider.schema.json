@@ -186,6 +186,7 @@
           }
         },
         "solution": { "type": "string", "maxLength": 20000 },
+        "aiSolution": { "type": "string", "minLength": 1, "maxLength": 20000 },
         "source": { "$ref": "#/$defs/source" },
         "review": {
           "type": "object",
