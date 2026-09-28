@@ -869,7 +869,6 @@ bool SolutionPageController::showAiConfigDialog() {
     QObject::connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
     QObject::connect(saveBtn, &QPushButton::clicked, &dialog, [&] {
         const QString key = keyEdit->text().trimmed();
-        if (key.isEmpty()) return;
         const Provider& p = providers.at(providerCombo->currentIndex());
         if (p.id == QStringLiteral("custom") &&
             (baseUrlEdit->text().trimmed().isEmpty() || modelEdit->text().trimmed().isEmpty())) {
