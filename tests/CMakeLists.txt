@@ -101,6 +101,7 @@ add_test(NAME bank_validator_schema_consistency_test COMMAND bank_validator_sche
 
 add_executable(practice_page_controller_test
     practice_page_controller_test.cpp
+    ../apps/desktop-qt/src/ui/formula_formatter.cpp
     ../apps/desktop-qt/src/app_settings.cpp
     ../apps/desktop-qt/src/ui/practice_page_controller.cpp
     ../apps/desktop-qt/src/ui/material_card.cpp
@@ -114,6 +115,7 @@ add_test(NAME practice_page_controller_test COMMAND practice_page_controller_tes
 
 add_executable(solution_page_controller_test
     solution_page_controller_test.cpp
+    ../apps/desktop-qt/src/ui/formula_formatter.cpp
     ../apps/desktop-qt/src/ui/solution_page_controller.cpp
     ../apps/desktop-qt/src/ui/material_card.cpp
     ../apps/desktop-qt/src/ui/line_icons.cpp

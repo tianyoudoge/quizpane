@@ -22,6 +22,8 @@ quizpane_add_executable(quizpane
     src/ui/practice_page_controller.hpp
     src/ui/solution_page_controller.cpp
     src/ui/solution_page_controller.hpp
+    src/ui/formula_formatter.cpp
+    src/ui/formula_formatter.hpp
     src/ui/ui_size.hpp
     src/ui/line_icons.cpp
     src/ui/line_icons.hpp
