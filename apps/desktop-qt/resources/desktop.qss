@@ -1,4 +1,4 @@
-QWidget#card { background: rgba(12,14,18,224); border: none; border-radius: 10px; color: #c8cdd3; }
+QWidget#card { background: rgba(12,14,18,255); border: none; border-radius: 10px; color: #c8cdd3; }
 QWidget#card[uiSize="small"] { font-size: 11px; }
 QWidget#card[uiSize="medium"] { font-size: 12px; }
 QWidget#card[uiSize="large"] { font-size: 13px; }

@@ -220,7 +220,7 @@ int scaledAlpha(int alpha, int visibility) {
 }
 
 QString backgroundVisibilityStyle(bool light, int visibility) {
-    const int card = scaledAlpha(light ? 242 : 224, visibility);
+    const int card = scaledAlpha(255, visibility);
     const int cardBorder = scaledAlpha(light ? 42 : 0, visibility);
     const int surface = scaledAlpha(light ? 10 : 10, visibility);
     const int material = scaledAlpha(light ? 8 : 9, visibility);

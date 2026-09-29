@@ -1,6 +1,6 @@
 /* 浅色主题：暖白底、蓝灰文字和低饱和蓝色交互，避免 Windows 原生控件回退到
-   不可预期的前景色。卡片仍保持轻微半透明，保留“小窗”而非传统表单的质感。 */
-QWidget#card { background: rgba(250,251,253,242); border: 1px solid rgba(92,108,124,42); border-radius: 10px; color: #27313b; }
+   不可预期的前景色。100% 背景可见度时卡片不透底。 */
+QWidget#card { background: rgba(250,251,253,255); border: 1px solid rgba(92,108,124,42); border-radius: 10px; color: #27313b; }
 QWidget#card[uiSize="small"] { font-size: 11px; }
 QWidget#card[uiSize="medium"] { font-size: 12px; }
 QWidget#card[uiSize="large"] { font-size: 13px; }
