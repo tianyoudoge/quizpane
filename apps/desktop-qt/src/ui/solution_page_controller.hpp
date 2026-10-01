@@ -22,8 +22,8 @@ class QStackedWidget;
 namespace quizpane {
 class AiExplainService;
 class ProviderLoader;
-QString formatAiResponse(const QString& raw);
 namespace ui {
+class AiResponseLabel;
 class MaterialCard;
 }
 
@@ -82,7 +82,7 @@ private:
     QPushButton* aiExplainButton_ = nullptr;
     QPushButton* aiConfigButton_ = nullptr;
     QFrame* aiExplainPanel_ = nullptr;
-    QLabel* aiExplainContentLabel_ = nullptr;
+    ui::AiResponseLabel* aiExplainContentLabel_ = nullptr;
     QLabel* aiSaveStatusLabel_ = nullptr;
     AiExplainService* aiService_ = nullptr;
     QTimer* aiSpinnerTimer_ = nullptr;

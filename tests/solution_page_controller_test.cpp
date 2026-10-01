@@ -101,26 +101,6 @@ int main(int argc, char** argv) {
     controller.showSolution(0);
     if (aiPanel->isHidden() ||
         !aiContent->text().contains(QStringLiteral("sin(x) + x<sup>2</sup>"))) return 20;
-    const QString math = quizpane::formatAiResponse(
-        QStringLiteral("【解题步骤】\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}, "
-                       "\\sqrt{x} + x^{2} + \\sin{x}"));
-    if (!math.contains(QStringLiteral("Σ<sub>i=1</sub><sup>n</sup>")) ||
-        !math.contains(QStringLiteral("<sup>n(n+1)</sup>")) ||
-        !math.contains(QStringLiteral("√<span")) ||
-        !math.contains(QStringLiteral("x<sup>2</sup>")) ||
-        !math.contains(QStringLiteral("sin(x)"))) return 11;
-    const QString nested = quizpane::formatAiResponse(QStringLiteral("\\frac{1}{\\frac{2}{3}}"));
-    if (nested.contains(QStringLiteral("\\frac")) ||
-        !nested.contains(QStringLiteral("<sub><sup>2</sup>"))) return 13;
-    const QString q119 = quizpane::formatAiResponse(
-        QStringLiteral("\\frac{480.2-57.4}{480.2}\\times100\\% > 88.0\\%"));
-    if (!q119.contains(QStringLiteral("<sup>480.2-57.4</sup>")) ||
-        !q119.contains(QStringLiteral("×100% > 88.0%"))) return 14;
-    const QString formattedQuestion = quizpane::formatQuestionHtml(
-        QStringLiteral("<p>求 $f'(3)$ 与 $\\log_2 32$</p><img src=\"assets/image_2.png\">"));
-    if (!formattedQuestion.contains(QStringLiteral("f'(3)")) ||
-        !formattedQuestion.contains(QStringLiteral("log<sub>2</sub> 32")) ||
-        !formattedQuestion.contains(QStringLiteral("src=\"assets/image_2.png\"")) ||
-        formattedQuestion.contains(QLatin1Char('$'))) return 21;
     return 0;
 }
+

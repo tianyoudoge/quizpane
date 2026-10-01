@@ -3,9 +3,9 @@
 #include "../ai/ai_explain_service.hpp"
 #include "../ai/ai_explanation_store.hpp"
 #include "../app_settings.hpp"
+#include "ai_response_format.hpp"
 #include "line_icons.hpp"
 #include "material_card.hpp"
-#include "formula_formatter.hpp"
 #include "quizpane/pending_call.hpp"
 #include "quizpane/provider_loader.hpp"
 #include "quizpane/provider_response_router.hpp"
@@ -45,6 +45,7 @@ namespace {
 
 using ui::LineIcon;
 using ui::makeLineIcon;
+using ui::formatQuestionHtml;
 
 QString choiceLabel(int choice) {
     return choice >= 0 ? QString(QChar(u'A' + choice)) : QStringLiteral("未作答");
@@ -70,35 +71,6 @@ bool hasVisibleExplanation(const QString& html) {
 }
 
 }  // namespace
-
-QString formatAiResponse(const QString& raw) {
-    QString result = normaliseFormulas(raw);
-
-    // Style section headers 【答案确认】 etc.
-    static const QRegularExpression headerRe(
-        QStringLiteral("【(答案确认|解题步骤|知识点|速算技巧)】"));
-    result.replace(headerRe,
-        QStringLiteral("<span style=\"color:#9fc4b0;font-weight:600;"
-                       "border-left:3px solid #5a9a80;padding-left:6px;display:inline-block;"
-                       "margin-top:6px;\">【\\1】</span>"));
-
-    // Highlight correct answer letter(s)
-    static const QRegularExpression correctRe(
-        QStringLiteral("正确答案[：:]?\\s*([A-D]+)"));
-    result.replace(correctRe,
-        QStringLiteral("正确答案：<span style=\"color:#9fb6a7;font-weight:700;"
-                       "text-decoration:underline;\">\\1</span>"));
-
-    // Speed-math / tips section: italicise and tint amber
-    static const QRegularExpression tipsContentRe(
-        QStringLiteral("(【速算技巧】.*?)(?=【|$)"),
-        QRegularExpression::DotMatchesEverythingOption);
-    result.replace(tipsContentRe,
-        QStringLiteral("<span style=\"color:#c8a96e;font-style:italic;\">\\1</span>"));
-
-    return result;
-}
-
 
 void SolutionPageController::init(QWidget* solutionPage, QStackedWidget* pages,
                                   QWidget* catalogPage, ProviderLoader& provider,
@@ -161,12 +133,8 @@ void SolutionPageController::buildInto() {
     aiPanelLayout->setSpacing(6);
     auto* aiPanelTitle = new QLabel(QStringLiteral("✦ AI 解析"));
     aiPanelTitle->setObjectName(QStringLiteral("aiExplainTitle"));
-    aiExplainContentLabel_ = new QLabel;
+    aiExplainContentLabel_ = new ui::AiResponseLabel;
     aiExplainContentLabel_->setObjectName(QStringLiteral("aiExplainContent"));
-    aiExplainContentLabel_->setWordWrap(true);
-    aiExplainContentLabel_->setTextFormat(Qt::RichText);
-    aiExplainContentLabel_->setOpenExternalLinks(false);
-    aiExplainContentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     aiSaveStatusLabel_ = new QLabel;
     aiSaveStatusLabel_->setObjectName(QStringLiteral("detail"));
     aiSaveStatusLabel_->setWordWrap(true);
@@ -244,29 +212,18 @@ void SolutionPageController::buildInto() {
             aiExplainButton_->setEnabled(false);
             aiSpinnerFrame_ = 0;
             aiSpinnerTimer_->start();
-            aiExplainContentLabel_->setText(QStringLiteral("正在请求 AI 解析，请稍候…"));
-            aiSaveStatusLabel_->clear();
+            aiExplainContentLabel_->setMessage(QStringLiteral("正在请求 AI 解析，请稍候…"));
             aiExplainPanel_->setVisible(true);
         });
     QObject::connect(aiService_, &AiExplainService::responseReady, solutionPage_,
-        [this](const QString& html, quizpane::AiUsage usage) {
+        [this](const QString& response, quizpane::AiUsage usage) {
             aiSpinnerTimer_->stop();
             aiExplainButton_->setEnabled(true);
             aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
             AppSettings::incrementAiTotalRequests();
             AppSettings::addAiPromptTokens(usage.promptTokens);
             AppSettings::addAiCompletionTokens(usage.completionTokens);
-            aiExplainContentLabel_->setText(formatAiResponse(html));
-            const QString id = session_->solutions.at(currentSolutionIndex_).toObject()
-                                   .value(QStringLiteral("id")).toString();
-            if (!id.isEmpty()) aiExplanations_.insert(id, html);
-            QString saveError;
-            const bool saved = saveAiExplanation(provider_->loadedPath(), id, html, &saveError);
-            if (saved) unsavedAiIds_.remove(id);
-            else unsavedAiIds_.insert(id);
-            aiSaveStatusLabel_->setText(saved ? QStringLiteral("已保存到题库，可再次打开查看")
-                                               : QStringLiteral("本次可回看，未写入题库：%1").arg(saveError));
-            aiExplainButton_->setText(QStringLiteral("重新生成"));
+            aiExplainContentLabel_->setResponse(response);
             aiExplainPanel_->setVisible(true);
         });
     QObject::connect(aiService_, &AiExplainService::requestFailed, solutionPage_,
@@ -274,7 +231,7 @@ void SolutionPageController::buildInto() {
             aiSpinnerTimer_->stop();
             aiExplainButton_->setEnabled(true);
             aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
-            aiExplainContentLabel_->setText(
+            aiExplainContentLabel_->setMessage(
                 QStringLiteral("<span style=\"color:#c49f9d\">请求失败：%1</span>").arg(error.toHtmlEscaped()));
             aiExplainPanel_->setVisible(true);
         });
@@ -342,7 +299,7 @@ void SolutionPageController::showSolution(int index) {
     const QString savedAi = aiExplanations_.value(questionId,
         solution.value(QStringLiteral("aiSolutionHtml")).toString());
     if (!savedAi.isEmpty()) {
-        aiExplainContentLabel_->setText(formatAiResponse(savedAi));
+        aiExplainContentLabel_->setResponse(savedAi);
         aiSaveStatusLabel_->setText(unsavedAiIds_.contains(questionId)
             ? QStringLiteral("仅本次会话可回看，未写入题库")
             : QStringLiteral("已保存到题库，可再次打开查看"));

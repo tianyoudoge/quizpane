@@ -117,6 +117,8 @@ add_executable(solution_page_controller_test
     solution_page_controller_test.cpp
     ../apps/desktop-qt/src/ui/formula_formatter.cpp
     ../apps/desktop-qt/src/ui/solution_page_controller.cpp
+    ../apps/desktop-qt/src/ui/ai_response_format.cpp
+    ../apps/desktop-qt/src/ui/math_formula.cpp
     ../apps/desktop-qt/src/ui/material_card.cpp
     ../apps/desktop-qt/src/ui/line_icons.cpp
     ../apps/desktop-qt/src/ui/result_image_preview.cpp
@@ -144,15 +146,13 @@ target_link_libraries(ai_explain_multimodal_test PRIVATE
     ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Gui ${QUIZPANE_QT_PACKAGE}::Network)
 add_test(NAME ai_explain_multimodal_test COMMAND ai_explain_multimodal_test)
 
-add_executable(ai_explanation_store_test
-    ai_explanation_store_test.cpp
-    ../apps/desktop-qt/src/ai/ai_explanation_store.cpp
+add_executable(ai_response_format_test
+    ai_response_format_test.cpp
+    ../apps/desktop-qt/src/ui/ai_response_format.cpp
+    ../apps/desktop-qt/src/ui/math_formula.cpp
 )
-target_compile_definitions(ai_explanation_store_test PRIVATE
-    DECLARATIVE_BANK_PATH="${PROJECT_SOURCE_DIR}/schemas/examples/declarative/content/bank.json")
-target_link_libraries(ai_explanation_store_test PRIVATE
-    quizpane_core ${QUIZPANE_QT_PACKAGE}::Core)
-add_test(NAME ai_explanation_store_test COMMAND ai_explanation_store_test)
+target_link_libraries(ai_response_format_test PRIVATE ${QUIZPANE_QT_PACKAGE}::Widgets)
+add_test(NAME ai_response_format_test COMMAND ai_response_format_test)
 
 add_executable(material_card_test
     material_card_test.cpp

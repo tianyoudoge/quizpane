@@ -66,10 +66,13 @@ static QString buildPrompt(const QString& questionHtml, const QJsonArray& option
     return QStringLiteral(
         "你是一位专业考试辅导老师。请对以下题目进行解析。\n"
         "格式要求：\n"
-        "- 用HTML标签排版（<b>、<sup>、<sub>、<br>等），不要使用LaTeX或Markdown语法\n"
-        "- 数学公式用Unicode符号和HTML上下标：指数写 x<sup>2</sup>，分数写 a/b，根号写 √\n"
-        "- 只输出正文 HTML 片段，不要输出 <!DOCTYPE>、<html>、<head>、<body> 或 <style>\n"
-        "- 按以下四个部分输出，每个部分标题用【】包裹：\n"
+        "- 用 Markdown 排版：重点用 **加粗**，并列要点用以 \"- \" 开头的列表，段落之间空一行；"
+        "不要使用表格、标题（#）或 HTML 标签\n"
+        "- 所有数学内容都写成 LaTeX 并用 $ 包裹，包括单个变量和数值算式，例如 $a$、"
+        "$\\frac{A}{B}\\times\\frac{a-b}{1+a}$、$\\frac{6240-5800}{5800}\\times100\\%\\approx7.59\\%$；"
+        "较长的关键推导单独成行并用 $$ 包裹\n"
+        "- 分数一律用 \\frac{分子}{分母}，乘号用 \\times，除号用 \\div，不要用 / 或 * 表示运算\n"
+        "- 按以下四个部分输出，每个部分标题单独一行并用【】包裹：\n"
         "  【答案确认】正确选项及简要理由\n"
         "  【解题步骤】分步骤详细推导\n"
         "  【知识点】涉及的核心知识点\n"
@@ -244,7 +247,7 @@ void AiExplainService::onFinished(QNetworkReply* reply) {
     usage.promptTokens = usageObj.value(QStringLiteral("prompt_tokens")).toInt();
     usage.completionTokens = usageObj.value(QStringLiteral("completion_tokens")).toInt();
 
-    emit responseReady(QStringLiteral("<div>%1</div>").arg(content), usage);
+    emit responseReady(content, usage);
 }
 
 }  // namespace quizpane
