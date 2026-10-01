@@ -2,6 +2,7 @@
 #include "../apps/desktop-qt/src/ui/math_formula.hpp"
 
 #include <QApplication>
+#include <QBuffer>
 #include <QRegularExpression>
 
 #include <algorithm>
@@ -113,7 +114,17 @@ int main(int argc, char** argv) {
                                  QStringLiteral("\\frac{A}{B}\\times\\frac{a-b}{1+a}"),
                                  QStringLiteral("\\frac{6240-5800}{5800}\\approx7.59\\%")}) {
         if (imageCount(quizpane::ui::mathHtml(latex, s, false)) != 1) return failure(4, __LINE__);
-        if (!hasStackedFraction(renderMath(latex, s, false).image)) return failure(5, __LINE__);
+        const QImage fractionImage = renderMath(latex, s, false).image;
+        if (!hasStackedFraction(fractionImage)) {
+            QByteArray png;
+            QBuffer buffer(&png);
+            buffer.open(QIODevice::WriteOnly);
+            fractionImage.save(&buffer, "PNG");
+            std::fprintf(stderr, "[DEBUG-fraction] %s %dx%d\n[DEBUG-fraction-png] %s\n",
+                qPrintable(latex), fractionImage.width(), fractionImage.height(),
+                png.toBase64().constData());
+            return failure(5, __LINE__);
+        }
     }
     const auto nested = renderMath(QStringLiteral("\\frac{\\frac{440}{5800}}{\\frac{20}{460}}"), s, true);
     const auto single = renderMath(QStringLiteral("\\frac{440}{5800}"), s, true);
