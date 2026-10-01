@@ -1,5 +1,4 @@
 #include "../apps/desktop-qt/src/ui/solution_page_controller.hpp"
-#include "../apps/desktop-qt/src/ui/formula_formatter.hpp"
 #include "quizpane/provider_loader.hpp"
 
 #include <QApplication>
@@ -7,6 +6,7 @@
 #include <QFrame>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QTextDocument>
 
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -89,8 +89,14 @@ int main(int argc, char** argv) {
     controller.showSolution(0);
     auto* aiPanel = page->findChild<QFrame*>(QStringLiteral("aiExplainPanel"));
     auto* aiContent = page->findChild<QLabel*>(QStringLiteral("aiExplainContent"));
-    if (!aiPanel || aiPanel->isHidden() || !aiContent ||
-        !aiContent->text().contains(QStringLiteral("sin(x) + x<sup>2</sup>"))) return 18;
+    if (!aiPanel || aiPanel->isHidden() || !aiContent) return 18;
+    // Verify formula content without depending on the old formatter's HTML.
+    const QString renderedAi = aiContent->text();
+    QTextDocument renderedDocument;
+    renderedDocument.setHtml(renderedAi);
+    if (renderedDocument.toPlainText().simplified() != QStringLiteral("sin x + x2") ||
+        !renderedAi.contains(QStringLiteral("<sup>2</sup>")) ||
+        renderedAi.contains(QStringLiteral("\\sin"))) return 18;
     QJsonObject other = single;
     other.insert("id", "formula-q2");
     other.remove("aiSolutionHtml");
@@ -100,7 +106,7 @@ int main(int argc, char** argv) {
     if (!aiPanel->isHidden()) return 19;
     controller.showSolution(0);
     if (aiPanel->isHidden() ||
-        !aiContent->text().contains(QStringLiteral("sin(x) + x<sup>2</sup>"))) return 20;
+        aiContent->text() != renderedAi) return 20;
     return 0;
 }
 

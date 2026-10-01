@@ -333,3 +333,11 @@ OSS 结果下载时会使任务停在重试。`MineruExtractionJob` 现将其专
 `clearLayout` 被合并到同一编译单元，出现重定义。临时用
 `cmake -S . -B build/ci -DQUIZPANE_ENABLE_UNITY_BUILD=OFF` 后完整构建成功，
 `ctest --test-dir build/ci --output-on-failure -j 4` 36/36 通过。
+
+### F7. AI 公式排版迁移后的主程序链接失败 — 已修复（2026-10-01）
+
+`a774ccf` 用新排版器替换主程序构建清单中的旧格式化器，但练习页仍调用
+`quizpane::formatQuestionHtml`，导致六个桌面平台均在链接时缺失符号。
+恢复 `formula_formatter.cpp/.hpp` 构建项；主程序与控制器测试必须分别验证，
+控制器测试已有旧源文件，无法单独发现该遗漏。
+解析页恢复 AI 内容的测试同时改为检查公式文字、上标及切题恢复，避免绑定旧 HTML 排版。
