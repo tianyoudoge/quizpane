@@ -4,13 +4,15 @@
 #include <QApplication>
 #include <QRegularExpression>
 
+#include <cstdio>
+
 namespace {
 
 using quizpane::ui::MathStyle;
 using quizpane::ui::renderMath;
 
 int failure(int code, int line) {
-    qCritical("Formula assertion %d failed at line %d", code, line);
+    std::fprintf(stderr, "Formula assertion %d failed at line %d\n", code, line);
     return code;
 }
 
@@ -50,14 +52,16 @@ int inkHeight(const QImage& image) {
 // 分数线：一段宽度接近整幅图片、上下两侧都有字形的墨迹行。
 bool hasStackedFraction(const QImage& image) {
     const QList<int> rows = inkRows(image);
-    int lineRow = -1;
-    for (int y = 0; y < rows.size(); ++y)
-        if (rows.at(y) > image.width() * 0.6) lineRow = y;
-    if (lineRow < 0) return false;
-    int above = 0, below = 0;
-    for (int y = 0; y < lineRow - 1; ++y) above += rows.at(y);
-    for (int y = lineRow + 2; y < rows.size(); ++y) below += rows.at(y);
-    return above > 10 && below > 10;
+    // Check every candidate: a dense denominator row can be wider than the
+    // threshold too, so choosing the last wide row misses a valid fraction.
+    for (int lineRow = 0; lineRow < rows.size(); ++lineRow) {
+        if (rows.at(lineRow) <= image.width() * 0.6) continue;
+        int above = 0, below = 0;
+        for (int y = 0; y < lineRow - 1; ++y) above += rows.at(y);
+        for (int y = lineRow + 2; y < rows.size(); ++y) below += rows.at(y);
+        if (above > 10 && below > 10) return true;
+    }
+    return false;
 }
 
 }  // namespace
@@ -65,6 +69,18 @@ bool hasStackedFraction(const QImage& image) {
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
+    // Dense denominator glyphs must not replace the fraction bar as the candidate.
+    QImage fractionFixture(20, 20, QImage::Format_ARGB32);
+    fractionFixture.fill(Qt::transparent);
+    for (int x = 5; x < 15; ++x)
+        for (int y = 2; y < 4; ++y) fractionFixture.setPixel(x, y, qRgba(0, 0, 0, 255));
+    for (int x = 1; x < 19; ++x) fractionFixture.setPixel(x, 9, qRgba(0, 0, 0, 255));
+    for (int x = 3; x < 17; ++x)
+        for (int y = 14; y < 16; ++y) fractionFixture.setPixel(x, y, qRgba(0, 0, 0, 255));
+    if (!hasStackedFraction(fractionFixture)) return failure(21, __LINE__);
+    for (int x = 3; x < 17; ++x)
+        for (int y = 14; y < 16; ++y) fractionFixture.setPixel(x, y, 0);
+    if (hasStackedFraction(fractionFixture)) return failure(22, __LINE__);
     const MathStyle s = style();
 
     // 简单变量、不等式不生成图片，避免撑高行距。
