@@ -2,7 +2,8 @@
 #include "../apps/desktop-qt/src/ui/math_formula.hpp"
 
 #include <QApplication>
-#include <QBuffer>
+#include <QFontDatabase>
+#include <QDir>
 #include <QRegularExpression>
 
 #include <algorithm>
@@ -79,6 +80,24 @@ bool hasStackedFraction(const QImage& image) {
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
+    // The offscreen plugin uses FreeType instead of the native Windows font
+    // database; explicitly load a font for tests that inspect painted glyphs.
+    QString fontPath;
+#ifdef Q_OS_WIN
+    fontPath = QDir(qEnvironmentVariable("WINDIR", QStringLiteral("C:/Windows")))
+        .filePath(QStringLiteral("Fonts/times.ttf"));
+#elif defined(Q_OS_LINUX)
+    fontPath = QStringLiteral("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf");
+#endif
+    if (!fontPath.isEmpty()) {
+        const int fontId = QFontDatabase::addApplicationFont(fontPath);
+        const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+        if (fontId < 0 || families.isEmpty()) {
+            std::fprintf(stderr, "Cannot load offscreen test font: %s\n", qPrintable(fontPath));
+            return failure(25, __LINE__);
+        }
+        QApplication::setFont(QFont(families.first()));
+    }
     // Dense denominator glyphs must not replace the fraction bar as the candidate.
     QImage fractionFixture(20, 20, QImage::Format_ARGB32);
     fractionFixture.fill(Qt::transparent);
@@ -116,13 +135,6 @@ int main(int argc, char** argv) {
         if (imageCount(quizpane::ui::mathHtml(latex, s, false)) != 1) return failure(4, __LINE__);
         const QImage fractionImage = renderMath(latex, s, false).image;
         if (!hasStackedFraction(fractionImage)) {
-            QByteArray png;
-            QBuffer buffer(&png);
-            buffer.open(QIODevice::WriteOnly);
-            fractionImage.save(&buffer, "PNG");
-            std::fprintf(stderr, "[DEBUG-fraction] %s %dx%d\n[DEBUG-fraction-png] %s\n",
-                qPrintable(latex), fractionImage.width(), fractionImage.height(),
-                png.toBase64().constData());
             return failure(5, __LINE__);
         }
     }

@@ -350,3 +350,10 @@ OSS 结果下载时会使任务停在重试。`MineruExtractionJob` 现将其专
 固定像素图覆盖粗分母、宽公式与半透明分数线、缺少分母的反例，并检查普通
 `x+y` 不被当作分数，不改变排版实现。
 测试失败直接输出断言编号和行号，便于定位不同平台的差异。
+
+### F9. Offscreen 公式像素测试没有加载字体 — 已修复（2026-10-01）
+
+CI 失败图片中只有分数线，没有文字墨迹；Windows offscreen 使用 FreeType 字体库，
+不能依赖原生桌面字体发现。`ai_response_format_test` 在 Windows 显式加载系统
+`times.ttf`，在 Linux 加载 DejaVu Serif；加载失败时报告路径并终止，不跳过像素断言。
+这是无窗口测试环境配置，主程序排版器不变；Linux 工作流显式安装 `fonts-dejavu-core`。
