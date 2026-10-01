@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QRegularExpression>
 
+#include <algorithm>
 #include <cstdio>
 
 namespace {
@@ -49,17 +50,25 @@ int inkHeight(const QImage& image) {
     return top < 0 ? 0 : bottom - top + 1;
 }
 
-// 分数线：一段宽度接近整幅图片、上下两侧都有字形的墨迹行。
+// Find a continuous horizontal bar, with ink above and below its own span.
+// A formula can contain several fractions plus trailing operators, so no single
+// bar is required to occupy a majority of the whole image's width.
 bool hasStackedFraction(const QImage& image) {
-    const QList<int> rows = inkRows(image);
-    // Check every candidate: a dense denominator row can be wider than the
-    // threshold too, so choosing the last wide row misses a valid fraction.
-    for (int lineRow = 0; lineRow < rows.size(); ++lineRow) {
-        if (rows.at(lineRow) <= image.width() * 0.6) continue;
-        int above = 0, below = 0;
-        for (int y = 0; y < lineRow - 1; ++y) above += rows.at(y);
-        for (int y = lineRow + 2; y < rows.size(); ++y) below += rows.at(y);
-        if (above > 10 && below > 10) return true;
+    const auto ink = [&](int x, int y) { return qAlpha(image.pixel(x, y)) > 32; };
+    const int minBar = std::max(4, image.width() / 8);
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width();) {
+            if (!ink(x, y)) { ++x; continue; }
+            const int start = x;
+            while (x < image.width() && ink(x, y)) ++x;
+            if (x - start < minBar) continue;
+            int above = 0, below = 0;
+            for (int column = start; column < x; ++column) {
+                for (int row = 0; row < y - 1; ++row) above += ink(column, row);
+                for (int row = y + 2; row < image.height(); ++row) below += ink(column, row);
+            }
+            if (above > 10 && below > 10) return true;
+        }
     }
     return false;
 }
@@ -78,10 +87,21 @@ int main(int argc, char** argv) {
     for (int x = 3; x < 17; ++x)
         for (int y = 14; y < 16; ++y) fractionFixture.setPixel(x, y, qRgba(0, 0, 0, 255));
     if (!hasStackedFraction(fractionFixture)) return failure(21, __LINE__);
+    // Trailing operators must not dilute the bar-width test. Antialiasing can
+    // split a one-pixel stroke across rows below 50% opacity.
+    QImage wideFixture(100, 20, QImage::Format_ARGB32);
+    wideFixture.fill(Qt::transparent);
+    for (int y = 0; y < fractionFixture.height(); ++y)
+        for (int x = 0; x < fractionFixture.width(); ++x)
+            wideFixture.setPixel(x, y, fractionFixture.pixel(x, y));
+    for (int x = 1; x < 19; ++x) wideFixture.setPixel(x, 9, qRgba(0, 0, 0, 80));
+    if (!hasStackedFraction(wideFixture)) return failure(24, __LINE__);
     for (int x = 3; x < 17; ++x)
         for (int y = 14; y < 16; ++y) fractionFixture.setPixel(x, y, 0);
     if (hasStackedFraction(fractionFixture)) return failure(22, __LINE__);
     const MathStyle s = style();
+    if (hasStackedFraction(renderMath(QStringLiteral("x+y"), s, false).image))
+        return failure(23, __LINE__);
 
     // 简单变量、不等式不生成图片，避免撑高行距。
     if (imageCount(quizpane::ui::mathHtml(QStringLiteral("a"), s, false)) != 0) return failure(1, __LINE__);
