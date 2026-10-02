@@ -358,7 +358,7 @@ CI 失败图片中只有分数线，没有文字墨迹；Windows offscreen 使�
 `times.ttf`，在 Linux 加载 DejaVu Serif；加载失败时报告路径并终止，不跳过像素断言。
 这是无窗口测试环境配置，主程序排版器不变；Linux 工作流显式安装 `fonts-dejavu-core`。
 
-### F10. Win7 AI 解析的代码围栏泄露及未知命令参数丢失 — 代码已修复（2026-10-02）
+### F10. Win7 AI 解析的代码围栏泄露及未知命令参数丢失 — 已通过 x64 实机复验（2026-10-02）
 
 `c683923` Win7 x64 实机回测发现：cpp 围栏保留三反引号/语言标记，
 `\unsupported{x}` 显示为 `\unsupportedx`。前者缺少块级处理，且块内内容会进入公式提取；
@@ -368,4 +368,7 @@ CI 失败图片中只有分数线，没有文字墨迹；Windows offscreen 使�
 `ai_response_format_test` 覆盖围栏、缩进、字面 Markdown/公式、HTML 转义、未闭合围栏、
 未知命令嵌套/可选/转义参数及 HTML/QPainter 两种显示路径。
 macOS Qt6 Release 主程序构建成功，格式化与解析页控制器测试 2/2 通过。
-本次尚未生成修复后的 Windows 包或重新进行 Win7 实机复验，不能替换历史 FAIL 记录。
+修复提交 `22bfa7a` 的 Actions run `36952854587` 三个 Windows 打包任务均成功。
+Win7 x64 已通过两段传输和 86 文件校验、保留数据整包替换；真实桌面三题离线回归确认
+代码围栏和 cpp 标记不再泄露，`\unsupported{x}` 参数完整保留，复杂公式及缓存正常。
+历史 `c683923` FAIL 记录保留，新增 `22bfa7a-20261002` 回测报告与截图；x86 仅验证 CI，未作桌面验收。
