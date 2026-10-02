@@ -637,6 +637,7 @@ private:
     }
 
     BoxPtr parseCommand(qreal scale, bool display) {
+        const int commandStart = pos_;
         const QString name = readCommandName();
         const qreal em = ctx_.px * scale;
         if (name == QStringLiteral(",")) return std::make_unique<SpaceBox>(em * 0.17);
@@ -726,8 +727,24 @@ private:
                                     it->text.at(0).unicode() <= 0x03C9;
             return text(it->text, greekLower, it->cls, scale);
         }
-        // 未支持的命令保留源码，方便用户自行识别。
-        return text(QLatin1Char('\\') + name, false, Cls::Ord, scale, false);
+        // 未知命令的参数也按源码保留，不能再当普通分组解析并吞掉花括号。
+        // 支持连续的可选/必选参数及嵌套、转义括号；尾随正文仍正常排版。
+        while (!atEnd()) {
+            int next = pos_;
+            while (next < src_.size() && src_.at(next).isSpace()) ++next;
+            if (next >= src_.size() ||
+                (src_.at(next) != QLatin1Char('{') && src_.at(next) != QLatin1Char('['))) break;
+            QString closers;
+            pos_ = next;
+            do {
+                const QChar c = src_.at(pos_++);
+                if (c == QLatin1Char('\\') && !atEnd()) { ++pos_; continue; }
+                if (c == QLatin1Char('{')) closers += QLatin1Char('}');
+                else if (c == QLatin1Char('[')) closers += QLatin1Char(']');
+                else if (!closers.isEmpty() && c == closers.at(closers.size() - 1)) closers.chop(1);
+            } while (!atEnd() && !closers.isEmpty());
+        }
+        return text(src_.mid(commandStart, pos_ - commandStart), false, Cls::Ord, scale, false);
     }
 
     BoxPtr parseAtom(qreal scale, bool display) {

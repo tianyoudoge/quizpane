@@ -37,6 +37,49 @@ QString extractDelimitedMath(const QString& raw, QList<MathPart>* parts) {
     return out + raw.mid(last);
 }
 
+QString codeToken(int index) {
+    return QChar(0xE002) + QString::number(index) + QChar(0xE003);
+}
+
+// 先隔离代码块，保留空白与字面内容；代码里的 Markdown/公式不参与转换。
+QString extractFencedCode(const QString& raw, QList<MathPart>* parts, QStringList* blocks) {
+    static const QRegularExpression fence(QStringLiteral("^ {0,3}(`{3,}|~{3,})(.*)$"));
+    QStringList prose, code;
+    QString marker;
+    QString out;
+    const auto flushProse = [&] {
+        out += extractDelimitedMath(prose.join(QLatin1Char('\n')), parts);
+        prose.clear();
+    };
+    const auto flushCode = [&] {
+        blocks->append(QStringLiteral("<pre>%1</pre>").arg(code.join(QLatin1Char('\n')).toHtmlEscaped()));
+        out += codeToken(static_cast<int>(blocks->size()) - 1) + QLatin1Char('\n');
+        code.clear();
+    };
+    for (const QString& line : raw.split(QLatin1Char('\n'))) {
+        const auto m = fence.match(line);
+        if (!marker.isEmpty()) {
+            if (m.hasMatch() && m.captured(1).at(0) == marker.at(0) &&
+                m.captured(1).size() >= marker.size() && m.captured(2).trimmed().isEmpty()) {
+                flushCode();
+                marker.clear();
+            } else {
+                code.append(line);
+            }
+        } else if (m.hasMatch() &&
+                   (m.captured(1).at(0) != QLatin1Char('`') || !m.captured(2).contains(QLatin1Char('`')))) {
+            flushProse();
+            out += QLatin1Char('\n');
+            marker = m.captured(1);
+        } else {
+            prose.append(line);
+        }
+    }
+    if (!marker.isEmpty()) flushCode();
+    flushProse();
+    return out;
+}
+
 bool isBareMathChar(QChar c) {
     return c.unicode() > 32 && c.unicode() < 127 && c != QLatin1Char('<') && c != QLatin1Char('>');
 }
@@ -103,8 +146,10 @@ QString inlineMarkdown(QString text) {
 
 QString formatAiResponse(const QString& raw, const AiResponseStyle& style) {
     QList<MathPart> parts;
-    QString text = extractDelimitedMath(raw, &parts);
-    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    QStringList codeBlocks;
+    QString normalized = raw;
+    normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    QString text = extractFencedCode(normalized, &parts, &codeBlocks);
     // 兼容旧提示词下模型输出的 <br> 换行。
     static const QRegularExpression brTag(QStringLiteral("<br\\s*/?>"), QRegularExpression::CaseInsensitiveOption);
     text.replace(brTag, QStringLiteral("\n"));
@@ -113,6 +158,7 @@ QString formatAiResponse(const QString& raw, const AiResponseStyle& style) {
     static const QRegularExpression bullet(QStringLiteral("^(?:[-•]|\\*(?!\\*))\\s+(.*)$"));
     static const QRegularExpression heading(QStringLiteral("^#{1,6}\\s+(.*)$"));
     static const QRegularExpression displayOnly(QStringLiteral("^\\x{E000}(\\d+)\\x{E001}$"));
+    static const QRegularExpression codeOnly(QStringLiteral("^\\x{E002}(\\d+)\\x{E003}$"));
 
     QString html;
     QStringList paragraph;
@@ -123,6 +169,11 @@ QString formatAiResponse(const QString& raw, const AiResponseStyle& style) {
     };
 
     for (const QString& rawLine : text.split(QLatin1Char('\n'))) {
+        if (codeOnly.match(rawLine).hasMatch()) {
+            flushParagraph();
+            html += rawLine;
+            continue;
+        }
         const QString line = extractBareMath(rawLine.trimmed(), &parts);
         if (line.isEmpty()) {
             flushParagraph();
@@ -165,6 +216,8 @@ QString formatAiResponse(const QString& raw, const AiResponseStyle& style) {
             ? QStringLiteral("<div align=\"center\" style=\"margin:4px 0\">%1</div>").arg(rendered)
             : rendered);
     }
+    for (int i = static_cast<int>(codeBlocks.size()) - 1; i >= 0; --i)
+        html.replace(codeToken(i), codeBlocks.at(i));
     return QStringLiteral("<div>%1</div>").arg(html);
 }
 

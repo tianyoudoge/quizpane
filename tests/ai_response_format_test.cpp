@@ -5,6 +5,7 @@
 #include <QFontDatabase>
 #include <QDir>
 #include <QRegularExpression>
+#include <QTextDocument>
 
 #include <algorithm>
 #include <cstdio>
@@ -164,13 +165,43 @@ int main(int argc, char** argv) {
 
     // 未支持的命令保留源码，而不是悄悄吞掉。
     const QString unknown = quizpane::ui::mathHtml(QStringLiteral("\\foo{x}"), s, false);
-    if (!unknown.contains(QStringLiteral("\\foo"))) return failure(10, __LINE__);
 
     // 完整回答：分节标题、列表、粗体、行内与独立公式，以及漏写 $ 的裸 \frac。
     quizpane::ui::AiResponseStyle responseStyle;
     responseStyle.math = s;
     responseStyle.accent = QColor(0x2d, 0x6b, 0x4f);
     responseStyle.tipAccent = QColor(0x9a, 0x6b, 0x1f);
+    const QString fenced = quizpane::ui::formatAiResponse(QStringLiteral(
+        "Before\n```cpp\nint answer = 42;\n  **literal** $x^2$ <tag> & \\frac{a}{b}\n```\nAfter"), responseStyle);
+    if (fenced.contains(QStringLiteral("```")) || fenced.contains(QStringLiteral("cpp")) ||
+        !fenced.contains(QStringLiteral("<pre>")) ||
+        !fenced.contains(QStringLiteral("  **literal** $x^2$ &lt;tag&gt; &amp; \\frac{a}{b}")) ||
+        imageCount(fenced) != 0) return failure(26, __LINE__);
+    if (!unknown.contains(QStringLiteral("\\foo{x}"))) return failure(10, __LINE__);
+    for (const QString& source : {QStringLiteral("\\unsupported{x}"),
+                                  QStringLiteral("\\foo [opt] {a_{b}}{\\{x\\}}"),
+                                  QStringLiteral("\\foo{unterminated")}) {
+        if (!quizpane::ui::mathHtml(source, s, false).contains(source.toHtmlEscaped()))
+            return failure(27, __LINE__);
+    }
+    // 独立公式及分式参数走 QPainter，源码保留不能只在 HTML 路径生效。
+    for (bool display : {false, true}) {
+        if (renderMath(QStringLiteral("\\unsupported{x}"), s, display).image !=
+            renderMath(QStringLiteral("\\text{\\unsupported{x}}"), s, display).image)
+            return failure(28, __LINE__);
+    }
+    if (renderMath(QStringLiteral("\\frac{\\foo{x}}{b}"), s, true).image !=
+        renderMath(QStringLiteral("\\frac{\\text{\\foo{x}}}{b}"), s, true).image)
+        return failure(29, __LINE__);
+    const QString mixed = quizpane::ui::formatAiResponse(QStringLiteral(
+        "Before $a$\r\n~~~~cpp\r\n  $x^2$ <br> **literal**\r\n~~~\r\n~~~~\r\n"
+        "After $\\frac{a}{b}$\r\n```\r\n  unfinished"), responseStyle);
+    QTextDocument codeDocument;
+    codeDocument.setHtml(mixed);
+    if (mixed.count(QStringLiteral("<pre>")) != 2 || imageCount(mixed) != 1 ||
+        !codeDocument.toPlainText().contains(QStringLiteral("  $x^2$ <br> **literal**\n~~~")) ||
+        !codeDocument.toPlainText().contains(QStringLiteral("  unfinished")))
+        return failure(30, __LINE__);
     const QString html = quizpane::ui::formatAiResponse(QStringLiteral(
         "【答案确认】正确答案为 **A**。\n\n"
         "【解题步骤】\n"

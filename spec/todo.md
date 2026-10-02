@@ -357,3 +357,15 @@ CI 失败图片中只有分数线，没有文字墨迹；Windows offscreen 使�
 不能依赖原生桌面字体发现。`ai_response_format_test` 在 Windows 显式加载系统
 `times.ttf`，在 Linux 加载 DejaVu Serif；加载失败时报告路径并终止，不跳过像素断言。
 这是无窗口测试环境配置，主程序排版器不变；Linux 工作流显式安装 `fonts-dejavu-core`。
+
+### F10. Win7 AI 解析的代码围栏泄露及未知命令参数丢失 — 代码已修复（2026-10-02）
+
+`c683923` Win7 x64 实机回测发现：cpp 围栏保留三反引号/语言标记，
+`\unsupported{x}` 显示为 `\unsupportedx`。前者缺少块级处理，且块内内容会进入公式提取；
+后者只保留命令名，后续分组解析吞掉参数花括号。
+`formatAiResponse` 先隔离围栏，以转义的 `<pre>` 保留字面内容；
+`Parser::parseCommand` 将未知命令及连续参数作为原文绘制，已知命令仍走原排版路径。
+`ai_response_format_test` 覆盖围栏、缩进、字面 Markdown/公式、HTML 转义、未闭合围栏、
+未知命令嵌套/可选/转义参数及 HTML/QPainter 两种显示路径。
+macOS Qt6 Release 主程序构建成功，格式化与解析页控制器测试 2/2 通过。
+本次尚未生成修复后的 Windows 包或重新进行 Win7 实机复验，不能替换历史 FAIL 记录。
