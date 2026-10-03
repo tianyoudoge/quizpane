@@ -2,6 +2,9 @@
 #include "quizpane/provider_loader.hpp"
 
 #include <QApplication>
+#include <QDir>
+#include <QFontDatabase>
+#include <cstdio>
 #include <QLabel>
 #include <QFrame>
 #include <QPushButton>
@@ -11,6 +14,18 @@
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
+#ifdef Q_OS_WIN
+    // Windows offscreen uses FreeType and does not discover native fonts.
+    const QString fontPath = QDir(qEnvironmentVariable("WINDIR", QStringLiteral("C:/Windows")))
+        .filePath(QStringLiteral("Fonts/arial.ttf"));
+    const int fontId = QFontDatabase::addApplicationFont(fontPath);
+    const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+    if (fontId < 0 || families.isEmpty()) {
+        std::fprintf(stderr, "Cannot load offscreen test font: %s\n", qPrintable(fontPath));
+        return 22;
+    }
+    app.setFont(QFont(families.first()));
+#endif
     QStackedWidget pages;
     auto* page = new QWidget;
     auto* catalog = new QWidget;
@@ -107,6 +122,29 @@ int main(int argc, char** argv) {
     controller.showSolution(0);
     if (aiPanel->isHidden() ||
         aiContent->text() != renderedAi) return 20;
+    // Switching to a white background must render dark text, including rich-text
+    // question/options and the original explanation (not only the AI panel).
+    single.insert("contentHtml", "<p>Question contrast</p>");
+    single.insert("solutionHtml", "<p>Original explanation</p>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    for (QLabel* label : {question, explanation}) {
+        label->setStyleSheet(QStringLiteral("color: #344252; background: white;"));
+        label->resize(500, 160);
+        const QImage rendered = label->grab().toImage();
+        int darkPixels = 0;
+        for (int y = 0; y < rendered.height(); ++y) {
+            for (int x = 0; x < rendered.width(); ++x) {
+                const QColor color = rendered.pixelColor(x, y);
+                if (color.red() < 110 && color.green() < 110 && color.blue() < 110)
+                    ++darkPixels;
+            }
+        }
+        if (darkPixels < 20) {
+            std::fprintf(stderr, "No dark text in %s: %d pixels\n",
+                         qPrintable(label->objectName()), darkPixels);
+            return 21;
+        }
+    }
     return 0;
 }
-

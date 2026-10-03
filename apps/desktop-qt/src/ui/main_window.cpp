@@ -582,6 +582,8 @@ void MainWindow::initializeDesktopShell() {
                          &MainWindow::chooseProviderPackage);
     trayMenu_->addAction(QStringLiteral("老板键设置…"), this,
                          &MainWindow::configureBossKey);
+    trayMenu_->addAction(QStringLiteral("AI 解析设置…"), this,
+                         [this] { solutionController_.showAiConfigDialog(); });
     trayMenu_->addAction(QStringLiteral("问题反馈…"), this,
                          [this] { ui::showFeedback(this); });
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
@@ -661,6 +663,8 @@ void MainWindow::initializeDesktopShell() {
                        &MainWindow::chooseProviderPackage);
     appMenu->addAction(QStringLiteral("老板键设置…"), this,
                        &MainWindow::configureBossKey);
+    appMenu->addAction(QStringLiteral("AI 解析设置…"), this,
+                       [this] { solutionController_.showAiConfigDialog(); });
     appMenu->addAction(QStringLiteral("问题反馈…"), this,
                        [this] { ui::showFeedback(this); });
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
@@ -1371,6 +1375,8 @@ void MainWindow::showMainMenu() {
                    &MainWindow::showBackgroundVisibilityDialog);
     menu.addAction(QStringLiteral("老板键设置…"), this,
                    &MainWindow::configureBossKey);
+    menu.addAction(QStringLiteral("AI 解析设置…"), this,
+                   [this] { solutionController_.showAiConfigDialog(); });
     menu.addAction(QStringLiteral("问题反馈…"), this,
                    [this] { ui::showFeedback(this); });
     {
@@ -1931,6 +1937,10 @@ void MainWindow::applyUiSize(UiSize size) {
     card_->setProperty("uiSize", property);
     card_->style()->unpolish(card_);
     card_->style()->polish(card_);
+#if defined(Q_OS_WIN)
+    // 阅读字号规则依赖祖先的 uiSize 属性，需要重新计算子控件样式和公式字体。
+    applyCardStyle();
+#endif
     if (auto* layout = qobject_cast<QVBoxLayout*>(card_->layout())) {
         layout->setContentsMargins(margin, 10, margin, margin);
         layout->setSpacing(spacing);
@@ -2052,6 +2062,7 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 
 void MainWindow::applyCardStyle() {
     const bool light = AppSettings::colorTheme() == QStringLiteral("light");
+    qApp->setProperty("quizpaneLightTheme", light);
     const QString path = light
         ? QStringLiteral(":/styles/desktop-light.qss")
         : QStringLiteral(":/styles/desktop.qss");
@@ -2060,8 +2071,16 @@ void MainWindow::applyCardStyle() {
         qWarning("Unable to load embedded desktop stylesheet");
         return;
     }
-    setStyleSheet(QString::fromUtf8(style.readAll()) +
-                  backgroundVisibilityStyle(light, backgroundVisibility_));
+    QString stylesheet = QString::fromUtf8(style.readAll());
+#if defined(Q_OS_WIN)
+    QFile typography(QStringLiteral(":/styles/desktop-windows.qss"));
+    if (typography.open(QIODevice::ReadOnly))
+        stylesheet += QString::fromUtf8(typography.readAll());
+    const QString fontFamily = qApp->property("windowsUiFontFamily").toString();
+    if (!fontFamily.isEmpty())
+        stylesheet += QStringLiteral("\nQWidget { font-family: \"%1\"; }\n").arg(fontFamily);
+#endif
+    setStyleSheet(stylesheet + backgroundVisibilityStyle(light, backgroundVisibility_));
 }
 
 }  // namespace quizpane

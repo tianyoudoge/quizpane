@@ -3,6 +3,8 @@
 #include "quizpane/provider_loader.hpp"
 
 #include <QApplication>
+#include <QVariant>
+#include "../apps/desktop-qt/src/ui/line_icons.hpp"
 #include <QLabel>
 #include <QPushButton>
 #include <QScrollArea>
@@ -74,6 +76,19 @@ bool checkPage(bool withCourseBar, bool withResizeHandle = true) {
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
+    // The same icon must repaint with the new theme, including disabled state.
+    const QIcon icon = quizpane::ui::makeLineIcon(quizpane::ui::LineIcon::Menu);
+    app.setProperty("quizpaneLightTheme", false);
+    const QImage dark = icon.pixmap(24, 24).toImage();
+    app.setProperty("quizpaneLightTheme", true);
+    const QImage light = icon.pixmap(24, 24).toImage();
+    const QImage disabled = icon.pixmap(24, 24, QIcon::Disabled).toImage();
+    const QColor darkPixel = dark.pixelColor(12, 7);
+    const QColor lightPixel = light.pixelColor(12, 7);
+    if (darkPixel.alpha() < 100 || darkPixel.red() < 150 ||
+        lightPixel.alpha() < 150 || lightPixel.red() > 80 ||
+        disabled.pixelColor(12, 7).alpha() >= lightPixel.alpha()) return 4;
+    app.setProperty("quizpaneLightTheme", false);
     if (!checkPage(false)) return 1;
     if (!checkPage(true)) return 2;
     if (!checkPage(true, false)) return 3;

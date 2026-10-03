@@ -327,7 +327,7 @@ void SolutionPageController::showSolution(int index) {
                                .arg(imageUrl.toHtmlEscaped());
     }
     solutionQuestionLabel_->setText(
-        QStringLiteral("<div style=\"color:#c7ccd2\">%1%2</div>")
+        QStringLiteral("<div>%1%2</div>")
             .arg(formatQuestionHtml(solution.value("contentHtml").toString()), optionsHtml));
     const bool multiple = solution.value("type").toString() == QStringLiteral("multiple_choice");
     const QSet<int> selectedChoices = session_->answers.value(currentSolutionIndex_);
@@ -355,7 +355,7 @@ void SolutionPageController::showSolution(int index) {
         answerStatusLabel_->style()->unpolish(answerStatusLabel_);
         answerStatusLabel_->style()->polish(answerStatusLabel_);
         solutionExplanationLabel_->setText(
-            QStringLiteral("<div style=\"color:#aebbb5\"><p><b>解析</b></p>%1</div>")
+            QStringLiteral("<div><p><b>解析</b></p>%1</div>")
                 .arg(formatQuestionHtml(explanationHtml)));
     } else {
         correctAnswerLabel_->setVisible(false);
