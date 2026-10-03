@@ -254,7 +254,7 @@ void PracticePageController::showQuestion(int index) {
                                             material.value("contentHtml").toString(),
                                             material.value("imageUrls").toArray());
     }
-    questionLabel_->setText(QStringLiteral("<div style=\"color:#d5d1c5\">%1</div>")
+    questionLabel_->setText(QStringLiteral("<div>%1</div>")
         .arg(formatQuestionHtml(question.value("contentHtml").toString())));
     clearLayout(optionsLayout_);
     const QJsonArray options = question.value("options").toArray();
