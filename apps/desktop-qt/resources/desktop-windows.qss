@@ -1,0 +1,19 @@
+/* Windows 阅读正文放大，导航和操作按钮沿用主题中的紧凑字号。 */
+QWidget#card[uiSize="small"] QLabel#questionText,
+QWidget#card[uiSize="small"] QLabel#solutionQuestion,
+QWidget#card[uiSize="small"] QLabel#solutionText,
+QWidget#card[uiSize="small"] QLabel#materialCardBody,
+QWidget#card[uiSize="small"] QLabel#aiExplainContent,
+QWidget#card[uiSize="small"] QPushButton#answerOption { font-size: 13px; font-weight: normal; }
+QWidget#card[uiSize="medium"] QLabel#questionText,
+QWidget#card[uiSize="medium"] QLabel#solutionQuestion,
+QWidget#card[uiSize="medium"] QLabel#solutionText,
+QWidget#card[uiSize="medium"] QLabel#materialCardBody,
+QWidget#card[uiSize="medium"] QLabel#aiExplainContent,
+QWidget#card[uiSize="medium"] QPushButton#answerOption { font-size: 14px; font-weight: normal; }
+QWidget#card[uiSize="large"] QLabel#questionText,
+QWidget#card[uiSize="large"] QLabel#solutionQuestion,
+QWidget#card[uiSize="large"] QLabel#solutionText,
+QWidget#card[uiSize="large"] QLabel#materialCardBody,
+QWidget#card[uiSize="large"] QLabel#aiExplainContent,
+QWidget#card[uiSize="large"] QPushButton#answerOption { font-size: 15px; font-weight: normal; }

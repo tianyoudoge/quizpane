@@ -1937,6 +1937,10 @@ void MainWindow::applyUiSize(UiSize size) {
     card_->setProperty("uiSize", property);
     card_->style()->unpolish(card_);
     card_->style()->polish(card_);
+#if defined(Q_OS_WIN)
+    // 阅读字号规则依赖祖先的 uiSize 属性，需要重新计算子控件样式和公式字体。
+    applyCardStyle();
+#endif
     if (auto* layout = qobject_cast<QVBoxLayout*>(card_->layout())) {
         layout->setContentsMargins(margin, 10, margin, margin);
         layout->setSpacing(spacing);
@@ -2066,8 +2070,13 @@ void MainWindow::applyCardStyle() {
         qWarning("Unable to load embedded desktop stylesheet");
         return;
     }
-    setStyleSheet(QString::fromUtf8(style.readAll()) +
-                  backgroundVisibilityStyle(light, backgroundVisibility_));
+    QString stylesheet = QString::fromUtf8(style.readAll());
+#if defined(Q_OS_WIN)
+    QFile typography(QStringLiteral(":/styles/desktop-windows.qss"));
+    if (typography.open(QIODevice::ReadOnly))
+        stylesheet += QString::fromUtf8(typography.readAll());
+#endif
+    setStyleSheet(stylesheet + backgroundVisibilityStyle(light, backgroundVisibility_));
 }
 
 }  // namespace quizpane

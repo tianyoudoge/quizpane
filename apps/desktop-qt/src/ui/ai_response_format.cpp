@@ -162,9 +162,19 @@ QString formatAiResponse(const QString& raw, const AiResponseStyle& style) {
 
     QString html;
     QStringList paragraph;
+#if defined(Q_OS_WIN)
+    constexpr int paragraphGap = 8;
+    constexpr int sectionGap = 12;
+    constexpr int listGap = 6;
+#else
+    constexpr int paragraphGap = 6;
+    constexpr int sectionGap = 8;
+    constexpr int listGap = 4;
+#endif
     const auto flushParagraph = [&] {
         if (paragraph.isEmpty()) return;
-        html += QStringLiteral("<p style=\"margin:0 0 6px 0\">%1</p>").arg(paragraph.join(QStringLiteral("<br>")));
+        html += QStringLiteral("<p style=\"margin:0 0 %1px 0\">%2</p>")
+                    .arg(paragraphGap).arg(paragraph.join(QStringLiteral("<br>")));
         paragraph.clear();
     };
 
@@ -182,8 +192,8 @@ QString formatAiResponse(const QString& raw, const AiResponseStyle& style) {
         if (const auto m = header.match(line); m.hasMatch()) {
             flushParagraph();
             const QColor color = m.captured(1) == QStringLiteral("速算技巧") ? style.tipAccent : style.accent;
-            html += QStringLiteral("<p style=\"margin:8px 0 4px 0\"><b style=\"color:%1\">【%2】</b></p>")
-                        .arg(color.name(), m.captured(1));
+            html += QStringLiteral("<p style=\"margin:%3px 0 4px 0\"><b style=\"color:%1\">【%2】</b></p>")
+                        .arg(color.name(), m.captured(1)).arg(sectionGap);
             if (!m.captured(2).isEmpty()) paragraph << inlineMarkdown(m.captured(2));
             continue;
         }
@@ -196,8 +206,8 @@ QString formatAiResponse(const QString& raw, const AiResponseStyle& style) {
         if (const auto m = bullet.match(line); m.hasMatch()) {
             // Qt 的 <li> 圆点贴着行顶，遇到公式图片会和文字错开；改为行内圆点加悬挂缩进。
             flushParagraph();
-            html += QStringLiteral("<p style=\"margin:0 0 4px 14px; text-indent:-11px\">•&nbsp;%1</p>")
-                        .arg(inlineMarkdown(m.captured(1)));
+            html += QStringLiteral("<p style=\"margin:0 0 %1px 14px; text-indent:-11px\">•&nbsp;%2</p>")
+                        .arg(listGap).arg(inlineMarkdown(m.captured(1)));
             continue;
         }
         if (const auto m = heading.match(line); m.hasMatch()) {
