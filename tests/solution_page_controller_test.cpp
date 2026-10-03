@@ -107,6 +107,24 @@ int main(int argc, char** argv) {
     controller.showSolution(0);
     if (aiPanel->isHidden() ||
         aiContent->text() != renderedAi) return 20;
+    // Switching to a white background must render dark text, including rich-text
+    // question/options and the original explanation (not only the AI panel).
+    single.insert("solutionHtml", "<p>Original explanation</p>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    for (QLabel* label : {question, explanation}) {
+        label->setStyleSheet(QStringLiteral("color: #344252; background: white;"));
+        label->resize(500, 160);
+        const QImage rendered = label->grab().toImage();
+        int darkPixels = 0;
+        for (int y = 0; y < rendered.height(); ++y) {
+            for (int x = 0; x < rendered.width(); ++x) {
+                const QColor color = rendered.pixelColor(x, y);
+                if (color.red() < 110 && color.green() < 110 && color.blue() < 110)
+                    ++darkPixels;
+            }
+        }
+        if (darkPixels < 20) return 21;
+    }
     return 0;
 }
-
