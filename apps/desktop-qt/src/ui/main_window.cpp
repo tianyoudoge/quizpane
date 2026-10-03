@@ -582,6 +582,8 @@ void MainWindow::initializeDesktopShell() {
                          &MainWindow::chooseProviderPackage);
     trayMenu_->addAction(QStringLiteral("老板键设置…"), this,
                          &MainWindow::configureBossKey);
+    trayMenu_->addAction(QStringLiteral("AI 解析设置…"), this,
+                         [this] { solutionController_.showAiConfigDialog(); });
     trayMenu_->addAction(QStringLiteral("问题反馈…"), this,
                          [this] { ui::showFeedback(this); });
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
@@ -661,6 +663,8 @@ void MainWindow::initializeDesktopShell() {
                        &MainWindow::chooseProviderPackage);
     appMenu->addAction(QStringLiteral("老板键设置…"), this,
                        &MainWindow::configureBossKey);
+    appMenu->addAction(QStringLiteral("AI 解析设置…"), this,
+                       [this] { solutionController_.showAiConfigDialog(); });
     appMenu->addAction(QStringLiteral("问题反馈…"), this,
                        [this] { ui::showFeedback(this); });
 #ifdef QUIZPANE_DIAGNOSTIC_LOGGING
@@ -1371,6 +1375,8 @@ void MainWindow::showMainMenu() {
                    &MainWindow::showBackgroundVisibilityDialog);
     menu.addAction(QStringLiteral("老板键设置…"), this,
                    &MainWindow::configureBossKey);
+    menu.addAction(QStringLiteral("AI 解析设置…"), this,
+                   [this] { solutionController_.showAiConfigDialog(); });
     menu.addAction(QStringLiteral("问题反馈…"), this,
                    [this] { ui::showFeedback(this); });
     {
