@@ -1,28 +1,47 @@
 #include "line_icons.hpp"
 
 #include <QColor>
+#include <QIconEngine>
+#include <QVariant>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
 #include <QPixmap>
 #include <QGuiApplication>
-#include <QScreen>
-#include <QtMath>
 
 namespace quizpane::ui {
 
-QIcon makeLineIcon(LineIcon type) {
-    const qreal ratio = QGuiApplication::primaryScreen()
-        ? QGuiApplication::primaryScreen()->devicePixelRatio() : 1.0;
-    QPixmap pixmap(qRound(24 * ratio), qRound(24 * ratio));
-    pixmap.setDevicePixelRatio(ratio);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(QColor(190, 197, 205, 220), 1.5,
-                        Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    painter.setBrush(Qt::NoBrush);
+namespace {
+class LineIconEngine final : public QIconEngine {
+public:
+    explicit LineIconEngine(LineIcon type) : type_(type) {}
+    QIconEngine* clone() const override { return new LineIconEngine(type_); }
+    void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode,
+               QIcon::State) override;
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override {
+        QPixmap result(size);
+        result.fill(Qt::transparent);
+        QPainter painter(&result);
+        paint(&painter, QRect(QPoint(), size), mode, state);
+        return result;
+    }
+private:
+    LineIcon type_;
+};
 
+void LineIconEngine::paint(QPainter* target, const QRect& rect, QIcon::Mode mode,
+                           QIcon::State) {
+    target->save();
+    target->translate(rect.topLeft());
+    target->scale(rect.width() / 24.0, rect.height() / 24.0);
+    QPainter& painter = *target;
+    painter.setRenderHint(QPainter::Antialiasing);
+    const bool light = QGuiApplication::instance()->property("quizpaneLightTheme").toBool();
+    QColor color = light ? QColor(52, 67, 82) : QColor(190, 197, 205, 220);
+    if (mode == QIcon::Disabled) color.setAlpha(light ? 100 : 90);
+    painter.setPen(QPen(color, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    const LineIcon type = type_;
     QPainterPath path;
     switch (type) {
     case LineIcon::Previous:
@@ -97,7 +116,12 @@ QIcon makeLineIcon(LineIcon type) {
         painter.drawPath(path);
         break;
     }
-    return QIcon(pixmap);
+    target->restore();
+}
+}  // namespace
+
+QIcon makeLineIcon(LineIcon type) {
+    return QIcon(new LineIconEngine(type));
 }
 
 }  // namespace quizpane::ui

@@ -2062,6 +2062,7 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 
 void MainWindow::applyCardStyle() {
     const bool light = AppSettings::colorTheme() == QStringLiteral("light");
+    qApp->setProperty("quizpaneLightTheme", light);
     const QString path = light
         ? QStringLiteral(":/styles/desktop-light.qss")
         : QStringLiteral(":/styles/desktop.qss");
