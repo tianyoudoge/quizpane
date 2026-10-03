@@ -164,7 +164,7 @@ int main(int argc, char* argv[]) {
     // event loop。所有控件必须在它创建之后、app.exec() 之前构造。
     QuizPaneApplication app(argc, argv);
 #if defined(Q_OS_WIN)
-    // Win7 的默认西文字体可能回退到小字号宋体；优先采用已安装的微软雅黑。
+    // 优先采用已安装的微软雅黑，并让后续样式刷新沿用同一个字体。
     const QStringList families = QFontDatabase().families();
     for (const QString& family : {QStringLiteral("Microsoft YaHei"), QStringLiteral("微软雅黑")}) {
         if (!families.contains(family, Qt::CaseInsensitive)) continue;
@@ -173,6 +173,7 @@ int main(int argc, char* argv[]) {
         font.setPixelSize(14);
         font.setWeight(QFont::Normal);
         app.setFont(font);
+        app.setProperty("windowsUiFontFamily", family);
         break;
     }
 #endif

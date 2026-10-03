@@ -2075,6 +2075,9 @@ void MainWindow::applyCardStyle() {
     QFile typography(QStringLiteral(":/styles/desktop-windows.qss"));
     if (typography.open(QIODevice::ReadOnly))
         stylesheet += QString::fromUtf8(typography.readAll());
+    const QString fontFamily = qApp->property("windowsUiFontFamily").toString();
+    if (!fontFamily.isEmpty())
+        stylesheet += QStringLiteral("\nQWidget { font-family: \"%1\"; }\n").arg(fontFamily);
 #endif
     setStyleSheet(stylesheet + backgroundVisibilityStyle(light, backgroundVisibility_));
 }
