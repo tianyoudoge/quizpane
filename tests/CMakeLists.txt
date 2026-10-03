@@ -101,6 +101,7 @@ add_test(NAME bank_validator_schema_consistency_test COMMAND bank_validator_sche
 
 add_executable(practice_page_controller_test
     practice_page_controller_test.cpp
+    ../apps/desktop-qt/src/ui/formula_formatter.cpp
     ../apps/desktop-qt/src/app_settings.cpp
     ../apps/desktop-qt/src/ui/practice_page_controller.cpp
     ../apps/desktop-qt/src/ui/material_card.cpp
@@ -114,14 +115,44 @@ add_test(NAME practice_page_controller_test COMMAND practice_page_controller_tes
 
 add_executable(solution_page_controller_test
     solution_page_controller_test.cpp
+    ../apps/desktop-qt/src/ui/formula_formatter.cpp
     ../apps/desktop-qt/src/ui/solution_page_controller.cpp
+    ../apps/desktop-qt/src/ui/ai_response_format.cpp
+    ../apps/desktop-qt/src/ui/math_formula.cpp
     ../apps/desktop-qt/src/ui/material_card.cpp
     ../apps/desktop-qt/src/ui/line_icons.cpp
     ../apps/desktop-qt/src/ui/result_image_preview.cpp
+    ../apps/desktop-qt/src/ai/ai_explain_service.cpp
+    ../apps/desktop-qt/src/ai/ai_explanation_store.cpp
+    ../apps/desktop-qt/src/app_settings.cpp
 )
 target_link_libraries(solution_page_controller_test PRIVATE
-    quizpane_provider_host quizpane_core ${QUIZPANE_QT_PACKAGE}::Widgets)
+    quizpane_provider_host quizpane_core ${QUIZPANE_QT_PACKAGE}::Network ${QUIZPANE_QT_PACKAGE}::Widgets)
 add_test(NAME solution_page_controller_test COMMAND solution_page_controller_test)
+
+add_executable(ai_explain_service_test
+    ai_explain_service_test.cpp
+    ../apps/desktop-qt/src/ai/ai_explain_service.cpp
+)
+target_link_libraries(ai_explain_service_test PRIVATE
+    ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Gui ${QUIZPANE_QT_PACKAGE}::Network)
+add_test(NAME ai_explain_service_test COMMAND ai_explain_service_test)
+
+add_executable(ai_explain_multimodal_test
+    ai_explain_multimodal_test.cpp
+    ../apps/desktop-qt/src/ai/ai_explain_service.cpp
+)
+target_link_libraries(ai_explain_multimodal_test PRIVATE
+    ${QUIZPANE_QT_PACKAGE}::Core ${QUIZPANE_QT_PACKAGE}::Gui ${QUIZPANE_QT_PACKAGE}::Network)
+add_test(NAME ai_explain_multimodal_test COMMAND ai_explain_multimodal_test)
+
+add_executable(ai_response_format_test
+    ai_response_format_test.cpp
+    ../apps/desktop-qt/src/ui/ai_response_format.cpp
+    ../apps/desktop-qt/src/ui/math_formula.cpp
+)
+target_link_libraries(ai_response_format_test PRIVATE ${QUIZPANE_QT_PACKAGE}::Widgets)
+add_test(NAME ai_response_format_test COMMAND ai_response_format_test)
 
 add_executable(material_card_test
     material_card_test.cpp

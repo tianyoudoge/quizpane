@@ -22,6 +22,12 @@ quizpane_add_executable(quizpane
     src/ui/practice_page_controller.hpp
     src/ui/solution_page_controller.cpp
     src/ui/solution_page_controller.hpp
+    src/ui/formula_formatter.cpp
+    src/ui/formula_formatter.hpp
+    src/ui/ai_response_format.cpp
+    src/ui/ai_response_format.hpp
+    src/ui/math_formula.cpp
+    src/ui/math_formula.hpp
     src/ui/ui_size.hpp
     src/ui/line_icons.cpp
     src/ui/line_icons.hpp
@@ -33,6 +39,10 @@ quizpane_add_executable(quizpane
     src/ui/result_image_preview.hpp
     src/ui/app_dialogs.cpp
     src/ui/app_dialogs.hpp
+    src/ai/ai_explain_service.cpp
+    src/ai/ai_explain_service.hpp
+    src/ai/ai_explanation_store.cpp
+    src/ai/ai_explanation_store.hpp
     resources/resources.qrc
 )
 if(QUIZPANE_HAVE_WEBSOCKETS)

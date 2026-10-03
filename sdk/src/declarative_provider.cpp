@@ -332,6 +332,8 @@ QJsonArray DeclarativeProvider::hostQuestions(bool withSolutions) const {
             question.insert("correctChoices", correctChoices);
             question.insert("solutionHtml", paragraph(source.value("solution").toString()));
         }
+        if (source.value("aiSolution").isString())
+            question.insert("aiSolutionHtml", source.value("aiSolution"));
         result.append(question);
     }
     return result;

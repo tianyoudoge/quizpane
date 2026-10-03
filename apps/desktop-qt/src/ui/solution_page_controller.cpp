@@ -1,5 +1,9 @@
 #include "solution_page_controller.hpp"
 
+#include "../ai/ai_explain_service.hpp"
+#include "../ai/ai_explanation_store.hpp"
+#include "../app_settings.hpp"
+#include "ai_response_format.hpp"
 #include "line_icons.hpp"
 #include "material_card.hpp"
 #include "quizpane/pending_call.hpp"
@@ -8,6 +12,7 @@
 #include "result_image_preview.hpp"
 
 #include <QColor>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -18,15 +23,19 @@
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSet>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyle>
+#include <QTextDocument>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -36,9 +45,29 @@ namespace {
 
 using ui::LineIcon;
 using ui::makeLineIcon;
+using ui::formatQuestionHtml;
 
 QString choiceLabel(int choice) {
     return choice >= 0 ? QString(QChar(u'A' + choice)) : QStringLiteral("未作答");
+}
+
+QString inlineOptionHtml(const QString& html) {
+    static const QRegularExpression paragraph(
+        QStringLiteral("^\\s*<p(?:\\s[^>]*)?>([\\s\\S]*)</p>\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression nestedParagraph(
+        QStringLiteral("<\\s*/?\\s*p\\b"), QRegularExpression::CaseInsensitiveOption);
+    const auto match = paragraph.match(html);
+    if (!match.hasMatch() || match.captured(1).contains(nestedParagraph)) return html;
+    return match.captured(1);
+}
+
+bool hasVisibleExplanation(const QString& html) {
+    if (html.contains(QRegularExpression(QStringLiteral("<\\s*img\\b"),
+                                          QRegularExpression::CaseInsensitiveOption))) return true;
+    QTextDocument document;
+    document.setHtml(html);
+    return !document.toPlainText().trimmed().isEmpty();
 }
 
 }  // namespace
@@ -96,6 +125,23 @@ void SolutionPageController::buildInto() {
     solutionContentLayout_->addSpacing(8);
     solutionContentLayout_->addWidget(solutionAnswerLabel_);
     solutionContentLayout_->addWidget(solutionExplanationLabel_);
+    aiExplainPanel_ = new QFrame;
+    aiExplainPanel_->setObjectName(QStringLiteral("aiExplainPanel"));
+    aiExplainPanel_->setVisible(false);
+    auto* aiPanelLayout = new QVBoxLayout(aiExplainPanel_);
+    aiPanelLayout->setContentsMargins(10, 10, 10, 10);
+    aiPanelLayout->setSpacing(6);
+    auto* aiPanelTitle = new QLabel(QStringLiteral("✦ AI 解析"));
+    aiPanelTitle->setObjectName(QStringLiteral("aiExplainTitle"));
+    aiExplainContentLabel_ = new ui::AiResponseLabel;
+    aiExplainContentLabel_->setObjectName(QStringLiteral("aiExplainContent"));
+    aiSaveStatusLabel_ = new QLabel;
+    aiSaveStatusLabel_->setObjectName(QStringLiteral("detail"));
+    aiSaveStatusLabel_->setWordWrap(true);
+    aiPanelLayout->addWidget(aiPanelTitle);
+    aiPanelLayout->addWidget(aiExplainContentLabel_);
+    aiPanelLayout->addWidget(aiSaveStatusLabel_);
+    solutionContentLayout_->addWidget(aiExplainPanel_);
     solutionContentLayout_->addStretch();
     solutionScroll->setWidget(solutionContent);
     solutionControlBar_ = new QWidget;
@@ -107,6 +153,14 @@ void SolutionPageController::buildInto() {
     exportResultsButton_ = new QPushButton(QStringLiteral("查看作答结果"));
     exportResultsButton_->setObjectName(QStringLiteral("smallButton"));
     exportResultsButton_->setToolTip(QStringLiteral("预览适合手机查看的作答结果长图"));
+    aiExplainButton_ = new QPushButton(QStringLiteral("✦ AI 解析"));
+    aiExplainButton_->setObjectName(QStringLiteral("smallButton"));
+    aiExplainButton_->setToolTip(QStringLiteral("用 AI 解析这道题的解题步骤和知识点"));
+    aiExplainButton_->setMinimumWidth(80);
+    aiConfigButton_ = new QPushButton(QStringLiteral("⚙"));
+    aiConfigButton_->setObjectName(QStringLiteral("aiConfigButton"));
+    aiConfigButton_->setAccessibleName(QStringLiteral("AI 解析设置"));
+    aiConfigButton_->setToolTip(QStringLiteral("AI 解析设置"));
     auto* backToCatalogButton = new QPushButton;
     previousSolutionButton_->setIcon(makeLineIcon(LineIcon::Previous));
     nextSolutionButton_->setIcon(makeLineIcon(LineIcon::Next));
@@ -123,6 +177,8 @@ void SolutionPageController::buildInto() {
     solutionNav->addWidget(nextSolutionButton_);
     solutionNav->addStretch();
     solutionNav->addWidget(exportResultsButton_);
+    solutionNav->addWidget(aiExplainButton_);
+    solutionNav->addWidget(aiConfigButton_);
     solutionNav->addWidget(backToCatalogButton);
     QObject::connect(previousSolutionButton_, &QPushButton::clicked, solutionPage_,
             [this] { showSolution(currentSolutionIndex_ - 1); });
@@ -135,6 +191,50 @@ void SolutionPageController::buildInto() {
                 pages_->setCurrentWidget(catalogPage_);
                 if (onApplyUiSize_) onApplyUiSize_();
             });
+    aiService_ = new AiExplainService(solutionPage_);
+    aiSpinnerTimer_ = new QTimer(solutionPage_);
+    aiSpinnerTimer_->setInterval(120);
+    QObject::connect(aiSpinnerTimer_, &QTimer::timeout, solutionPage_,
+        [this] {
+            static const char* frames[] = {
+                "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
+            };
+            aiSpinnerFrame_ = (aiSpinnerFrame_ + 1) % 10;
+            aiExplainButton_->setText(
+                QStringLiteral("%1 解析中").arg(QString::fromUtf8(frames[aiSpinnerFrame_])));
+        });
+    QObject::connect(aiExplainButton_, &QPushButton::clicked, solutionPage_,
+        [this] { onAiExplainClicked(); });
+    QObject::connect(aiConfigButton_, &QPushButton::clicked, solutionPage_,
+        [this] { showAiConfigDialog(); });
+    QObject::connect(aiService_, &AiExplainService::requestStarted, solutionPage_,
+        [this] {
+            aiExplainButton_->setEnabled(false);
+            aiSpinnerFrame_ = 0;
+            aiSpinnerTimer_->start();
+            aiExplainContentLabel_->setMessage(QStringLiteral("正在请求 AI 解析，请稍候…"));
+            aiExplainPanel_->setVisible(true);
+        });
+    QObject::connect(aiService_, &AiExplainService::responseReady, solutionPage_,
+        [this](const QString& response, quizpane::AiUsage usage) {
+            aiSpinnerTimer_->stop();
+            aiExplainButton_->setEnabled(true);
+            aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
+            AppSettings::incrementAiTotalRequests();
+            AppSettings::addAiPromptTokens(usage.promptTokens);
+            AppSettings::addAiCompletionTokens(usage.completionTokens);
+            aiExplainContentLabel_->setResponse(response);
+            aiExplainPanel_->setVisible(true);
+        });
+    QObject::connect(aiService_, &AiExplainService::requestFailed, solutionPage_,
+        [this](const QString& error) {
+            aiSpinnerTimer_->stop();
+            aiExplainButton_->setEnabled(true);
+            aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
+            aiExplainContentLabel_->setMessage(
+                QStringLiteral("<span style=\"color:#c49f9d\">请求失败：%1</span>").arg(error.toHtmlEscaped()));
+            aiExplainPanel_->setVisible(true);
+        });
     solutionLayout->addWidget(resultSummaryLabel_);
     solutionLayout->addWidget(solutionProgressLabel_);
     solutionLayout->addWidget(solutionScroll, 1);
@@ -151,6 +251,13 @@ void SolutionPageController::setResultSummary(const QString& text) {
 
 void SolutionPageController::setNoSolutionsMessage() {
     solutionProgressLabel_->setText(QStringLiteral("暂无题目解析"));
+}
+
+void SolutionPageController::resetAiExplanations() {
+    if (aiService_) aiService_->cancel();
+    aiBankPath_.clear();
+    aiExplanations_.clear();
+    unsavedAiIds_.clear();
 }
 
 void SolutionPageController::requestResults() {
@@ -174,8 +281,31 @@ void SolutionPageController::requestResults() {
 
 void SolutionPageController::showSolution(int index) {
     if (session_->solutions.isEmpty()) return;
+    const QString bankPath = provider_->loadedPath();
+    if (bankPath != aiBankPath_) {
+        aiBankPath_ = bankPath;
+        aiExplanations_ = loadAiExplanations(bankPath);
+    }
+    if (aiExplainPanel_) {
+        aiService_->cancel();
+        aiSpinnerTimer_->stop();
+        aiExplainPanel_->setVisible(false);
+        aiExplainButton_->setEnabled(true);
+        aiExplainButton_->setText(QStringLiteral("✦ AI 解析"));
+    }
     currentSolutionIndex_ = qBound(0, index, static_cast<int>(session_->solutions.size()) - 1);
     const QJsonObject solution = session_->solutions.at(currentSolutionIndex_).toObject();
+    const QString questionId = solution.value(QStringLiteral("id")).toString();
+    const QString savedAi = aiExplanations_.value(questionId,
+        solution.value(QStringLiteral("aiSolutionHtml")).toString());
+    if (!savedAi.isEmpty()) {
+        aiExplainContentLabel_->setResponse(savedAi);
+        aiSaveStatusLabel_->setText(unsavedAiIds_.contains(questionId)
+            ? QStringLiteral("仅本次会话可回看，未写入题库")
+            : QStringLiteral("已保存到题库，可再次打开查看"));
+        aiExplainPanel_->setVisible(true);
+        aiExplainButton_->setText(QStringLiteral("重新生成"));
+    }
     const QString materialId = solution.value("materialId").toString();
     if (materialId.isEmpty()) {
         solutionMaterialCard_->hideMaterial();
@@ -190,11 +320,15 @@ void SolutionPageController::showSolution(int index) {
         const auto option = optionValue.toObject();
         optionsHtml += QStringLiteral("<div class=\"option\"><b>%1.</b> %2</div>")
             .arg(option.value("label").toString().toHtmlEscaped(),
-                 option.value("contentHtml").toString());
+                 formatQuestionHtml(inlineOptionHtml(option.value("contentHtml").toString())));
+        const QString imageUrl = option.value(QStringLiteral("imageUrl")).toString();
+        if (!imageUrl.isEmpty())
+            optionsHtml += QStringLiteral("<p><img src=\"%1\" width=\"260\"></p>")
+                               .arg(imageUrl.toHtmlEscaped());
     }
     solutionQuestionLabel_->setText(
         QStringLiteral("<div style=\"color:#c7ccd2\">%1%2</div>")
-            .arg(solution.value("contentHtml").toString(), optionsHtml));
+            .arg(formatQuestionHtml(solution.value("contentHtml").toString()), optionsHtml));
     const bool multiple = solution.value("type").toString() == QStringLiteral("multiple_choice");
     const QSet<int> selectedChoices = session_->answers.value(currentSolutionIndex_);
     const int selected = selectedChoices.isEmpty() ? -1 : *selectedChoices.constBegin();
@@ -212,7 +346,8 @@ void SolutionPageController::showSolution(int index) {
             : correct >= 0 && selectedChoices == QSet<int>{correct});
         correctAnswerLabel_->setVisible(true);
         answerStatusLabel_->setVisible(true);
-        solutionExplanationLabel_->setVisible(true);
+        const QString explanationHtml = solution.value("solutionHtml").toString();
+        solutionExplanationLabel_->setVisible(hasVisibleExplanation(explanationHtml));
         correctAnswerLabel_->setText(QStringLiteral("正确答案\n%1").arg(
             multiple ? labels(correctChoices) : choiceLabel(correct)));
         answerStatusLabel_->setText(isCorrect ? QStringLiteral("✓ 正确") : QStringLiteral("✗ 错误"));
@@ -221,7 +356,7 @@ void SolutionPageController::showSolution(int index) {
         answerStatusLabel_->style()->polish(answerStatusLabel_);
         solutionExplanationLabel_->setText(
             QStringLiteral("<div style=\"color:#aebbb5\"><p><b>解析</b></p>%1</div>")
-                .arg(solution.value("solutionHtml").toString()));
+                .arg(formatQuestionHtml(explanationHtml)));
     } else {
         correctAnswerLabel_->setVisible(false);
         answerStatusLabel_->setVisible(false);
@@ -463,5 +598,252 @@ void SolutionPageController::exportAttemptResults() {
     showImage();
     dialog.exec();
 }
+
+void SolutionPageController::onAiExplainClicked() {
+    QString apiKey = AppSettings::aiApiKey();
+    if (apiKey.trimmed().isEmpty()) {
+        if (!showAiConfigDialog()) return;
+        apiKey = AppSettings::aiApiKey();
+    }
+
+    if (session_->solutions.isEmpty()) return;
+    const QJsonObject solution = session_->solutions.at(currentSolutionIndex_).toObject();
+    const QString questionHtml = solution.value(QStringLiteral("contentHtml")).toString();
+    const QJsonArray options = solution.value(QStringLiteral("options")).toArray();
+    const QJsonObject material = session_->materialsById
+        .value(solution.value(QStringLiteral("materialId")).toString());
+    const QString materialHtml = material.value(QStringLiteral("title")).toString() +
+                                 QStringLiteral("\n") +
+                                 material.value(QStringLiteral("contentHtml")).toString();
+    const QJsonArray materialImageUrls = material.value(QStringLiteral("imageUrls")).toArray();
+    QString correctAnswer;
+    if (session_->attemptHasAnswerKey) {
+        const QJsonArray correctChoices = solution.value(QStringLiteral("correctChoices")).toArray();
+        if (!correctChoices.isEmpty()) {
+            QStringList labels;
+            for (const QJsonValue& value : correctChoices)
+                labels.append(choiceLabel(value.toInt(-1)));
+            correctAnswer = labels.join(QStringLiteral("、"));
+        } else {
+            const int choice = solution.value(QStringLiteral("correctChoice")).toInt(-1);
+            if (choice >= 0) correctAnswer = choiceLabel(choice);
+        }
+    }
+    aiService_->explain(questionHtml, options, materialHtml, materialImageUrls,
+                        correctAnswer, apiKey,
+                        AppSettings::aiBaseUrl(), AppSettings::aiModel());
+}
+
+bool SolutionPageController::showAiConfigDialog() {
+    QDialog dialog(solutionPage_);
+    dialog.setWindowTitle(QStringLiteral("AI 解析 · 配置"));
+    dialog.setMinimumWidth(400);
+    dialog.setStyleSheet(QStringLiteral(R"QSS(
+        QDialog { background: #13181f; color: #c8cdd3; }
+        QLabel { color: #c8cdd3; background: transparent; }
+        QLabel#sectionTitle { color: #e0e3e7; font-weight: 600; }
+        QLabel#detail { color: #9ca3ab; font-size: 11px; }
+        QLineEdit, QComboBox {
+            background: rgba(255,255,255,10);
+            border: 1px solid rgba(255,255,255,14);
+            border-radius: 7px;
+            color: #c8cdd3;
+            padding: 5px 8px;
+        }
+        QLineEdit:focus, QComboBox:focus { border-color: rgba(130,180,155,100); }
+        QComboBox::drop-down { border: none; }
+        QComboBox QAbstractItemView {
+            background: #1b232d; color: #c8cdd3;
+            selection-background-color: rgba(255,255,255,15);
+            border: 1px solid rgba(255,255,255,18);
+        }
+        QPushButton {
+            background: rgba(255,255,255,12); color: #c8cdd3;
+            border: 1px solid rgba(255,255,255,14);
+            border-radius: 7px; padding: 5px 12px;
+        }
+        QPushButton:hover { background: rgba(255,255,255,22); }
+        QPushButton:disabled { background: transparent; color: rgba(170,176,184,70); }
+        QPushButton#primaryButton {
+            background: rgba(90,154,128,60);
+            border-color: rgba(130,180,155,80); color: #d4ede5;
+        }
+        QPushButton#primaryButton:hover { background: rgba(90,154,128,90); }
+        QFrame#divider { background: rgba(255,255,255,10); }
+        QFrame#statsBox {
+            background: rgba(255,255,255,6);
+            border: 1px solid rgba(255,255,255,10); border-radius: 7px;
+        }
+    )QSS"));
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(20, 18, 20, 18);
+    layout->setSpacing(12);
+
+    auto* titleLabel = new QLabel(QStringLiteral("AI 解析设置"));
+    titleLabel->setObjectName(QStringLiteral("sectionTitle"));
+    QFont titleFont = titleLabel->font();
+    titleFont.setPixelSize(14);
+    titleFont.setBold(true);
+    titleLabel->setFont(titleFont);
+    layout->addWidget(titleLabel);
+
+    layout->addWidget(new QLabel(QStringLiteral("供应商")));
+
+    struct Provider { QString id, name, baseUrl, defaultModel; };
+    const QList<Provider> providers = {
+        {QStringLiteral("deepseek"), QStringLiteral("DeepSeek"),
+         QStringLiteral("https://api.deepseek.com/v1"), QStringLiteral("deepseek-chat")},
+        {QStringLiteral("aliyun"), QStringLiteral("阿里百炼"),
+         QStringLiteral("https://dashscope.aliyuncs.com/compatible-mode/v1"), QStringLiteral("qwen-plus")},
+        {QStringLiteral("volcengine"), QStringLiteral("火山方舟"),
+         QStringLiteral("https://ark.cn-beijing.volces.com/api/v3"), QStringLiteral("doubao-pro-4k")},
+        {QStringLiteral("zhipu"), QStringLiteral("智谱 GLM"),
+         QStringLiteral("https://open.bigmodel.cn/api/paas/v4"), QStringLiteral("glm-4-flash")},
+        {QStringLiteral("kimi"), QStringLiteral("Kimi"),
+         QStringLiteral("https://api.moonshot.cn/v1"), QStringLiteral("moonshot-v1-8k")},
+        {QStringLiteral("custom"), QStringLiteral("自定义"), QString(), QString()},
+    };
+
+    auto* providerCombo = new QComboBox;
+    const QString savedProvider = AppSettings::aiProvider();
+    int currentIdx = 0;
+    for (int i = 0; i < providers.size(); ++i) {
+        providerCombo->addItem(providers[i].name);
+        if (providers[i].id == savedProvider) currentIdx = i;
+    }
+    providerCombo->setCurrentIndex(currentIdx);
+    layout->addWidget(providerCombo);
+
+    auto* regLinkLabel = new QLabel;
+    regLinkLabel->setObjectName(QStringLiteral("detail"));
+    regLinkLabel->setWordWrap(true);
+    regLinkLabel->setOpenExternalLinks(true);
+    regLinkLabel->setTextFormat(Qt::RichText);
+    layout->addWidget(regLinkLabel);
+
+    layout->addWidget(new QLabel(QStringLiteral("API Key")));
+    auto* keyEdit = new QLineEdit;
+    keyEdit->setPlaceholderText(QStringLiteral("sk-…"));
+    keyEdit->setEchoMode(QLineEdit::Password);
+    keyEdit->setText(AppSettings::aiApiKey());
+    layout->addWidget(keyEdit);
+
+    auto* advancedToggle = new QPushButton(QStringLiteral("▶ 高级设置"));
+    advancedToggle->setFlat(true);
+    advancedToggle->setStyleSheet(QStringLiteral(
+        "QPushButton { background: transparent; border: none; color: #9ca3ab; "
+        "text-align: left; padding: 0; }"
+        "QPushButton:hover { color: #c8cdd3; }"));
+    layout->addWidget(advancedToggle);
+
+    auto* advancedWidget = new QWidget;
+    advancedWidget->setVisible(false);
+    auto* advancedLayout = new QVBoxLayout(advancedWidget);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
+    advancedLayout->setSpacing(8);
+    auto* baseUrlLabel = new QLabel(QStringLiteral("Base URL（留空使用默认）"));
+    baseUrlLabel->setObjectName(QStringLiteral("detail"));
+    auto* baseUrlEdit = new QLineEdit;
+    baseUrlEdit->setPlaceholderText(QStringLiteral("https://api.example.com/v1"));
+    baseUrlEdit->setText(AppSettings::aiBaseUrl());
+    auto* modelLabel = new QLabel(QStringLiteral("模型（留空使用默认）"));
+    modelLabel->setObjectName(QStringLiteral("detail"));
+    auto* modelEdit = new QLineEdit;
+    modelEdit->setPlaceholderText(QStringLiteral("model-name"));
+    modelEdit->setText(AppSettings::aiModel());
+    advancedLayout->addWidget(baseUrlLabel);
+    advancedLayout->addWidget(baseUrlEdit);
+    advancedLayout->addWidget(modelLabel);
+    advancedLayout->addWidget(modelEdit);
+    layout->addWidget(advancedWidget);
+
+    auto* divider = new QFrame;
+    divider->setObjectName(QStringLiteral("divider"));
+    divider->setFixedHeight(1);
+    layout->addWidget(divider);
+
+    auto* statsBox = new QFrame;
+    statsBox->setObjectName(QStringLiteral("statsBox"));
+    auto* statsLayout = new QVBoxLayout(statsBox);
+    statsLayout->setContentsMargins(10, 8, 10, 8);
+    statsLayout->setSpacing(3);
+    auto* statsTitle = new QLabel(QStringLiteral("用量统计"));
+    statsTitle->setObjectName(QStringLiteral("detail"));
+    auto* statsDetail = new QLabel(
+        QStringLiteral("共解析 %1 次 · 输入 %2 tokens · 输出 %3 tokens")
+            .arg(AppSettings::aiTotalRequests())
+            .arg(AppSettings::aiTotalPromptTokens())
+            .arg(AppSettings::aiTotalCompletionTokens()));
+    statsDetail->setObjectName(QStringLiteral("detail"));
+    statsLayout->addWidget(statsTitle);
+    statsLayout->addWidget(statsDetail);
+    layout->addWidget(statsBox);
+
+    auto* buttonsRow = new QHBoxLayout;
+    auto* cancelBtn = new QPushButton(QStringLiteral("取消"));
+    auto* saveBtn = new QPushButton(QStringLiteral("保存"));
+    saveBtn->setObjectName(QStringLiteral("primaryButton"));
+    buttonsRow->addStretch();
+    buttonsRow->addWidget(cancelBtn);
+    buttonsRow->addWidget(saveBtn);
+    layout->addLayout(buttonsRow);
+
+    const auto updateProviderHints = [&](int idx) {
+        const Provider& p = providers.at(idx);
+        static const QHash<QString, QString> links = {
+            {QStringLiteral("deepseek"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://platform.deepseek.com'>platform.deepseek.com</a>")},
+            {QStringLiteral("aliyun"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://bailian.console.aliyun.com'>bailian.console.aliyun.com</a>")},
+            {QStringLiteral("volcengine"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://www.volcengine.com/product/ark'>volcengine.com/ark</a>")},
+            {QStringLiteral("zhipu"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://open.bigmodel.cn'>open.bigmodel.cn</a>")},
+            {QStringLiteral("kimi"),
+             QStringLiteral("注册并获取 Key：<a style='color:#7ec8a8' href='https://platform.moonshot.cn'>platform.moonshot.cn</a>")},
+        };
+        regLinkLabel->setText(links.value(p.id,
+            QStringLiteral("填写自定义供应商的 Base URL 和模型名")));
+        if (!p.baseUrl.isEmpty()) baseUrlEdit->setPlaceholderText(p.baseUrl);
+        if (!p.defaultModel.isEmpty()) modelEdit->setPlaceholderText(p.defaultModel);
+    };
+    updateProviderHints(currentIdx);
+
+    QObject::connect(providerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                     &dialog, [&](int idx) {
+        updateProviderHints(idx);
+        baseUrlEdit->setText(providers.at(idx).baseUrl);
+        modelEdit->setText(providers.at(idx).defaultModel);
+    });
+    QObject::connect(advancedToggle, &QPushButton::clicked, &dialog, [&] {
+        const bool visible = !advancedWidget->isVisible();
+        advancedWidget->setVisible(visible);
+        advancedToggle->setText(visible
+            ? QStringLiteral("▼ 高级设置") : QStringLiteral("▶ 高级设置"));
+        dialog.adjustSize();
+    });
+    QObject::connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    QObject::connect(saveBtn, &QPushButton::clicked, &dialog, [&] {
+        const QString key = keyEdit->text().trimmed();
+        const Provider& p = providers.at(providerCombo->currentIndex());
+        if (p.id == QStringLiteral("custom") &&
+            (baseUrlEdit->text().trimmed().isEmpty() || modelEdit->text().trimmed().isEmpty())) {
+            QMessageBox::warning(&dialog, QStringLiteral("配置不完整"),
+                                 QStringLiteral("自定义供应商需要填写 Base URL 和模型名"));
+            return;
+        }
+        AppSettings::setAiApiKey(key);
+        AppSettings::setAiProvider(p.id);
+        const QString typedUrl = baseUrlEdit->text().trimmed();
+        AppSettings::setAiBaseUrl(typedUrl.isEmpty() ? p.baseUrl : typedUrl);
+        const QString typedModel = modelEdit->text().trimmed();
+        AppSettings::setAiModel(typedModel.isEmpty() ? p.defaultModel : typedModel);
+        dialog.accept();
+    });
+
+    return dialog.exec() == QDialog::Accepted;
+}
+
 
 }  // namespace quizpane

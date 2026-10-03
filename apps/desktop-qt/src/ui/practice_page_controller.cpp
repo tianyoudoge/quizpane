@@ -5,6 +5,7 @@
 #include "line_icons.hpp"
 #include "material_card.hpp"
 #include "question_navigator.hpp"
+#include "formula_formatter.hpp"
 #include "quizpane/draft_store.hpp"
 #include "quizpane/pending_call.hpp"
 #include "quizpane/provider_loader.hpp"
@@ -254,7 +255,7 @@ void PracticePageController::showQuestion(int index) {
                                             material.value("imageUrls").toArray());
     }
     questionLabel_->setText(QStringLiteral("<div style=\"color:#d5d1c5\">%1</div>")
-        .arg(question.value("contentHtml").toString()));
+        .arg(formatQuestionHtml(question.value("contentHtml").toString())));
     clearLayout(optionsLayout_);
     const QJsonArray options = question.value("options").toArray();
     const bool multiple = question.value("type").toString() == QStringLiteral("multiple_choice");

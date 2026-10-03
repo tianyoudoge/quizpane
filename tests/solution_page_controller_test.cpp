@@ -3,7 +3,10 @@
 
 #include <QApplication>
 #include <QLabel>
+#include <QFrame>
+#include <QPushButton>
 #include <QStackedWidget>
+#include <QTextDocument>
 
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -19,6 +22,7 @@ int main(int argc, char** argv) {
     quizpane::SolutionPageController controller;
     controller.init(page, &pages, catalog, provider, session, size, [] {});
     controller.buildInto();
+    if (!page->findChild<QPushButton*>(QStringLiteral("aiConfigButton"))) return 12;
     auto* status = page->findChild<QLabel*>(QStringLiteral("answerStatus"));
     if (!status) return 1;
     const auto check = [&](const QJsonObject& solution, const QSet<int>& selected,
@@ -54,6 +58,55 @@ int main(int argc, char** argv) {
     if (!status->isHidden() || !explanation || !explanation->isHidden()) return 9;
     session.attemptHasAnswerKey = true;
     controller.showSolution(0);
-    if (status->isHidden() || explanation->isHidden()) return 10;
+    if (status->isHidden() || !explanation->isHidden()) return 10;
+    single.insert("correctChoice", 0);
+    single.insert("contentHtml", "<p>资料分析题</p>");
+    single.insert("options", QJsonArray{
+        QJsonObject{{"label", "A"}, {"contentHtml", "<p>低于 12.0%</p>"}},
+        QJsonObject{{"label", "D"}, {"contentHtml", "<p>超过 88.0%</p>"},
+                    {"imageUrl", "file:///tmp/option.png"}},
+        QJsonObject{{"label", "E"}, {"contentHtml", "<p>第一行</p><p>第二行</p>"}}});
+    single.insert("solutionHtml", "<p> </p>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    auto* question = page->findChild<QLabel*>(QStringLiteral("solutionQuestion"));
+    if (!question || !question->text().contains(QStringLiteral("<b>A.</b> 低于 12.0%")) ||
+        !question->text().contains(QStringLiteral("<b>D.</b> 超过 88.0%")) ||
+        !question->text().contains(QStringLiteral("<p>第一行</p><p>第二行</p>")) ||
+        !question->text().contains(QStringLiteral("file:///tmp/option.png")) ||
+        !explanation->isHidden()) return 15;
+    single.insert("solutionHtml", "<p>题库原解析</p>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    if (explanation->isHidden()) return 16;
+    single.insert("solutionHtml", "<p><img src=\"file:///tmp/solution.png\"></p>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    if (explanation->isHidden()) return 17;
+    single.insert("id", "formula-q1");
+    single.insert("aiSolutionHtml", "<div>\\sin{x} + x^{2}</div>");
+    session.solutions = QJsonArray{single};
+    controller.showSolution(0);
+    auto* aiPanel = page->findChild<QFrame*>(QStringLiteral("aiExplainPanel"));
+    auto* aiContent = page->findChild<QLabel*>(QStringLiteral("aiExplainContent"));
+    if (!aiPanel || aiPanel->isHidden() || !aiContent) return 18;
+    // Verify formula content without depending on the old formatter's HTML.
+    const QString renderedAi = aiContent->text();
+    QTextDocument renderedDocument;
+    renderedDocument.setHtml(renderedAi);
+    if (renderedDocument.toPlainText().simplified() != QStringLiteral("sin x + x2") ||
+        !renderedAi.contains(QStringLiteral("<sup>2</sup>")) ||
+        renderedAi.contains(QStringLiteral("\\sin"))) return 18;
+    QJsonObject other = single;
+    other.insert("id", "formula-q2");
+    other.remove("aiSolutionHtml");
+    session.solutions = QJsonArray{single, other};
+    session.answers = {{0}, {0}};
+    controller.showSolution(1);
+    if (!aiPanel->isHidden()) return 19;
+    controller.showSolution(0);
+    if (aiPanel->isHidden() ||
+        aiContent->text() != renderedAi) return 20;
     return 0;
 }
+

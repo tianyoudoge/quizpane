@@ -12,6 +12,13 @@ constexpr auto kBossKey = "bossKey/sequence";
 constexpr auto kAutoAdvance = "practice/autoAdvanceMs";
 constexpr auto kLastProvider = "provider/lastLibraryPath";
 constexpr auto kPendingDelete = "providers/pendingDelete";
+constexpr auto kAiApiKey = "ai/apiKey";
+constexpr auto kAiProvider = "ai/provider";
+constexpr auto kAiBaseUrl = "ai/baseUrl";
+constexpr auto kAiModel = "ai/model";
+constexpr auto kAiTotalRequests = "ai/stats/totalRequests";
+constexpr auto kAiTotalPromptTokens = "ai/stats/promptTokens";
+constexpr auto kAiTotalCompletionTokens = "ai/stats/completionTokens";
 }
 namespace {
 // 每次调用方法都新建 QSettings 在 Windows 上意味着每次都 RegOpenKeyEx；这里
@@ -46,6 +53,20 @@ int AppSettings::autoAdvanceMs() { return qBound(0, settings().value(keys::kAuto
 QString AppSettings::lastProviderPath() { return settings().value(keys::kLastProvider).toString(); }
 void AppSettings::setLastProviderPath(const QString& value) { settings().setValue(keys::kLastProvider, value); }
 void AppSettings::clearLastProviderPath() { settings().remove(keys::kLastProvider); }
+QString AppSettings::aiApiKey() { return settings().value(keys::kAiApiKey).toString(); }
+void AppSettings::setAiApiKey(const QString& value) { settings().setValue(keys::kAiApiKey, value); }
+QString AppSettings::aiProvider() { return settings().value(keys::kAiProvider, QStringLiteral("deepseek")).toString(); }
+void AppSettings::setAiProvider(const QString& v) { settings().setValue(keys::kAiProvider, v); }
+QString AppSettings::aiBaseUrl() { return settings().value(keys::kAiBaseUrl).toString(); }
+void AppSettings::setAiBaseUrl(const QString& v) { settings().setValue(keys::kAiBaseUrl, v); }
+QString AppSettings::aiModel() { return settings().value(keys::kAiModel).toString(); }
+void AppSettings::setAiModel(const QString& v) { settings().setValue(keys::kAiModel, v); }
+int AppSettings::aiTotalRequests() { return settings().value(keys::kAiTotalRequests, 0).toInt(); }
+void AppSettings::incrementAiTotalRequests() { settings().setValue(keys::kAiTotalRequests, aiTotalRequests() + 1); }
+qint64 AppSettings::aiTotalPromptTokens() { return settings().value(keys::kAiTotalPromptTokens, 0).toLongLong(); }
+void AppSettings::addAiPromptTokens(qint64 t) { settings().setValue(keys::kAiTotalPromptTokens, aiTotalPromptTokens() + t); }
+qint64 AppSettings::aiTotalCompletionTokens() { return settings().value(keys::kAiTotalCompletionTokens, 0).toLongLong(); }
+void AppSettings::addAiCompletionTokens(qint64 t) { settings().setValue(keys::kAiTotalCompletionTokens, aiTotalCompletionTokens() + t); }
 QStringList AppSettings::pendingProviderDeletions() { return settings().value(keys::kPendingDelete).toStringList(); }
 void AppSettings::setPendingProviderDeletions(const QStringList& value) { settings().setValue(keys::kPendingDelete, value); }
 }  // namespace quizpane

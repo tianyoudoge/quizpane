@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     const QJsonArray answerlessBankQuestions{
         QJsonObject{{"id", "q-set1-1"}, {"catalogId", "generated"},
             {"type", "single_choice"}, {"stem", QStringLiteral("甲乙〔填空〕丙")},
+            {"aiSolution", QStringLiteral("<div>AI 公式：x<sup>2</sup></div>")},
             {"stemUnderlines", QJsonArray{QJsonObject{{"start", 0}, {"length", 1}}}},
             {"options", QJsonArray{QJsonObject{{"id", "a"}, {"text", "甲"}},
                                     QJsonObject{{"id", "b"}, {"text", "乙"}}}},
@@ -112,6 +113,8 @@ int main(int argc, char** argv) {
     const auto answerlessQuestions = call(answerlessLoader, "no-answer-questions", "attempt.questions",
         {{"attemptId", answerlessAttempt.value("attemptId")}}).value("result").toObject().value("questions").toArray();
     if (answerlessQuestions.size() != 2 || answerlessQuestions.first().toObject().contains("correctChoice") ||
+        !answerlessQuestions.first().toObject().value("aiSolutionHtml").toString()
+            .contains(QStringLiteral("x<sup>2</sup>")) ||
         answerlessQuestions.first().toObject().value("id").toString() != QStringLiteral("q-set1-1") ||
         answerlessQuestions.at(1).toObject().value("id").toString() != QStringLiteral("q-set1-2")) return 13;
     const auto rendered = answerlessQuestions.first().toObject();
@@ -162,6 +165,7 @@ int main(int argc, char** argv) {
         const QJsonObject solution = value.toObject();
         if (solution.value("id").toString() != QStringLiteral("q-set1-1")) continue;
         foundStringNumber = solution.value("sourceQuestionLabel").toString() == QStringLiteral("1-1") &&
+            solution.value("aiSolutionHtml").toString().contains(QStringLiteral("x<sup>2</sup>")) &&
             solution.value("contentHtml").toString().contains(QStringLiteral("第一套")) &&
             solution.value("contentHtml").toString().contains(QStringLiteral("1-1")) &&
             !solution.contains("sourceQuestionNumber") && solution.contains("correctChoices");

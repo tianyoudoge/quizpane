@@ -1,4 +1,4 @@
-QWidget#card { background: rgba(12,14,18,224); border: none; border-radius: 10px; color: #c8cdd3; }
+QWidget#card { background: rgba(12,14,18,255); border: none; border-radius: 10px; color: #c8cdd3; }
 QWidget#card[uiSize="small"] { font-size: 11px; }
 QWidget#card[uiSize="medium"] { font-size: 12px; }
 QWidget#card[uiSize="large"] { font-size: 13px; }
@@ -48,3 +48,6 @@ QLabel[correct="true"] { color: #9fb6a7; font-weight: 600; }
 QLabel[correct="false"] { color: #c49f9d; font-weight: 600; }
 QFrame#submitConfirmationBubble { background: rgba(25,28,33,246); border-radius: 9px; }
 QLabel#submitConfirmationText { background: transparent; color: #d0d4d9; }
+QFrame#aiExplainPanel { background: rgba(20,30,26,80); border: 1px solid rgba(130,180,155,40); border-radius: 7px; padding: 4px; }
+QLabel#aiExplainTitle { color: #9fc4b0; font-weight: 600; }
+QLabel#aiExplainContent { color: #b8c4be; }
